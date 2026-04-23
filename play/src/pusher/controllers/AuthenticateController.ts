@@ -230,6 +230,7 @@ export class AuthenticateController extends BaseHttpController {
 
                 try {
                     const resCheckTokenAuth = await openIDClient.checkTokenAuth(authTokenData.accessToken);
+                    const { locale: _ignoredLocale, ...safeUserInfo } = resCheckTokenAuth;
                     res.json({
                         username: authTokenData?.username,
                         authToken: token,
@@ -238,7 +239,7 @@ export class AuthenticateController extends BaseHttpController {
                         matrixServerUrl: (resCheckTokenAuth.matrix_url as string | undefined) ?? MATRIX_PUBLIC_URI,
                         // TODO: replace ... with each property
                         ...resUserData,
-                        ...resCheckTokenAuth,
+                        ...safeUserInfo,
                     } satisfies MeResponse);
                 } catch (err) {
                     console.warn("Error while checking token auth", err);

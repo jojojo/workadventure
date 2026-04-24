@@ -7,8 +7,10 @@ import {
     EXTERNAL_PRESENCE_AUTH_TOKEN,
     EXTERNAL_PRESENCE_MATCH_FIELD,
     EXTERNAL_PRESENCE_URL,
+    THREE_CX_MATCH_FIELD,
 } from "../enums/EnvironmentVariable";
 import { jwtTokenManager } from "../services/JWTTokenManager";
+import { threeCxPresenceService } from "../services/ThreeCxPresenceService";
 
 const ExternalPresenceResponse = z
     .object({
@@ -27,7 +29,7 @@ export class ExternalPresenceController extends BaseHttpController {
             "/external-presence-status",
             [authenticated],
             async (req: Request, res: ResponseWithUserIdentifier) => {
-                if (!EXTERNAL_PRESENCE_URL) {
+                if (!EXTERNAL_PRESENCE_URL && !threeCxPresenceService.isEnabled()) {
                     res.status(204).send();
                     return;
                 }
@@ -39,11 +41,25 @@ export class ExternalPresenceController extends BaseHttpController {
                 }
 
                 const jwtData = await jwtTokenManager.verifyJWTToken(token);
-                const identifier =
-                    EXTERNAL_PRESENCE_MATCH_FIELD === "username" ? jwtData.username ?? jwtData.identifier : jwtData.identifier;
+                const matchField = EXTERNAL_PRESENCE_URL ? EXTERNAL_PRESENCE_MATCH_FIELD : THREE_CX_MATCH_FIELD;
+                const identifier = matchField === "username" ? jwtData.username ?? jwtData.identifier : jwtData.identifier;
 
                 if (!identifier) {
                     res.status(204).send();
+                    return;
+                }
+
+                if (!EXTERNAL_PRESENCE_URL) {
+                    let status: "ONLINE" | "BUSY" = "ONLINE";
+                    try {
+                        status = await threeCxPresenceService.getStatus(identifier);
+                    } catch (error) {
+                        console.warn("Failed to get 3CX presence status", error);
+                    }
+
+                    res.json({
+                        status,
+                    });
                     return;
                 }
 

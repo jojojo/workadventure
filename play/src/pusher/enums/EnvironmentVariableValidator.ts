@@ -213,6 +213,21 @@ export const EnvironmentVariables = z.object({
         "Policy for avatar naming: 'user_input' or 'openid_nickname'"
     ),
     OPENID_TAGS_CLAIM: z.string().optional().describe("JWT claim containing user tags/roles"),
+    EXTERNAL_PRESENCE_URL: z
+        .string()
+        .optional()
+        .describe("Optional HTTP endpoint returning external presence state for the current user"),
+    EXTERNAL_PRESENCE_AUTH_TOKEN: z
+        .string()
+        .optional()
+        .describe("Optional bearer token sent to the external presence endpoint"),
+    EXTERNAL_PRESENCE_MATCH_FIELD: z
+        .enum(["identifier", "username"])
+        .optional()
+        .describe("User field forwarded to the external presence endpoint. Defaults to 'identifier'"),
+    EXTERNAL_PRESENCE_POLL_INTERVAL: PositiveIntAsString.optional()
+        .transform((val) => toNumber(val, 5000))
+        .describe("Polling interval in milliseconds for external presence sync. Defaults to 5000"),
 
     DISABLE_ANONYMOUS: BoolAsString.optional()
         .transform((val) => toBool(val, false))

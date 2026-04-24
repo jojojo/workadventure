@@ -31,6 +31,7 @@ import { WokaService } from "./services/WokaService";
 import { UserController } from "./controllers/UserController";
 import { MatrixRoomAreaController } from "./controllers/MatrixRoomAreaController";
 import { LocalScriptController } from "./controllers/LocalScriptController";
+import { ExternalPresenceController } from "./controllers/ExternalPresenceController";
 
 class App {
     private readonly app: Application;
@@ -98,6 +99,7 @@ class App {
         new OpenIdProfileController(this.app);
         new PingController(this.app);
         new LocalScriptController(this.app);
+        new ExternalPresenceController(this.app);
 
         if (ENABLE_OPENAPI_ENDPOINT) {
             new SwaggerController(this.app);

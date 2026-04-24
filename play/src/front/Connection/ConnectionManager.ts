@@ -32,6 +32,7 @@ import type { OnConnectInterface } from "./ConnexionModels";
 import { RoomConnection } from "./RoomConnection";
 import { HtmlUtils } from "./../WebRtc/HtmlUtils";
 import { hasCapability } from "./Capabilities";
+import { externalPresenceSync } from "./ExternalPresenceSync";
 
 class ConnectionManager {
     private localUser!: LocalUser;
@@ -74,6 +75,7 @@ class ConnectionManager {
      * @param providerScopes - The scopes to request from the OpenID provider.
      */
     public loadOpenIDScreen(manuallyTriggered: boolean, providerId?: string, providerScopes?: string[]): URL | null {
+        externalPresenceSync.stop();
         localUserStore.setAuthToken(null);
         if (!ENABLE_OPENID || !this._currentRoom) {
             analyticsClient.loggedWithToken();
@@ -101,6 +103,7 @@ class ConnectionManager {
      * Logout
      */
     public logout() {
+        externalPresenceSync.stop();
         // save the current token to use it in the redirect logout url
         const tokenTmp = localUserStore.getAuthToken();
         //remove token in localstorage
@@ -612,6 +615,7 @@ class ConnectionManager {
         //user connected, set connected store for menu at true
         if (localUserStore.isLogged()) {
             userIsConnected.set(true);
+            externalPresenceSync.start();
         }
 
         return response;

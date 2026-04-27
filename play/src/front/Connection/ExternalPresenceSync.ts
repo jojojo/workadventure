@@ -51,7 +51,7 @@ class ExternalPresenceSync {
 
         this.inFlight = true;
         try {
-            const response = await axiosToPusher.get<{ status?: ExternalPresenceStatus }>("external-presence-status", {
+            const response = await axiosToPusher.get<{ status?: ExternalPresenceStatus }>(`external-presence-status?_t=${Date.now()}`, {
                 headers: {
                     Authorization: authToken,
                 },

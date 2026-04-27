@@ -77,6 +77,7 @@ export class ExternalPresenceController extends BaseHttpController {
 
                 const data = ExternalPresenceResponse.parse(response.data);
 
+                res.set("Cache-Control", "no-store, no-cache, must-revalidate, private");
                 res.json({
                     status: data.status ?? (data.inCall ? "BUSY" : "ONLINE"),
                 });

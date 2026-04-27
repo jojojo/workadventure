@@ -57,6 +57,7 @@ export class ExternalPresenceController extends BaseHttpController {
                         console.warn("Failed to get 3CX presence status", error);
                     }
 
+                    res.set("X-External-Presence-Provider", "3cx");
                     res.json({
                         status,
                     });
@@ -78,6 +79,7 @@ export class ExternalPresenceController extends BaseHttpController {
                 const data = ExternalPresenceResponse.parse(response.data);
 
                 res.set("Cache-Control", "no-store, no-cache, must-revalidate, private");
+                res.set("X-External-Presence-Provider", "url");
                 res.json({
                     status: data.status ?? (data.inCall ? "BUSY" : "ONLINE"),
                 });

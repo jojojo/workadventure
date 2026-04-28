@@ -90,7 +90,7 @@ class LocalAdmin implements AdminInterface {
         let canEdit = false;
         let canRecord = false;
         const roomUrl = new URL(playUri);
-        const match = /\/~\/(.+)/.exec(roomUrl.pathname);
+        const match = /\/(~|_)\/(.+)/.exec(roomUrl.pathname); // Support both ~/room and _/global maps
         if (
             match &&
             ENABLE_MAP_EDITOR &&

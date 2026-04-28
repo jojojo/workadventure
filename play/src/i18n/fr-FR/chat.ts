@@ -85,7 +85,7 @@ const chat: DeepPartial<Translation["chat"]> = {
     status: {
         online: "En ligne",
         away: "Absent",
-        back_in_a_moment: "Revient dans un moment",
+        back_in_a_moment: "📞 Au téléphone",
         do_not_disturb: "Ne pas déranger",
         busy: "Occupé",
         unavailable: "Non disponible",

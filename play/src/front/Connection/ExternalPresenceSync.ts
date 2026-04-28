@@ -10,7 +10,7 @@ type ExternalPresenceStatus = "ONLINE" | "BUSY" | "DO_NOT_DISTURB" | "BACK_IN_A_
 
 class ExternalPresenceSync {
     private intervalId: number | undefined;
-    private autoBusy = false;
+    private autoBackInAMoment = false;
     private inFlight = false;
 
     start() {
@@ -34,7 +34,7 @@ class ExternalPresenceSync {
             window.clearInterval(this.intervalId);
             this.intervalId = undefined;
         }
-        this.autoBusy = false;
+        this.autoBackInAMoment = false;
         this.inFlight = false;
     }
 
@@ -70,16 +70,16 @@ class ExternalPresenceSync {
     private applyStatus(status: ExternalPresenceStatus) {
         if (status === "BUSY") {
             if (get(requestedStatusStore) === null && get(availabilityStatusStore) === AvailabilityStatus.ONLINE) {
-                resetAllStatusStoreExcept(AvailabilityStatus.BUSY);
-                this.autoBusy = true;
+                resetAllStatusStoreExcept(AvailabilityStatus.BACK_IN_A_MOMENT);
+                this.autoBackInAMoment = true;
             }
             return;
         }
 
-        if (this.autoBusy && get(requestedStatusStore) === AvailabilityStatus.BUSY) {
+        if (this.autoBackInAMoment && get(requestedStatusStore) === AvailabilityStatus.BACK_IN_A_MOMENT) {
             resetAllStatusStoreExcept(null);
         }
-        this.autoBusy = false;
+        this.autoBackInAMoment = false;
     }
 }
 

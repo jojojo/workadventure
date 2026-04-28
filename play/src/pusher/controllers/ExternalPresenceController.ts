@@ -66,6 +66,7 @@ export class ExternalPresenceController extends BaseHttpController {
 
                 const url = new URL(EXTERNAL_PRESENCE_URL);
                 url.searchParams.set(EXTERNAL_PRESENCE_MATCH_FIELD, identifier);
+                url.searchParams.set("_t", Date.now().toString());
 
                 const response = await axios.get(url.toString(), {
                     headers: EXTERNAL_PRESENCE_AUTH_TOKEN

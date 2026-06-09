@@ -106,6 +106,8 @@ MATRIX_PUBLIC_URI=
 # A valid Matrix user that will be used to create rooms and invite users.
 MATRIX_ADMIN_USER=
 MATRIX_ADMIN_PASSWORD=
+# Enable automatic synchronization of WOKA avatar and display name to Matrix profile (default: true)
+MATRIX_AUTO_SYNC=true
 ```
 
 #### With the Helm chart
@@ -124,6 +126,8 @@ play:
     MATRIX_PUBLIC_URI: ""
     # A valid Matrix user that will be used to create rooms and invite users.
     MATRIX_ADMIN_USER: ""
+    # Enable automatic synchronization of WOKA avatar and display name to Matrix profile (default: true)
+    MATRIX_AUTO_SYNC: "true"
   secretEnv:
     MATRIX_ADMIN_PASSWORD: ""
 ```
@@ -134,7 +138,10 @@ WorkAdventure is tested against a **Synapse**-style stack with **OpenID Connect*
 
 1. **The same OIDC issuer** must be trusted by both WorkAdventure and the Matrix server, and user mapping to stable Matrix IDs must be consistent; mismatches break login or room membership.
 2. **Profile APIs** (`/profile` display name and avatar) must behave per the Matrix spec. WorkAdventure syncs the in-game name and WOKA image to the user’s **global Matrix profile**; servers that restrict profile updates or media uploads may cause avatars or names not to match in chat.
-3. **E2E encryption** uses the matrix-js-sdk **Rust crypto** path; very old or unusual server configurations might surface interoperability issues—check client and server logs if sync or decryption fails.
+> [!NOTE]  
+> **Profile synchronization**: By default, WorkAdventure automatically synchronizes your in-game display name and WOKA avatar to your Matrix profile. This means that when you change your character name or appearance in WorkAdventure, it will be reflected in your Matrix profile across all Matrix clients (like Element).
+> 
+> If this behavior is undesirable (e.g., it causes notification spam for users of other Matrix clients), you can disable it by setting `MATRIX_AUTO_SYNC=false`. When disabled, your Matrix profile will remain unchanged regardless of your in-game character modifications.3. **E2E encryption** uses the matrix-js-sdk **Rust crypto** path; very old or unusual server configurations might surface interoperability issues—check client and server logs if sync or decryption fails.
 4. **Federation** is not required for WorkAdventure’s own flows, but if you federate users across rooms, ensure your homeserver’s federation and identity settings match your expectations.
 
 **If something fails:** verify `MATRIX_PUBLIC_URI` / `MATRIX_API_URI` from both browser and server, confirm OIDC client registration (separate clients for WA and Matrix), and compare with a known-good Synapse setup from this repo’s `docker-compose` example. For application-level behaviour, see [Matrix developer notes](../contributing/matrix-dev.md).

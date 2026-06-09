@@ -6,13 +6,14 @@
     import { gameManager } from "../../Phaser/Game/GameManager";
     import { connectionManager } from "../../Connection/ConnectionManager";
     import { selectCharacterSceneVisibleStore } from "../../Stores/SelectCharacterStore";
+    import { hasMatrixChatCapabilities } from "../../Chat/Connection/ChatConnection";
     import WokaSelectScene from "./WokaSelectScene.svelte";
     import WokaCustomizeScene from "./WokaCustomizeScene.svelte";
 
     let buildOwnWoka = false;
     let error: string | null = null;
 
-    async function saveAndContinue(texturesId: string[]) {
+    async function saveAndContinue(texturesId: string[], syncAvatarToMatrix = false) {
         error = null; // Reset error message
         try {
             if (!areCharacterTexturesValid(texturesId)) {
@@ -23,6 +24,18 @@
             analyticsClient.validationWoka("SelectWoka");
             gameManager.setCharacterTextureIds(texturesId);
             await connectionManager.saveTextures(texturesId);
+
+            if (syncAvatarToMatrix) {
+                try {
+                    const chatConnection = await gameManager.getChatConnection();
+                    if (hasMatrixChatCapabilities(chatConnection)) {
+                        await chatConnection.syncMatrixAvatarFromLocalWoka();
+                    }
+                } catch (syncError) {
+                    console.warn("Could not sync avatar to Matrix profile:", syncError);
+                }
+            }
+
             selectCharacterSceneVisibleStore.set(false);
             gameManager.tryToStopScene(SelectCharacterSceneName);
             gameManager.goToNextScene(SelectCharacterSceneName);

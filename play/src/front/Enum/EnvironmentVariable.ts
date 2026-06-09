@@ -71,6 +71,7 @@ export const EMBEDLY_KEY = env.EMBEDLY_KEY;
 export const MATRIX_PUBLIC_URI = env.MATRIX_PUBLIC_URI;
 export const MATRIX_ADMIN_USER = env.MATRIX_ADMIN_USER;
 export const MATRIX_DOMAIN = env.MATRIX_DOMAIN;
+export const MATRIX_AUTO_SYNC = env.MATRIX_AUTO_SYNC;
 
 export const ENABLE_CHAT = env.ENABLE_CHAT;
 

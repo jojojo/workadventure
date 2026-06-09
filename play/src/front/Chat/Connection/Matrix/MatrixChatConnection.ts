@@ -52,7 +52,7 @@ import { chatNotificationStore } from "../../../Stores/ProximityNotificationStor
 import { currentPlayerWokaStore } from "../../../Stores/CurrentPlayerWokaStore";
 import LL from "../../../../i18n/i18n-svelte";
 import type { RequestedStatus } from "../../../Rules/StatusRules/statusRules";
-import { MATRIX_ADMIN_USER, MATRIX_DOMAIN } from "../../../Enum/EnvironmentVariable";
+import { MATRIX_ADMIN_USER, MATRIX_DOMAIN, MATRIX_AUTO_SYNC } from "../../../Enum/EnvironmentVariable";
 import { MatrixRateLimiter } from "../../Services/MatrixRateLimiter";
 import { localUserStore } from "../../../Connection/LocalUserStore";
 import { MatrixChatRoom } from "./MatrixChatRoom";
@@ -334,9 +334,12 @@ export class MatrixChatConnection implements ChatConnectionInterface, MatrixChat
             await this.startMatrixClient();
             this.isGuest.set(this.client.isGuest());
             this.rebuildSpaceHierarchy();
-            await this.syncMatrixGlobalProfileFromLocalWokaAndName(false);
-            this.attachWokaAvatarMatrixSync();
-            this.attachDisplayNameMatrixSync();
+            // Fully disable profile sync side-effects when MATRIX_AUTO_SYNC is explicitly false.
+            if (MATRIX_AUTO_SYNC !== "false") {
+                await this.syncMatrixGlobalProfileFromLocalWokaAndName(false);
+                this.attachWokaAvatarMatrixSync();
+                this.attachDisplayNameMatrixSync();
+            }
         } catch (error) {
             this.connectionStatus.set("OFFLINE");
             console.error(error);
@@ -479,6 +482,16 @@ export class MatrixChatConnection implements ChatConnectionInterface, MatrixChat
             wokaImageSrc: get(currentPlayerWokaStore),
             forceSync,
         });
+    }
+
+    /**
+     * Pushes only the in-game WOKA image to the Matrix global profile avatar (`/profile/avatar_url`).
+     */
+    async syncMatrixAvatarFromLocalWoka(): Promise<void> {
+        if (!this.client || this.client.isGuest()) {
+            return;
+        }
+        await syncWokaAvatarToMatrixProfileOnWokaChange(this.client, get(currentPlayerWokaStore));
     }
 
     private setPresence(status: AvailabilityStatus): void {

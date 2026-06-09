@@ -93,6 +93,7 @@ export const MATRIX_API_URI: string | undefined = undefined;
 export const MATRIX_ADMIN_USER = "test-matrix-user";
 export const MATRIX_ADMIN_PASSWORD = "test-matrix-password";
 export const MATRIX_DOMAIN = "matrix.test";
+export const MATRIX_AUTO_SYNC = "true";
 export const ENABLE_SAY = true;
 export const LIVEKIT_RECORDING_S3_ENDPOINT: string | undefined = undefined;
 export const LIVEKIT_RECORDING_S3_CDN_ENDPOINT: string | undefined = undefined;
@@ -163,6 +164,7 @@ export const FRONT_ENVIRONMENT_VARIABLES: FrontConfigurationInterface = {
     ENABLE_CHAT_DISCONNECTED_LIST,
     MATRIX_ADMIN_USER,
     MATRIX_DOMAIN,
+    MATRIX_AUTO_SYNC,
     ENABLE_SAY,
     ENABLE_ISSUE_REPORT,
     GRPC_MAX_MESSAGE_SIZE,

@@ -57,6 +57,7 @@ export interface FrontConfigurationInterface {
     MATRIX_PUBLIC_URI: string | undefined;
     MATRIX_ADMIN_USER: string | undefined;
     MATRIX_DOMAIN: string | undefined;
+    MATRIX_AUTO_SYNC: string | undefined;
     ENABLE_CHAT: boolean | undefined;
     ENABLE_CHAT_ONLINE_LIST: boolean | undefined;
     ENABLE_CHAT_DISCONNECTED_LIST: boolean | undefined;

@@ -3,6 +3,7 @@
     import { LL } from "../../../i18n/i18n-svelte";
     import { gameManager } from "../../Phaser/Game/GameManager";
     import { ABSOLUTE_PUSHER_URL } from "../../Enum/ComputedConst";
+    import { MATRIX_AUTO_SYNC } from "../../Enum/EnvironmentVariable";
     import { areCharacterTexturesValid } from "../../Connection/LocalUserUtils";
     import BodyIcon from "../Icons/BodyIcon.svelte";
     import EyesIcon from "../Icons/EyesIcon.svelte";
@@ -17,7 +18,7 @@
     import WokaImage from "./WokaImage.svelte";
 
     export let back: () => void;
-    export let saveAndContinue: (texturesId: string[]) => void;
+    export let saveAndContinue: (texturesId: string[], syncAvatarToMatrix?: boolean) => void;
 
     let wokaData: WokaData | null = null;
     let selectedBodyPart: WokaBodyPart = "body";
@@ -394,6 +395,17 @@
                 >
                     {$LL.woka.customWoka.navigation.finish()}
                 </button>
+                {#if MATRIX_AUTO_SYNC === "false"}
+                    <button
+                        class="w-full px-4 py-3 bg-primary text-white rounded hover:opacity-90"
+                        on:click={() => {
+                            const textureIds = bodyPartOrder.map((bodyPart) => selectedTextures[bodyPart]).filter(Boolean);
+                            saveAndContinue(textureIds, true);
+                        }}
+                    >
+                        {$LL.chat.matrixSettings.syncButton()}
+                    </button>
+                {/if}
             </div>
         {/if}
     </div>

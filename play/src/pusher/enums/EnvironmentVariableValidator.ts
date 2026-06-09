@@ -164,6 +164,7 @@ export const EnvironmentVariables = z.object({
             }
             return val;
         }),
+    OPID_DISPLAY_NAME_CLAIM: z.string().optional().describe("OpenID claim to use for display name"),
     OPID_LOCALE_CLAIM: z
         .string()
         .optional()
@@ -484,6 +485,7 @@ export const EnvironmentVariables = z.object({
     MATRIX_ADMIN_USER: z.string().optional().describe("Matrix administrator username"),
     MATRIX_ADMIN_PASSWORD: z.string().optional().describe("Matrix administrator password"),
     MATRIX_DOMAIN: z.string().optional().describe("Matrix server domain"),
+    MATRIX_AUTO_SYNC: z.string().optional().describe("Enable automatic synchronization of WOKA avatar and display name to Matrix profile (default: true)"),
     EMBEDLY_KEY: z.string().optional().describe("Embedly API key for rich link previews"),
     GRPC_MAX_MESSAGE_SIZE: PositiveIntAsString.optional()
         .or(z.string().max(0))

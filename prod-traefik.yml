@@ -1,0 +1,257 @@
+http:
+  middlewares:
+    strip-api-prefix:
+      stripPrefix:
+        prefixes:
+          - "/api"
+    strip-icon-prefix:
+      stripPrefix:
+        prefixes:
+          - "/icon"
+    strip-map-storage-prefix:
+      stripPrefix:
+        prefixes:
+          - "/map-storage"
+    strip-uploader-prefix:
+      stripPrefix:
+        prefixes:
+          - "/uploader"
+  routers:
+    traefik:
+      rule: "Host(`traefik.eoloa.net`)"
+      entryPoints:
+        - websecure
+      service: api@internal
+      tls:
+        certResolver: lets-encrypt
+    coder:
+      rule: "Host(`coder.eoloa.net`)"
+      entryPoints:
+        - websecure
+      service: coder
+      tls:
+        certResolver: lets-encrypt
+    freescout:
+      rule: "Host(`freescout.eoloa.net`)"
+      entryPoints:
+        - websecure
+      service: freescout
+      tls:
+        certResolver: lets-encrypt
+    phpmyadmin:
+      rule: "Host(`phpmyadmin.eoloa.net`)"
+      entryPoints:
+        - websecure
+      service: phpmyadmin
+      tls:
+        certResolver: lets-encrypt
+    portainer:
+      rule: "Host(`portainer.eoloa.net`)"
+      entryPoints:
+        - websecure
+      service: portainer
+      tls:
+        certResolver: lets-encrypt
+    odoo:
+      rule: "Host(`odoo.eoloa.net`)"
+      entryPoints:
+        - websecure
+      service: odoo
+      tls:
+        certResolver: lets-encrypt
+    jitsi:
+      rule: "Host(`jitsi.eoloa.net`)"
+      entryPoints:
+        - websecure
+      service: jitsi
+      tls:
+        certResolver: lets-encrypt
+    jitsi-xmpp-ws:
+      rule: Host(`jitsi.eoloa.net`) && PathPrefix(`/xmpp-websocket`)
+      entryPoints:
+        - websecure
+      service: jitsi-xmpp-ws
+      priority: 100
+      tls:
+        certResolver: lets-encrypt
+    heimdall:
+      rule: "Host(`www.eoloa.net`)"
+      entryPoints:
+        - websecure
+      service: heimdall
+      tls:
+        certResolver: lets-encrypt
+    laravel:
+      rule: "Host(`laravel.eoloa.net`)"
+      service: laravel
+      entryPoints:
+        - websecure
+      tls:
+        certResolver: lets-encrypt
+    
+    # WorkAdventure routes avec priorités correctes
+    workadventure_api:
+      rule: "Host(`workadventure.eoloa.net`) && PathPrefix(`/api`)"
+      entryPoints:
+        - websecure
+      service: workadventure_api
+      middlewares: 
+        - strip-api-prefix
+      priority: 300
+      tls:
+        certResolver: lets-encrypt
+    
+    workadventure_map_storage:
+      rule: "Host(`workadventure.eoloa.net`) && PathPrefix(`/map-storage`)"
+      entryPoints:
+        - websecure
+      service: workadventure_map_storage_api
+      middlewares: 
+        - strip-map-storage-prefix
+      priority: 250
+      tls:
+        certResolver: lets-encrypt
+    
+    workadventure_uploader:
+      rule: "Host(`workadventure.eoloa.net`) && PathPrefix(`/uploader`)"
+      entryPoints:
+        - websecure
+      service: workadventure_uploader
+      middlewares: 
+        - strip-uploader-prefix
+      priority: 200
+      tls:
+        certResolver: lets-encrypt
+    
+    workadventure_icon:
+      rule: "Host(`workadventure.eoloa.net`) && PathPrefix(`/icon`)"
+      entryPoints:
+        - websecure
+      service: workadventure_icon
+      middlewares: 
+        - strip-icon-prefix
+      priority: 150
+      tls:
+        certResolver: lets-encrypt
+    
+    workadventure_play_ws:
+      rule: "Host(`workadventure.eoloa.net`) && PathPrefix(`/ws/`)"
+      service: workadventure_play_ws
+      entryPoints:
+        - websecure
+      priority: 120
+      tls:
+        certResolver: lets-encrypt
+    
+    workadventure_play:
+      rule: "Host(`workadventure.eoloa.net`) && PathPrefix(`/`)"
+      entryPoints:
+        - websecure
+      service: workadventure_play
+      priority: 50
+      tls:
+        certResolver: lets-encrypt
+    
+    workadventure_play_room_api:
+      rule: "Host(`workadventure.eoloa.net`)"
+      service: workadventure_play_room_api
+      entryPoints:
+        - grpc
+      tls:
+        certResolver: lets-encrypt
+    
+    # Interface d'administration Map Storage (même port que l'API)
+    workadventure_map_storage_ui:
+      rule: "Host(`map-storage.eoloa.net`)"
+      service: workadventure_map_storage_ui
+      entryPoints:
+        - websecure
+      tls:
+        certResolver: lets-encrypt
+
+  services:
+    laravel:
+      loadBalancer:
+        servers:
+          - url: "http://laravel_app:8000"
+    odoo:
+      loadBalancer:
+        servers:
+          - url: "http://odoo:8069"
+    coder:
+      loadBalancer:
+        servers:
+          - url: "http://172.22.0.4:7080"
+    freescout:
+      loadBalancer:
+        servers:
+          - url: "http://172.22.0.16:80"
+    phpmyadmin:
+      loadBalancer:
+        servers:
+          - url: "http://phpmyadmin:80"
+    portainer:
+      loadBalancer:
+        servers:
+          - url: "http://portainer:9000"
+    heimdall:
+      loadBalancer:
+        servers:
+          - url: "http://heimdall:80"
+    jitsi:
+      loadBalancer:
+        servers:
+          - url: "http://jitsi-web-1:80"
+    jitsi-xmpp-ws:
+      loadBalancer:
+        servers:
+          - url: "http://jitsi-prosody-1:5280"
+    
+    # Services WorkAdventure
+    workadventure_api:
+      loadBalancer:
+        servers:
+          - url: "http://workadventure-back-1:8080"
+    
+    workadventure_icon:
+      loadBalancer:
+        servers:
+          - url: "http://workadventure-icon-1:8080"
+    
+    workadventure_uploader:
+      loadBalancer:
+        servers:
+          - url: "http://workadventure-uploader-1:8080"
+    
+    workadventure_play:
+      loadBalancer:
+        servers:
+          - url: "http://workadventure-play-1:3000"
+    
+    workadventure_play_ws:
+      loadBalancer:
+        servers:
+          - url: "http://workadventure-play-1:3001"
+    
+    workadventure_play_room_api:
+      loadBalancer:
+        servers:
+          - url: "h2c://workadventure-play-1:50051"
+    
+    # API Map Storage (pour l'éditeur intégré)
+    workadventure_map_storage_api:
+      loadBalancer:
+        servers:
+          - url: "http://workadventure-map-storage-1:3000"
+    
+    # UI Map Storage (même port que l'API - 3000)
+    workadventure_map_storage_ui:
+      loadBalancer:
+        servers:
+          - url: "http://workadventure-map-storage-1:3000"
+
+tls:
+  options:
+    jitsi-no-h2:
+      alpnProtocols:
+        - http/1.1

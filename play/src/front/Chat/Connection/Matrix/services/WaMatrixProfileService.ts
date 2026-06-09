@@ -90,14 +90,26 @@ async function sha256HexOfBlob(blob: Blob): Promise<string> {
 /**
  * Fetch image bytes for hashing or upload. Supports http(s), data:, and Matrix mxc:
  * (resolved via the client's homeserver media endpoint — raw fetch cannot use mxc:).
+ *
+ * When fetching a Matrix mxc:// media URL, the access token is sent in the Authorization
+ * header so that Synapse instances with Authenticated Media (MSC3916) enabled can serve
+ * the resource (direct browser fetch without credentials returns M_NOT_FOUND).
  */
 async function fetchWokaImageAsBlob(client: MatrixClient, src: string): Promise<Blob | undefined> {
     try {
-        const url = matrixOrPlainUrlToHttp(client, src);
+        const isMxc = src.startsWith("mxc:");
+        const url = isMxc ? (client.mxcUrlToHttp(src) ?? undefined) : src;
         if (!url) {
             return undefined;
         }
-        const response = await fetch(url);
+        const headers: HeadersInit = {};
+        if (isMxc) {
+            const accessToken = client.getAccessToken();
+            if (accessToken) {
+                headers["Authorization"] = `Bearer ${accessToken}`;
+            }
+        }
+        const response = await fetch(url, { headers });
         return response.ok ? response.blob() : undefined;
     } catch {
         return undefined;

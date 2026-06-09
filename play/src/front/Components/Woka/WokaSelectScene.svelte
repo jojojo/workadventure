@@ -4,6 +4,7 @@
     import { gameManager } from "../../Phaser/Game/GameManager";
     import { localUserStore } from "../../Connection/LocalUserStore";
     import { ABSOLUTE_PUSHER_URL } from "../../Enum/ComputedConst";
+    import { MATRIX_AUTO_SYNC } from "../../Enum/EnvironmentVariable";
     import WokaPreview from "./WokaPreview.svelte";
     import type { WokaCollection, WokaData, WokaTexture } from "./WokaTypes";
     import { getItemsPerRow } from "./ItemsPerRow";
@@ -11,7 +12,7 @@
     import { IconShuffle } from "@wa-icons";
 
     export let customize: () => void;
-    export let saveAndContinue: (texturesId: string[]) => void;
+    export let saveAndContinue: (texturesId: string[], syncAvatarToMatrix?: boolean) => void;
 
     let wokaData: WokaData | null = null;
     let currentWokaCollection: WokaCollection | null = null;
@@ -284,6 +285,14 @@
                 >
                     {$LL.woka.selectWoka.continue()}
                 </button>
+                {#if MATRIX_AUTO_SYNC === "false"}
+                    <button
+                        class="w-full px-4 py-3 bg-primary text-white rounded hover:opacity-90"
+                        on:click={() => saveAndContinue([selectedWokaTextureId["woka"]], true)}
+                    >
+                        {$LL.chat.matrixSettings.syncButton()}
+                    </button>
+                {/if}
             </div>
         {/if}
     </div>

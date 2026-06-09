@@ -1,0 +1,232 @@
+version: "3.6"
+services:
+  play:
+    image: registry.eoloa.eu/workadventure-play:latest
+    environment:
+      - DEBUG_MODE=false
+      - JITSI_URL=jitsi.eoloa.net
+      - JITSI_PRIVATE_MODE=false
+      - ENABLE_MAP_EDITOR=true
+      - MAP_EDITOR_ALLOW_ALL_USERS=true
+      - MAP_EDITOR_ALLOWED_USERS=johan.cappi@les-creaphistes.com
+      - PUSHER_URL=https://workadventure.eoloa.net/
+      - ICON_URL=/icon
+      - TURN_SERVER=turns:relay1.expressturn.com:5349,turn:relay1.expressturn.com:3478
+      - TURN_USER=000000002073024426
+      - TURN_PASSWORD=3V2PKkeV9QpFLyoj6kC5XYVdk6E=
+      - TURN_STATIC_AUTH_SECRET
+      - STUN_SERVER=stun:stun.l.google.com:19302,stun:relay1.expressturn.com:3478
+      - SKIP_RENDER_OPTIMIZATIONS
+      - MAX_PER_GROUP
+      - MAX_USERNAME_LENGTH
+      - DISABLE_ANONYMOUS=true
+      - DISABLE_NOTIFICATIONS
+      - SECRET_KEY=exserimus72
+      - API_URL=back:50051
+      - FRONT_URL=/
+      - INTERNAL_MAP_STORAGE_URL=http://map-storage:3000
+      - PUBLIC_MAP_STORAGE_URL=https://workadventure.eoloa.net/map-storage
+      - START_ROOM_URL=/~/mon-bureau/hall.tmj
+
+      - OPENID_PROMPT=
+      - OPENID_CLIENT_ID=cid-cbe6ce5b081aff20d77358f660d6b819
+      - OPENID_CLIENT_SECRET=9b0489c414d905eee7f12a1d353befd9455841de7e546b21a4f4b38501706f28
+      - OPENID_CLIENT_ISSUER=https://my.eoloa.eu/openid
+      - OPENID_SCOPE=openid profile email
+      - OPENID_WOKA_NAME_POLICY=force_opid
+
+      - OPENID_USERNAME_CLAIM=email
+      - OPENID_DISPLAY_NAME_CLAIM=name
+      - OPENID_LOCALE_CLAIM=__disabled_locale_claim__
+      - FALLBACK_LOCALE=fr-FR
+      
+      - ENABLE_CHAT
+      - ENABLE_CHAT_UPLOAD
+      - ENABLE_CHAT_ONLINE_LIST
+      - ENABLE_CHAT_DISCONNECTED_LIST
+      - UPLOADER_URL=/uploader
+      # Report issues menu
+      - ENABLE_REPORT_ISSUES_MENU=false
+      - ENABLE_OPENAPI_ENDPOINT=true
+      - ADMIN_API_TOKEN
+      - ADMIN_API_URL
+      - ADMIN_URL
+      - ROOM_API_PORT=50051
+      - ROOM_API_SECRET_KEY=${ROOM_API_SECRET_KEY}
+      - GRPC_VERBOSITY=ERROR
+      - GRPC_TRACE=all
+      - SENTRY_ORG=${SENTRY_ORG}
+      - SENTRY_PROJECT=${SENTRY_PROJECT}
+      - SENTRY_DSN_FRONT=${SENTRY_DSN_FRONT}
+      - SENTRY_DSN_PUSHER=${SENTRY_DSN_PUSHER}
+      - SENTRY_ENVIRONMENT=${SENTRY_ENVIRONMENT}
+      - SENTRY_RELEASE=${SENTRY_RELEASE}
+      - SENTRY_TRACES_SAMPLE_RATE=${SENTRY_TRACES_SAMPLE_RATE}
+      - JITSI_DOMAIN
+      - JITSI_XMPP_DOMAIN
+      - JITSI_MUC_DOMAIN
+      - WOKA_SPEED
+      - FEATURE_FLAG_BROADCAST_AREAS=${FEATURE_FLAG_BROADCAST_AREAS}
+      # Tools integration
+      - KLAXOON_ENABLED=${KLAXOON_ENABLED}
+      - KLAXOON_CLIENT_ID=${KLAXOON_CLIENT_ID}
+      - YOUTUBE_ENABLED=${YOUTUBE_ENABLED}
+      - GOOGLE_DRIVE_ENABLED=true
+      - GOOGLE_DOCS_ENABLED=true
+      - GOOGLE_SHEETS_ENABLED=true
+      - GOOGLE_SLIDES_ENABLED=true
+      - ERASER_ENABLED=false
+      - EXCALIDRAW_ENABLED=false
+      - EXCALIDRAW_DOMAINS=
+      - EMBEDDED_DOMAINS_WHITELIST=
+      - CARDS_ENABLED=false
+      - PEER_VIDEO_LOW_BANDWIDTH=150
+      - PEER_VIDEO_RECOMMENDED_BANDWIDTH=150
+      - PEER_SCREEN_SHARE_LOW_BANDWIDTH=250
+      - PEER_SCREEN_SHARE_RECOMMENDED_BANDWIDTH=1000
+
+      # Google drive picker
+      - GOOGLE_DRIVE_PICKER_CLIENT_ID=${GOOGLE_DRIVE_PICKER_CLIENT_ID}
+      - GOOGLE_DRIVE_PICKER_APP_ID=33618006458
+      - GOOGLE_OAUTH_CLIENT_SECRET=${GOOGLE_OAUTH_CLIENT_SECRET}
+      - MAP_STORAGE_API_TOKEN=exserimus72
+      - MATRIX_API_URI=https://matrix.eoloa.eu/_matrix
+      - MATRIX_PUBLIC_URI=https://matrix.eoloa.eu
+      - MATRIX_DOMAIN=matrix.eoloa.eu
+      - MATRIX_CLIENT_MODE=true
+      - MATRIX_WIDGET_URL=https://matrix.eoloa.eu
+      - MATRIX_ENABLE_BRIDGE=false
+      - MATRIX_SSO_AUTO_LOGIN=true
+      - MATRIX_READ_ONLY_MODE=false
+      - MATRIX_PRESERVE_USER_PROFILES=true
+      - MATRIX_AUTO_SYNC=false
+
+      - EXTERNAL_PRESENCE_URL=https://n8n.eoloa.eu/webhook/8bcec9f4-1167-401d-8c07-96f0a472363a
+      - EXTERNAL_PRESENCE_MATCH_FIELD=identifier
+      - EXTERNAL_PRESENCE_POLL_INTERVAL=5000
+    
+    restart: always
+    networks:
+      - traefik_proxy
+      - workadventure_network
+  back:
+    image: thecodingmachine/workadventure-back:master
+    ports:
+      - "50051:50051"  # gRPC port pour communication avec map-storage
+    environment:
+      - PLAY_URL=https://workadventure.eoloa.net
+      - SECRET_JITSI_KEY
+      - ENABLE_MAP_EDITOR=true
+      - SECRET_KEY=exserimus72
+      - ADMIN_API_TOKEN=
+      - ADMIN_API_URL=
+      - TURN_SERVER
+      - TURN_USER
+      - TURN_PASSWORD
+      - TURN_STATIC_AUTH_SECRET
+      - STUN_SERVER=stun:stun.l.google.com:19302
+      - JITSI_URL=meet.jit.si
+      - JITSI_ISS
+      - BBB_URL
+      - BBB_SECRET
+      - MAX_PER_GROUP
+      - STORE_VARIABLES_FOR_LOCAL_MAPS
+      - REDIS_HOST=redis
+      - PROMETHEUS_AUTHORIZATION_TOKEN=
+      - MAP_STORAGE_URL=map-storage:50053
+      - INTERNAL_MAP_STORAGE_URL=http://map-storage:3000
+      - PUBLIC_MAP_STORAGE_URL=https://workadventure.eoloa.net/map-storage
+      - PLAYER_VARIABLES_MAX_TTL
+      - ENABLE_CHAT
+      - ENABLE_CHAT_UPLOAD
+      - SENTRY_DSN=
+      - SENTRY_RELEASE=
+      - SENTRY_TRACES_SAMPLE_RATE=
+    restart: always
+    
+    networks:
+      - traefik_proxy
+      - workadventure_network
+
+  uploader:
+    image: thecodingmachine/workadventure-uploader:master
+    environment:
+      - UPLOADER_URL=https://workadventure.eoloa.net/uploader
+      #AWS
+      - AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID}
+      - AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY}
+      - AWS_DEFAULT_REGION=${AWS_DEFAULT_REGION}
+      - AWS_BUCKET=${AWS_BUCKET}
+      - AWS_URL=${AWS_URL}
+      - AWS_ENDPOINT=${AWS_ENDPOINT}
+      #REDIS
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      #CHAT
+      - ADMIN_API_URL=${ADMIN_API_URL}
+      - ENABLE_CHAT_UPLOAD=${ENABLE_CHAT_UPLOAD}
+      - UPLOAD_MAX_FILESIZE=${UPLOAD_MAX_FILESIZE}
+    restart: always
+    
+    networks:
+      - traefik_proxy
+      - workadventure_network
+
+  icon:
+    image: matthiasluedtke/iconserver:v3.15.0
+    
+    networks:
+      - traefik_proxy
+      - workadventure_network
+
+    restart: always
+
+  redis:
+    image: redis:6
+    volumes:
+      - redisdata:/data
+    restart: always
+    networks:
+      - workadventure_network
+
+  map-storage:
+    image: thecodingmachine/workadventure-map-storage:master
+    ports:
+      - "50053:50053"  # gRPC port pour communication avec back
+    command: sh -c "mkdir -p /maps/map-storage && ln -sf /maps/mon-bureau /maps/map-storage/mon-bureau 2>/dev/null || true && exec npm start"
+    environment:
+      API_URL: back:50051
+      PROMETHEUS_AUTHORIZATION_TOKEN: ""
+      AUTHENTICATION_STRATEGY: ""
+      ENABLE_BEARER_AUTHENTICATION: "true"
+      ENABLE_BASIC_AUTHENTICATION: "false"
+      ENABLE_DIGEST_AUTHENTICATION: "false"
+      AUTHENTICATION_TOKEN: "exserimus72"
+      SENTRY_DSN: ""
+      SENTRY_RELEASE: ""
+      SENTRY_ENVIRONMENT: "production"
+      SENTRY_TRACES_SAMPLE_RATE: ""
+      SECRET_KEY: "exserimus72"
+      PATH_PREFIX: ""
+      ENTITY_COLLECTION_URLS: "https://eoloa.net/collections/FurnitureCollection.json,https://eoloa.net/collections/OfficeCollection.json"
+      MAP_STORAGE_API_TOKEN: "exserimus72"
+      PUSHER_URL: "https://www.pusher.com/"
+      ENABLE_ADMIN_UI: "true"  # Active l'interface UI
+      ADMIN_UI_URL: "https://map-storage.eoloa.net"
+    volumes:
+      - map-storage-data:/maps
+    restart: always
+    
+    networks:
+      - traefik_proxy
+      - workadventure_network
+
+volumes:
+  redisdata:
+  map-storage-data:
+
+networks:
+  traefik_proxy:
+    external: true
+  workadventure_network:
+    driver: bridge

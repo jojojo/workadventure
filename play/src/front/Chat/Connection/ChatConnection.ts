@@ -222,6 +222,7 @@ export type MatrixPeerProfileDiagnostics = {
 export interface MatrixChatCapabilities {
     getMatrixClient(): MatrixClient | undefined;
     syncMatrixGlobalProfileFromLocalWokaAndName(forceSync: boolean): Promise<void>;
+    syncMatrixAvatarFromLocalWoka(): Promise<void>;
     getMatrixUserSettingsDiagnostics(): Promise<MatrixUserSettingsDiagnostics | undefined>;
     getMatrixPeerProfileDiagnostics(matrixUserId: string): Promise<MatrixPeerProfileDiagnostics | undefined>;
 }
@@ -272,6 +273,7 @@ export interface ChatConnectionInterface {
      */
     getMatrixClient?: () => MatrixClient | undefined;
     syncMatrixGlobalProfileFromLocalWokaAndName?: (forceSync: boolean) => Promise<void>;
+    syncMatrixAvatarFromLocalWoka?: () => Promise<void>;
     getMatrixUserSettingsDiagnostics?: () => Promise<MatrixUserSettingsDiagnostics | undefined>;
     getMatrixPeerProfileDiagnostics?: (matrixUserId: string) => Promise<MatrixPeerProfileDiagnostics | undefined>;
 }

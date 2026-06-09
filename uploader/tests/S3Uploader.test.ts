@@ -1,7 +1,9 @@
-import {ChildProcess} from "child_process";
-import {MinioContainer, StartedMinioContainer} from "@testcontainers/minio";
+import type {ChildProcess} from "child_process";
+import { asError } from "catch-unknown";
+import type { StartedMinioContainer} from "@testcontainers/minio";
+import {MinioContainer} from "@testcontainers/minio";
 import AWS from "aws-sdk";
-import {describe, expect, jest, it, beforeAll, beforeEach, afterAll, afterEach} from '@jest/globals';
+import {describe, expect, vi, it, beforeAll, beforeEach, afterAll, afterEach} from 'vitest';
 import {PLAY_URL} from "../src/Enum/EnvironmentVariable";
 import {uploadMultipleFilesTest, uploadSingleFileTest} from "./UploaderTestCommon";
 import startTestServer from "./startTestServer";
@@ -12,7 +14,7 @@ const MINIO_ACCESS_KEY = "fake-access-key";
 const MINIO_SECRET_KEY = "fake-secret";
 const TEST_BUCKET = "storage-bucket";
 
-jest.mock('../src/Enum/EnvironmentVariable', () => ({
+vi.mock('../src/Enum/EnvironmentVariable', () => ({
     get PLAY_URL() {
         return "http://PLAY.location"
     }
@@ -26,7 +28,7 @@ describe("S3 Uploader tests", () => {
     let endpoint: string
 
     let s3: AWS.S3
-    jest.setTimeout(30000)
+    vi.setConfig({ testTimeout: 30000, hookTimeout: 30000 })
     beforeAll(async ()=> {
         minioContainer = await new MinioContainer(MINIO_IMAGE)
             .withUsername(MINIO_ACCESS_KEY)
@@ -108,16 +110,19 @@ describe("S3 Uploader tests", () => {
 
     it("should upload one file to s3", async ()=> {
         const responseData = await uploadSingleFileTest(UPLOADER_URL);
-        await new Promise((resolve, reject) => {
+        await new Promise<void>((resolve, reject) => {
             s3.listObjects({Bucket: TEST_BUCKET}, (err, objects) => {
-                if (err) reject()
+                if (err) {
+                    reject(err)
+                    return;
+                }
                 const files = objects?.Contents || []
                 try {
                     expect(files[0]?.Key).toEqual(responseData.id)
-                    resolve(0)
+                    resolve()
                 } catch (e) {
                     console.error(e)
-                    reject()
+                    reject(asError(e))
                 }
             })
         })
@@ -128,14 +133,17 @@ describe("S3 Uploader tests", () => {
         const file1 = responseData[0]
         const file2 = responseData[1]
 
-        await new Promise((resolve, reject) => {
+        await new Promise<void>((resolve, reject) => {
             s3.listObjects({Bucket: TEST_BUCKET}, (err, objects) => {
-                if (err) reject()
+                if (err) {
+                    reject(err)
+                    return;
+                }
                 const files = objects?.Contents || []
                 const fileNames = files.map(f=>f.Key)
                 expect(fileNames).toContain(file1.id)
                 expect(fileNames).toContain(file2.id)
-                resolve(0)
+                resolve()
             })
         })
     })

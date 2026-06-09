@@ -10,6 +10,8 @@ import type { RemotePeer } from "./RemotePeer";
  * @param remotePeer The RemotePeer instance to collect statistics from
  * @returns A Svelte readable store with WebRtcStats or undefined
  */
+const WEBRTC_STATS_DISPLAY_INTERVAL_MS = 1_000;
+
 export function createWebRtcStats(remotePeer: RemotePeer): Readable<WebRtcStats | undefined> {
     return createWebRtcStatsFromReport(
         () => {
@@ -25,7 +27,8 @@ export function createWebRtcStats(remotePeer: RemotePeer): Readable<WebRtcStats 
             includeRelayDetails: true,
             isStopped: () => remotePeer.destroyed,
             onError: (e) => console.error("getStats error for peer ", remotePeer.spaceUserId, e),
-        }
+            intervalMs: WEBRTC_STATS_DISPLAY_INTERVAL_MS,
+        },
     );
 }
 
@@ -48,7 +51,8 @@ export function createLivekitWebRtcStats(track: RemoteTrack | undefined): Readab
             },
             includeRelayDetails: false,
             onError: (e) => console.error("getRTCStatsReport error for livekit track", e),
-        }
+            intervalMs: WEBRTC_STATS_DISPLAY_INTERVAL_MS,
+        },
     );
 }
 
@@ -58,11 +62,12 @@ type StatsFactoryOptions = {
     includeRelayDetails?: boolean;
     isStopped?: () => boolean;
     onError?: (error: unknown) => void;
+    intervalMs?: number;
 };
 
 function createWebRtcStatsFromReport(
     getReport: () => Promise<RTCStatsReport | undefined>,
-    options: StatsFactoryOptions
+    options: StatsFactoryOptions,
 ): Readable<WebRtcStats | undefined> {
     return readable<WebRtcStats | undefined>(undefined, (set) => {
         let bytesReceivedPrev = 0;
@@ -92,7 +97,7 @@ function createWebRtcStatsFromReport(
                             framesDecodedPrev,
                             timestampPrev,
                         },
-                        options
+                        options,
                     );
                     if (timestamp) {
                         bytesReceivedPrev = bytesReceived;
@@ -135,7 +140,7 @@ function createWebRtcStatsFromReport(
                 .catch((e) => {
                     options.onError?.(e);
                 });
-        }, 1000);
+        }, options.intervalMs ?? WEBRTC_STATS_DISPLAY_INTERVAL_MS);
         return () => {
             clearInterval(interval);
         };
@@ -152,7 +157,7 @@ function buildWebRtcStatsFromReport(
     stats: RTCStatsReport,
     videoTrackId: string | undefined,
     prev: StatsPrev,
-    options: StatsFactoryOptions
+    options: StatsFactoryOptions,
 ): {
     receiverStats: WebRtcStats | undefined;
     bytesReceived: number;

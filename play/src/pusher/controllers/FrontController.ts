@@ -163,7 +163,7 @@ export class FrontController extends BaseHttpController {
                 res,
                 z.object({
                     url: z.string(),
-                })
+                }),
             );
             if (query === undefined) {
                 return;
@@ -203,7 +203,7 @@ export class FrontController extends BaseHttpController {
                     res.status(526).send("Fail on challenging hostname");
                     return;
                 }
-            }
+            },
         );
 
         this.app.get("/server.json", (req: Request, res: Response) => {
@@ -294,6 +294,8 @@ export class FrontController extends BaseHttpController {
                 msApplicationTileImage: metaTagsData.favIcons[metaTagsData.favIcons.length - 1].src,
                 url,
                 script: await this.getScript(),
+                posthogApiKey: FRONT_ENVIRONMENT_VARIABLES.POSTHOG_API_KEY,
+                posthogUrl: FRONT_ENVIRONMENT_VARIABLES.POSTHOG_URL,
                 authToken: authToken,
                 googleDrivePickerClientId: GOOGLE_DRIVE_PICKER_CLIENT_ID,
                 cssVariablesOverride,

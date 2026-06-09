@@ -14,6 +14,7 @@ test.describe("Mobile @nowebkit @nodesktop", () => {
     test.beforeEach(async ({ page, browserName }) => {
         test.skip(!isMobile(page) || browserName === "webkit", "Run only on mobile Chromium");
     });
+
     test("Successfully bubble discussion with mobile device", async ({ browser }) => {
         await using page = await getPage(browser, "Bob", Map.url("empty"));
 
@@ -31,14 +32,14 @@ test.describe("Mobile @nowebkit @nodesktop", () => {
         await Menu.closeMenu(page);
 
         // Second browser
-        const pageAlice = await getPage(browser, "Alice", Map.url("empty"));
+        await using pageAlice = await getPage(browser, "Alice", Map.url("empty"));
         await pageAlice.evaluate(() => localStorage.setItem("debug", "*"));
 
         // Move Alice and create a bubble with another user
         // TODO: find a solution to test Joystick
         await Map.walkToPosition(pageAlice, positionToDiscuss.x, positionToDiscuss.y);
 
-        await expect(pageAlice.getByText("Bob")).toBeVisible();
+        await expect(pageAlice.getByText("Bob").first()).toBeVisible();
         // check if we can still open and close burgerMenu when 2 in proximity chat with cam on
         await Menu.openMenu(pageAlice);
         await Menu.closeMenu(pageAlice);
@@ -47,7 +48,7 @@ test.describe("Mobile @nowebkit @nodesktop", () => {
         await pageAlice.locator("#cameras-container").locator("button.full-screen-button").nth(1).click();
 
         // Second browser
-        const pageJohn = await getPage(browser, "John", Map.url("empty"));
+        await using pageJohn = await getPage(browser, "John", Map.url("empty"));
         await pageJohn.evaluate(() => localStorage.setItem("debug", "*"));
 
         // Move John and create a bubble with another user
@@ -73,21 +74,14 @@ test.describe("Mobile @nowebkit @nodesktop", () => {
         await pageJohn.mouse.up();
 
         // Expect to see camera of users
-        await expect(pageJohn.getByText("Bob")).toBeVisible();
-        await expect(pageJohn.getByText("Alice")).toBeVisible();
+        await expect(pageJohn.getByText("Bob").first()).toBeVisible();
+        await expect(pageJohn.getByText("Alice").first()).toBeVisible();
 
         // check if we can still open and close burgerMenu when 2 in proximity chat with cam on
         await Menu.openMenu(pageJohn);
         await Menu.closeMenu(pageJohn);
 
         await pageJohn.locator("#cameras-container").locator("button.full-screen-button").nth(1).click();
-
-        await pageAlice.close();
-        await pageJohn.close();
-
-        await pageJohn.context().close();
-        await pageAlice.context().close();
-        await page.context().close();
     });
 
     test("Successfully jitsi cowebsite with mobile device", async ({ browser }) => {
@@ -112,8 +106,6 @@ test.describe("Mobile @nowebkit @nodesktop", () => {
         await expect(page.getByTestId("tab1").getByRole("button", { name: "Close" })).toBeHidden({
             timeout: 10000,
         });
-
-        await page.context().close();
     });
 
     // TODO: create test to interact with another object

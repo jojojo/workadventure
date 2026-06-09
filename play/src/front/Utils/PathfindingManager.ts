@@ -1,5 +1,5 @@
 import { MathUtils } from "@workadventure/math-utils";
-import * as EasyStar from "easystarjs";
+import { js as EasyStar } from "easystarjs";
 import { CHARACTER_BODY_HEIGHT, CHARACTER_BODY_OFFSET_X, CHARACTER_BODY_OFFSET_Y } from "../Phaser/Entity/Character";
 
 export enum PathTileType {
@@ -12,14 +12,14 @@ export enum PathTileType {
 }
 
 export class PathfindingManager {
-    private easyStar: EasyStar.js;
+    private easyStar: EasyStar;
     private grid: number[][];
     private tileDimensions: { width: number; height: number };
     private currentPathfindingInstanceId: number | null = null;
     private pathfindingTimeout: number | null = null;
 
     constructor(collisionsGrid: number[][], tileDimensions: { width: number; height: number }) {
-        this.easyStar = new EasyStar.js();
+        this.easyStar = new EasyStar();
         this.easyStar.enableDiagonals();
         this.easyStar.disableCornerCutting();
         this.easyStar.setTileCost(PathTileType.Exit, 100);
@@ -47,7 +47,7 @@ export class PathfindingManager {
     public async findPathFromGameCoordinates(
         start: { x: number; y: number },
         end: { x: number; y: number },
-        tryFindingNearestAvailable = false
+        tryFindingNearestAvailable = false,
     ): Promise<{ x: number; y: number }[]> {
         const startTile = this.mapPixelsToTileUnits(this.clampToMap(start));
         const endTile = this.mapPixelsToTileUnits(this.clampToMap(end));
@@ -66,7 +66,7 @@ export class PathfindingManager {
                     end.x,
                     end.y,
                     this.tileDimensions.width,
-                    this.tileDimensions.height
+                    this.tileDimensions.height,
                 );
             }
         }
@@ -100,7 +100,7 @@ export class PathfindingManager {
     private async findPath(
         start: { x: number; y: number },
         end: { x: number; y: number },
-        tryFindingNearestAvailable = false
+        tryFindingNearestAvailable = false,
     ): Promise<{ path: { x: number; y: number }[]; isExactTarget: boolean }> {
         let isExactTarget = true;
         let endPoints: { x: number; y: number }[] = [end];
@@ -207,7 +207,7 @@ export class PathfindingManager {
      */
     private async getPath(
         start: { x: number; y: number },
-        end: { x: number; y: number }
+        end: { x: number; y: number },
     ): Promise<{ x: number; y: number }[]> {
         // Cancel any ongoing pathfinding operation
         this.cancelCurrentPathfinding();

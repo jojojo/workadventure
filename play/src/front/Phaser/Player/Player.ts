@@ -1,6 +1,6 @@
 import type { Unsubscriber } from "svelte/store";
 import { get } from "svelte/store";
-import type CancelablePromise from "cancelable-promise";
+import type { CancelablePromise } from "cancelable-promise";
 import { AskPositionMessage_AskType, PositionMessage_Direction } from "@workadventure/messages";
 import type { GameScene } from "../Game/GameScene";
 import type { ActiveEventList } from "../UserInput/UserInputManager";
@@ -15,10 +15,12 @@ import { passStatusToOnline } from "../../Rules/StatusRules/statusChangerFunctio
 import { localUserStore } from "../../Connection/LocalUserStore";
 
 export const hasMovedEventName = "hasMoved";
+export const startMovingEventName = "startMoving";
 export const requestEmoteEventName = "requestEmote";
 
 export class Player extends Character {
     private readonly unsubscribeVisibilityStore: Unsubscriber;
+    private isMoving = false;
 
     constructor(
         Scene: GameScene,
@@ -28,7 +30,7 @@ export class Player extends Character {
         texturesPromise: CancelablePromise<string[]>,
         direction: PositionMessage_Direction,
         moving: boolean,
-        companionTexturePromise: CancelablePromise<string> | undefined
+        companionTexturePromise: CancelablePromise<string> | undefined,
     ) {
         super(Scene, x, y, texturesPromise, name, direction, moving, 1, true, companionTexturePromise, "me");
         //the current player model should be push away by other players to prevent conflict
@@ -88,10 +90,17 @@ export class Player extends Character {
 
     public setPathToFollow(
         path: { x: number; y: number }[],
-        speed?: number
+        speed?: number,
     ): Promise<{ x: number; y: number; cancelled: boolean }> {
+        if (!this.isMoving) {
+            this.isMoving = true;
+            this.emit(startMovingEventName, { direction: this._lastDirection, x: this.x, y: this.y });
+        }
+
         this.getBody().setDirectControl(true);
-        return super.setPathToFollow(path, speed);
+        return super.setPathToFollow(path, speed).finally(() => {
+            this.isMoving = false;
+        });
     }
 
     public getCurrentPathDestinationPoint(): { x: number; y: number } | undefined {
@@ -143,9 +152,16 @@ export class Player extends Character {
         // Send movement events
         const emit = () => this.emit(hasMovedEventName, { moving, direction, x: this.x, y: this.y });
         if (moving) {
+            if (!this.isMoving) {
+                this.isMoving = true;
+                this.emit(startMovingEventName, { direction, x: this.x, y: this.y });
+            }
             this.moveBy(x, y);
             emit();
         } else if (get(userMovingStore)) {
+            if (this.isMoving) {
+                this.isMoving = false;
+            }
             this.stop();
             emit();
         }
@@ -200,13 +216,6 @@ export class Player extends Character {
         }
         passStatusToOnline();
         this.playAnimation(this._lastDirection, true);
-        this.scene.physics.world.once(Phaser.Physics.Arcade.Events.WORLD_STEP, () => {
-            // We wait for the physics engine to recompute the correct player position, then we update the depth.
-            const bodyY = body.position.y + body.height / 2 - body.offset.y;
-
-            this.setDepth(bodyY + 16);
-            this.updateUsernameDisplayPosition(body.position.x + body.width / 2 - body.offset.x, bodyY);
-        });
 
         if (this.companion) {
             this.companion.setTarget(this.x, this.y, this._lastDirection);
@@ -251,7 +260,7 @@ export class Player extends Character {
         this.scene.connection?.emitAskPosition(
             localUserStore.getLocalUser()?.uuid ?? "",
             this.scene.roomUrl,
-            AskPositionMessage_AskType.LOCATE
+            AskPositionMessage_AskType.LOCATE,
         );
     }
 

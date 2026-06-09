@@ -1,4 +1,5 @@
 <script lang="ts">
+    import type { Snippet } from "svelte";
     import { onDestroy, onMount, tick } from "svelte";
     import { z } from "zod";
     import Debug from "debug";
@@ -13,14 +14,19 @@
     import {} from "./PictureInPicture/PictureInPictureWindow";
     import { gameManager } from "../../Phaser/Game/GameManager";
 
+    interface Props {
+        children?: Snippet<[{ inPictureInPicture: boolean }]>;
+    }
+
+    let { children }: Props = $props();
+
     const debug = Debug("app:PictureInPicture");
 
     let divElement: HTMLDivElement;
     let parentDivElement: HTMLDivElement;
     let pipWindow: Window | undefined;
-    let mapImage: string | undefined = undefined;
-
-    /* eslint-disable svelte/no-dom-manipulating */
+    let mapImage: string | undefined = $state(undefined);
+    let pipRequested = false;
 
     const DocumentPictureInPictureSchema = z.object({
         requestWindow: z
@@ -30,7 +36,7 @@
                     preferInitialWindowPlacement: z.boolean(),
                     height: z.string(),
                     width: z.string(),
-                })
+                }),
             )
             .returns(z.promise(z.instanceof(Window))),
     });
@@ -65,6 +71,7 @@
         if (!parentDivElement) {
             return;
         }
+        // eslint-disable-next-line svelte/no-dom-manipulating
         parentDivElement.append(divElement);
 
         if (pipWindow) pipWindow.removeEventListener("pagehide", destroyPictureInPictureComponent);
@@ -80,8 +87,6 @@
             destroyPictureInPictureComponent();
         }
     });
-
-    let pipRequested = false;
 
     function requestPictureInPicture() {
         debug("Request Picture in Picture mode");
@@ -225,8 +230,8 @@
             <div
                 class="fixed z-0 top-0 left-0 w-full h-full bg-cover bg-center bg-no-repeat opacity-20 bg-black"
                 style="background-image: url({mapImage});"
-            />
+            ></div>
         {/if}
-        <slot inPictureInPicture={$activePictureInPictureStore} />
+        {@render children?.({ inPictureInPicture: $activePictureInPictureStore })}
     </div>
 </div>

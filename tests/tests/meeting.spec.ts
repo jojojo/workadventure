@@ -1,4 +1,4 @@
-import { expect, test, describe } from "@playwright/test";
+import { expect, test } from "@playwright/test";
 import Map from "./utils/map";
 import { publicTestMapUrl } from "./utils/urls";
 import { getPage } from "./utils/auth";
@@ -74,9 +74,6 @@ test.describe("Meeting actions test @nomobile @nowebkit", () => {
                 })
                 .locator("video"),
         ).toHaveCount(0);
-
-        await userBob.context().close();
-        await page.context().close();
     });
 
     test("enter and exit meeting quickly", async ({ browser }) => {
@@ -148,9 +145,6 @@ test.describe("Meeting actions test @nomobile @nowebkit", () => {
 
         await expect(page.locator("#cameras-container").getByText("Bob")).toBeHidden();
         await expect(userBob.locator("#cameras-container").getByText("Alice")).toBeHidden();
-
-        await userBob.context().close();
-        await page.context().close();
     });
 
     test("Meeting, chat should remain closed after user closes it intentionally @nofirefox", async ({ browser }) => {
@@ -186,9 +180,6 @@ test.describe("Meeting actions test @nomobile @nowebkit", () => {
 
         await chatUtils.expectUnreadMessagesCount(userAlice, 1);
         await chatUtils.expectProximityNotification(userAlice, "Are you there ?");
-
-        await userBob.context().close();
-        await userAlice.context().close();
     });
 
     test("Highlight fullscreen: participant cameras, auto-hide list, toggle, chat, exit @nofirefox", async ({
@@ -244,9 +235,6 @@ test.describe("Meeting actions test @nomobile @nowebkit", () => {
         // Exit fullscreen
         await page.getByTestId("highlight-fullscreen-exit").click();
         await expect(page.locator("#highlightFullScreenParticipantCamerasList")).toBeHidden({ timeout: 10_000 });
-
-        await userBob.context().close();
-        await page.context().close();
     });
 
     // FIXME jitsi bug
@@ -313,11 +301,11 @@ test.describe("Meeting actions test @nomobile @nowebkit", () => {
 
 
 
-    await userBob.context().close();
-    await page.context().close();
+    await userBob.close();
+    await page.close();
   });*/
 
-    describe("Block Users @nofirefox", () => {
+    test.describe("Block Users @nofirefox", () => {
         test("Block users @nofirefox", async ({ browser }) => {
             // Sometimes, in Firefox, the WebRTC connection cannot be established and this causes this test to fail.
             test.skip(
@@ -419,9 +407,6 @@ test.describe("Meeting actions test @nomobile @nowebkit", () => {
 
             await expect.poll(async () => await page.getByTestId("webrtc-video").count()).toBe(1);
             await expect.poll(async () => await userBob.getByTestId("webrtc-video").count()).toBe(1);
-
-            await userBob.context().close();
-            await page.context().close();
         });
     });
 });

@@ -1,13 +1,14 @@
 // import App from "../src/App";
-import {ChildProcess} from "child_process"
+import type {ChildProcess} from "child_process"
 import axios from "axios";
-import {StartedTestContainer} from "testcontainers";
+import type {StartedTestContainer} from "testcontainers";
 import {createClient} from "redis";
-import {describe, expect, jest, it, beforeAll, afterAll} from '@jest/globals';
+import {describe, expect, vi, it, beforeAll, afterAll} from 'vitest';
 import {PLAY_URL} from "../src/Enum/EnvironmentVariable";
 import {verifyResponseHeaders} from "./utils/verifyResponseHeaders";
 import {uploadFile} from "./utils/uploadFile";
 import {download} from "./utils/download";
+import type {UploadedFileResponse} from "./UploaderTestCommon";
 import {uploadMultipleFilesTest, uploadSingleFileTest} from "./UploaderTestCommon";
 import {RedisContainer} from "./utils/RedisContainer";
 import isPortReachable from "./utils/isPortReachable";
@@ -15,7 +16,7 @@ import startTestServer from "./startTestServer";
 
 const APP_PORT = 7373
 
-jest.mock('../src/Enum/EnvironmentVariable', () => ({
+vi.mock('../src/Enum/EnvironmentVariable', () => ({
     get PLAY_URL() {
         return "http://play.location"
     }
@@ -24,7 +25,7 @@ jest.mock('../src/Enum/EnvironmentVariable', () => ({
 describe("Redis Uploader tests", () => {
     let redisContainer:StartedTestContainer
     let server: ChildProcess| undefined;
-    jest.setTimeout(20000)
+    vi.setConfig({ testTimeout: 20000, hookTimeout: 20000 })
     const UPLOADER_URL = "http://localhost:7373"
     beforeAll(async ()=> {
         redisContainer = await new RedisContainer().start();
@@ -90,7 +91,7 @@ describe("Redis Uploader tests", () => {
 
 
     it("should upload and download audio message file to redis", async ()=> {
-        const uploadResponse = await uploadFile(
+        const uploadResponse = await uploadFile<UploadedFileResponse>(
             `${UPLOADER_URL}/upload-audio-message`,
             [{name: "temp-server.txt", contents: "temp file contents"}]);
 

@@ -1,6 +1,6 @@
 
 # protobuf build
-FROM --platform=$BUILDPLATFORM node:20.18-bullseye-slim AS proto-builder
+FROM --platform=$BUILDPLATFORM node:24-trixie-slim AS proto-builder
 WORKDIR /usr/src
 COPY messages/package-lock.json messages/package.json ./
 RUN npm ci
@@ -9,8 +9,8 @@ COPY libs ./../libs
 RUN npm run tag-version && npm run ts-proto
 
 # typescript build
-FROM --platform=$BUILDPLATFORM node:20.18-bullseye-slim AS builder
-ARG NODE_OPTIONS="--max-old-space-size=4096"
+FROM --platform=$BUILDPLATFORM node:24-trixie-slim AS builder
+ARG NODE_OPTIONS="--max-old-space-size=16384"
 WORKDIR /usr/src
 RUN apt-get update && apt-get install -y git
 COPY package.json package-lock.json ./
@@ -35,7 +35,7 @@ RUN export NODE_OPTIONS="$NODE_OPTIONS" && \
     npm run build
 
 # final production image
-FROM node:20.18-bullseye-slim
+FROM node:24-trixie-slim
 EXPOSE 3000
 WORKDIR /usr/src
 RUN apt-get update && apt-get install -y git curl
@@ -53,6 +53,8 @@ ENV UWS_HTTP_MAX_HEADERS_SIZE=16384
 RUN npm ci --omit=dev --workspace workadventure-play
 COPY --from=builder /usr/src/libs /usr/src/libs
 COPY --from=builder --chown=node:node /usr/src/play /usr/src/play
+# useful for profiling (with --prof) because it write a file in current directory
+RUN chown -R node:node /usr/src/play
 WORKDIR /usr/src/play
 
 HEALTHCHECK --interval=10s --timeout=7s --start-period=10s --retries=15 CMD curl -f http://localhost:3000/ping || exit 1

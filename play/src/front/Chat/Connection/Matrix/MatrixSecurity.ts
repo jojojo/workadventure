@@ -8,7 +8,6 @@ import type {
 import { VerificationRequestEvent, VerifierEvent } from "matrix-js-sdk/lib/crypto-api";
 import { deriveKey } from "matrix-js-sdk/lib/crypto/key_passphrase";
 import { decodeRecoveryKey } from "matrix-js-sdk/lib/crypto/recoverykey";
-import { openModal } from "svelte-modals";
 import { writable } from "svelte/store";
 import { VerificationMethod } from "matrix-js-sdk/lib/types";
 import { Phase } from "matrix-js-sdk/lib/crypto/verification/request/VerificationRequest";
@@ -21,6 +20,7 @@ import VerificationEmojiDialog from "./VerificationEmojiDialog.svelte";
 import DeviceVerificationPendingModal from "./DeviceVerificationPendingModal.svelte";
 import AskStartVerificationModal from "./AskStartVerificationModal.svelte";
 import ChooseDeviceVerificationMethodModal from "./ChooseDeviceVerificationMethodModal.svelte";
+import { modals } from "@wa-modals";
 
 export type KeyParams = { passphrase?: string; recoveryKey?: string };
 
@@ -28,11 +28,12 @@ export class MatrixSecurity {
     isEncryptionRequiredAndNotSet = writable(false);
     private matrixClientStore: MatrixClient | null = null;
     private isVerifyingDevice = false;
+    private automaticDeviceVerificationPromptRequested = false;
     public shouldDisplayModal = false;
     constructor(
         private initializingEncryptionPromise: Promise<void> | undefined = undefined,
         private restoreRoomMessagesPromise: Promise<void> | undefined = undefined,
-        private _openModal = openModal
+        private _openModal = modals.open,
     ) {}
 
     initClientCryptoConfiguration = async (): Promise<void> => {
@@ -93,13 +94,13 @@ export class MatrixSecurity {
                                             resolve(generatedKey);
                                         },
                                     });
-                                }
+                                },
                             );
 
                             if (generatedKey === null) {
                                 this.isEncryptionRequiredAndNotSet.set(true);
                                 const createSecretStorageKeyError = new Error(
-                                    "createSecretStorageKey : no generated key storage"
+                                    "createSecretStorageKey : no generated key storage",
                                 );
                                 initializingEncryptionReject(createSecretStorageKeyError);
                                 return Promise.reject(createSecretStorageKeyError);
@@ -169,7 +170,7 @@ export class MatrixSecurity {
     }
 
     static makeInputToKey(
-        keyInfo: SecretStorage.SecretStorageKeyDescription
+        keyInfo: SecretStorage.SecretStorageKeyDescription,
     ): (keyParams: KeyParams) => Promise<Uint8Array> {
         return ({ passphrase, recoveryKey }): Promise<Uint8Array> => {
             if (passphrase) {
@@ -246,7 +247,7 @@ export class MatrixSecurity {
                     if (generatedKey === null) {
                         this.isEncryptionRequiredAndNotSet.set(true);
                         const createSecretStorageKeyError = new Error(
-                            "createSecretStorageKey : no generated secret storage key"
+                            "createSecretStorageKey : no generated secret storage key",
                         );
                         return Promise.reject(createSecretStorageKeyError);
                     }
@@ -356,7 +357,20 @@ export class MatrixSecurity {
         });
     }
 
+    public openAutomaticChooseDeviceVerificationMethodModal(): Promise<void> {
+        if (this.automaticDeviceVerificationPromptRequested || this.isVerifyingDevice) {
+            return Promise.resolve();
+        }
+
+        this.automaticDeviceVerificationPromptRequested = true;
+        return this.openChooseDeviceVerificationMethodModal();
+    }
+
     public async openChooseDeviceVerificationMethodModal() {
+        if (this.isVerifyingDevice) {
+            return;
+        }
+
         try {
             this.isVerifyingDevice = true;
 

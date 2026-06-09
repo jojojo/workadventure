@@ -48,6 +48,13 @@ export const AdminBannedData = z.object({
 
 export type AdminBannedData = z.infer<typeof AdminBannedData>;
 
+export const AdminLoginMessage = z.object({
+    type: z.string(),
+    message: z.string(),
+});
+
+export type AdminLoginMessage = z.infer<typeof AdminLoginMessage>;
+
 export const isFetchMemberDataByUuidSuccessResponse = z.object({
     status: extendApi(z.literal("ok"), {
         description: "MUST be 'ok' if the system successfully authenticated the user.",
@@ -90,7 +97,7 @@ export const isFetchMemberDataByUuidSuccessResponse = z.object({
     companionTexture: extendApi(CompanionDetail.nullable().optional(), {
         description: "This data represents the companion texture that will be use.",
     }),
-    messages: extendApi(z.array(z.unknown()), {
+    messages: extendApi(z.array(AdminLoginMessage), {
         description:
             "Sets messages that will be displayed when the user logs in to the WA room. These messages are used for ban or ban warning.",
     }),
@@ -176,7 +183,7 @@ class AdminApi implements AdminInterface {
                 if (!warnIssued)
                     console.warn(
                         `Could not reach Admin API server at ${ADMIN_API_URL}, will retry in ${ADMIN_API_RETRY_DELAY} ms`,
-                        ex
+                        ex,
                     );
 
                 warnIssued = true;
@@ -220,7 +227,7 @@ class AdminApi implements AdminInterface {
     async fetchMapDetails(
         playUri: string,
         authToken?: string,
-        locale?: string
+        locale?: string,
     ): Promise<MapDetailsData | RoomRedirect | ErrorApiData> {
         try {
             let userId: string | undefined = undefined;
@@ -318,7 +325,7 @@ class AdminApi implements AdminInterface {
 
             console.error(
                 "Invalid answer received from the admin for the /api/map endpoint. /api/map answer is not a map details answer because:",
-                mapDetailData.error.issues
+                mapDetailData.error.issues,
             );
             Sentry.captureException(mapDetailData.error.issues);
             console.error("/api/map answer is not a room redirect because:", roomRedirect.error.issues);
@@ -366,7 +373,7 @@ class AdminApi implements AdminInterface {
         companionTextureId?: string,
         locale?: string,
         tags?: string[],
-        chatID?: string
+        chatID?: string,
     ): Promise<FetchMemberDataByUuidResponse> {
         try {
             /**
@@ -461,7 +468,7 @@ class AdminApi implements AdminInterface {
                 Sentry.captureException(err);
                 console.error(
                     `An error occurred during call to /room/access endpoint. HTTP Status: ${err.status}.`,
-                    err
+                    err,
                 );
             } else {
                 Sentry.captureException(err);
@@ -485,7 +492,7 @@ class AdminApi implements AdminInterface {
     async fetchMemberDataByToken(
         organizationMemberToken: string,
         playUri: string | null,
-        locale?: string
+        locale?: string,
     ): Promise<AdminApiData> {
         /**
          * @openapi
@@ -555,7 +562,7 @@ class AdminApi implements AdminInterface {
         reportedUserComment: string,
         reporterUserUuid: string,
         roomUrl: string,
-        locale?: string
+        locale?: string,
     ): Promise<unknown> {
         /**
          * @openapi
@@ -602,7 +609,7 @@ class AdminApi implements AdminInterface {
             },
             {
                 headers: { Authorization: `${ADMIN_API_TOKEN}`, "Accept-Language": locale ?? "en" },
-            }
+            },
         );
     }
 
@@ -610,7 +617,7 @@ class AdminApi implements AdminInterface {
         userUuid: string,
         ipAddress: string,
         roomUrl: string,
-        locale?: string
+        locale?: string,
     ): Promise<AdminBannedData> {
         /**
          * @openapi
@@ -670,7 +677,7 @@ class AdminApi implements AdminInterface {
                     encodeURIComponent(userUuid) +
                     "&roomUrl=" +
                     encodeURIComponent(roomUrl),
-                { headers: { Authorization: `${ADMIN_API_TOKEN}`, "Accept-Language": locale ?? "en" } }
+                { headers: { Authorization: `${ADMIN_API_TOKEN}`, "Accept-Language": locale ?? "en" } },
             )
             .then((data) => {
                 return AdminBannedData.parse(data.data);
@@ -681,7 +688,7 @@ class AdminApi implements AdminInterface {
         roomUrl: string,
         locale?: string,
         tags?: string[],
-        bypassTagFilter = false
+        bypassTagFilter = false,
     ): Promise<ShortMapDescriptionList> {
         /**
          * @openapi
@@ -760,14 +767,14 @@ class AdminApi implements AdminInterface {
         playUri: string,
         name: string,
         message: string,
-        byUserUuid: string
+        byUserUuid: string,
     ): Promise<boolean> {
         return axios.post(
             ADMIN_API_URL + "/api/ban",
             { uuidToBan, playUri, name, message, byUserUuid },
             {
                 headers: { Authorization: `${ADMIN_API_TOKEN}` },
-            }
+            },
         );
     }
 
@@ -775,6 +782,158 @@ class AdminApi implements AdminInterface {
         return this.capabilitiesDeferred.promise;
     }
 
+    /**
+     * @openapi
+     * /api/analytics/video-quality-batch:
+     *   post:
+     *     tags: ["AdminAPI"]
+     *     description: Accepts best-effort WebRTC video quality samples sent by pusher.
+     *     security:
+     *      - Bearer: []
+     *     consumes:
+     *      - "application/json"
+     *     produces:
+     *      - "application/json"
+     *     parameters:
+     *      - name: "payload"
+     *        in: "body"
+     *        required: true
+     *        schema:
+     *          type: object
+     *          required:
+     *            - schemaVersion
+     *            - sentAt
+     *            - pusherInstanceId
+     *            - samples
+     *          properties:
+     *            schemaVersion:
+     *              type: integer
+     *              example: 1
+     *            sentAt:
+     *              type: string
+     *              format: date-time
+     *            pusherInstanceId:
+     *              type: string
+     *              example: "pusher-0"
+     *            samples:
+     *              type: array
+     *              items:
+     *                type: object
+     *                required:
+     *                  - clientEventTime
+     *                  - pusherReceivedAt
+     *                  - reporterUserUuid
+     *                  - reporterSpaceUserId
+     *                  - remoteSpaceUserId
+     *                  - spaceName
+     *                  - world
+     *                  - roomId
+     *                  - streamId
+     *                  - streamCategory
+     *                  - transportType
+     *                  - fps
+     *                  - jitter
+     *                  - bandwidthBytesPerSecond
+     *                  - frameWidth
+     *                  - frameHeight
+     *                properties:
+     *                  clientEventTime:
+     *                    type: string
+     *                    format: date-time
+     *                  pusherReceivedAt:
+     *                    type: string
+     *                    format: date-time
+     *                  reporterUserUuid:
+     *                    type: string
+     *                    example: "reporter-uuid"
+     *                  remoteUserUuid:
+     *                    type: string
+     *                  reporterUserId:
+     *                    type: integer
+     *                  reporterSpaceUserId:
+     *                    type: string
+     *                    example: "reporter-space-user"
+     *                  remoteSpaceUserId:
+     *                    type: string
+     *                    example: "remote-space-user"
+     *                  spaceName:
+     *                    type: string
+     *                    example: "world.space"
+     *                  world:
+     *                    type: string
+     *                    example: "world"
+     *                  roomId:
+     *                    type: string
+     *                    example: "https://play.example/@/team/world/room"
+     *                  tabId:
+     *                    type: string
+     *                  reporterClientIp:
+     *                    type: string
+     *                    example: "203.0.113.10"
+     *                  streamId:
+     *                    type: string
+     *                    example: "stream-id"
+     *                  streamCategory:
+     *                    type: string
+     *                    enum: ["video", "screenSharing"]
+     *                  transportType:
+     *                    type: string
+     *                    enum: ["P2P", "Livekit"]
+     *                  relay:
+     *                    type: boolean
+     *                  relayProtocol:
+     *                    type: string
+     *                    enum: ["udp", "tcp", "tls"]
+     *                  livekitServerUrl:
+     *                    type: string
+     *                  fps:
+     *                    type: number
+     *                    format: float
+     *                    example: 24.5
+     *                  fpsStdDev:
+     *                    type: number
+     *                    format: float
+     *                  jitter:
+     *                    type: number
+     *                    format: float
+     *                    example: 0.07
+     *                  bandwidthBytesPerSecond:
+     *                    type: number
+     *                    format: float
+     *                  frameWidth:
+     *                    type: integer
+     *                    example: 1280
+     *                  frameHeight:
+     *                    type: integer
+     *                    example: 720
+     *                  mimeType:
+     *                    type: string
+     *                    example: "video/VP8"
+     *                  sampleSeq:
+     *                    type: integer
+     *                  connectionId:
+     *                    type: string
+     *                  sessionId:
+     *                    type: string
+     *     responses:
+     *       202:
+     *         description: Batch accepted
+     *         schema:
+     *           type: object
+     *           properties:
+     *             status:
+     *               type: string
+     *               example: "accepted"
+     *             acceptedSamples:
+     *               type: integer
+     *               example: 1
+     *       401:
+     *         description: Unauthorized
+     *       413:
+     *         description: Batch too large
+     *       422:
+     *         description: Invalid payload
+     */
     async getTagsList(roomUrl: string): Promise<string[]> {
         /**
          * @openapi
@@ -863,11 +1022,11 @@ class AdminApi implements AdminInterface {
             },
             {
                 headers: { Authorization: `${ADMIN_API_TOKEN}` },
-            }
+            },
         );
         if (response.status !== 204) {
             throw new Error(
-                "Error while saving name. Got unexpected status code. Expected 204, got " + response.status
+                "Error while saving name. Got unexpected status code. Expected 204, got " + response.status,
             );
         }
         return;
@@ -928,11 +1087,11 @@ class AdminApi implements AdminInterface {
             },
             {
                 headers: { Authorization: `${ADMIN_API_TOKEN}` },
-            }
+            },
         );
         if (response.status !== 204) {
             throw new Error(
-                "Error while saving name. Got unexpected status code. Expected 204, got " + response.status
+                "Error while saving name. Got unexpected status code. Expected 204, got " + response.status,
             );
         }
         return;
@@ -991,11 +1150,11 @@ class AdminApi implements AdminInterface {
             },
             {
                 headers: { Authorization: `${ADMIN_API_TOKEN}` },
-            }
+            },
         );
         if (response.status !== 204) {
             throw new Error(
-                "Error while saving name. Got unexpected status code. Expected 204, got " + response.status
+                "Error while saving name. Got unexpected status code. Expected 204, got " + response.status,
             );
         }
         return;
@@ -1165,7 +1324,7 @@ class AdminApi implements AdminInterface {
             },
             {
                 headers: { Authorization: `${ADMIN_API_TOKEN}` },
-            }
+            },
         );
     }
 
@@ -1209,7 +1368,7 @@ class AdminApi implements AdminInterface {
             },
             {
                 headers: { Authorization: `${ADMIN_API_TOKEN}` },
-            }
+            },
         );
         const refreshTokenResponse = isOauthRefreshToken.safeParse(response.data);
         if (refreshTokenResponse.error) {

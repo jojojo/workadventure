@@ -34,8 +34,8 @@
 -->
 <script lang="ts">
     import { onDestroy, onMount, setContext } from "svelte";
-    import type { Writable } from "svelte/store";
-    import { myCameraPeerStore, type MyLocalStreamable } from "../../Stores/StreamableCollectionStore";
+    import { myCameraPeerStore } from "../../Stores/StreamableCollectionStore";
+    import type { VideoBox as VideoBoxModel } from "../../Space/VideoBox";
     import VideoBox from "../Video/VideoBox.svelte";
     import MediaBox from "../Video/MediaBox.svelte";
     import { highlightedEmbedScreen } from "../../Stores/HighlightedEmbedScreenStore";
@@ -55,11 +55,17 @@
     import ChevronRightIcon from "../Icons/ChevronRightIcon.svelte";
     import ChevronUpIcon from "../Icons/ChevronUpIcon.svelte";
     import ChevronDownIcon from "../Icons/ChevronDownIcon.svelte";
+    import {
+        computePictureInPictureGridLayout,
+        pipGridTemplateColumns,
+        pipGridTemplateRows,
+        pipTileStyle,
+        PIP_GRID_MAX_VIDEOS,
+    } from "../Video/PictureInPicture/pictureInPictureGridLayout";
     import ResizeHandle from "./ResizeHandle.svelte";
 
     setContext("inCameraContainer", true);
 
-    export let oneLineMaxHeight: number;
     let gap = 16; // Configurable gap between videos in pixels
 
     // The "maximum" number of videos we want to display.
@@ -67,24 +73,44 @@
     // will be maximumVideosPerPage + nbVideos % vpr
     const maximumVideosPerPage = MAX_DISPLAYED_VIDEOS;
 
-    export let isOnOneLine: boolean;
-    export let oneLineMode: "vertical" | "horizontal" = "horizontal";
-    let containerWidth: number;
-    let maxContainerHeight: number;
-    let containerHeight: number;
-    let videoWidth: number;
-    let videoHeight: number | undefined;
-    let camerasContainer: HTMLDivElement | undefined;
+    interface Props {
+        oneLineMaxHeight: number;
+        isOnOneLine: boolean;
+        oneLineMode: "vertical" | "horizontal";
+    }
+
+    let { oneLineMaxHeight, isOnOneLine, oneLineMode = "horizontal" }: Props = $props();
+
+    let containerWidth: number = $state(0);
+    let maxContainerHeight: number = $state(0);
+    let containerHeight: number = $state(0);
+    let camerasContainerHeight: number = $state(0);
+    let videoWidth: number = $state(0);
+    let videoHeight: number | undefined = $state();
+    let camerasContainer: HTMLDivElement | undefined = $state();
 
     // The minimum width of a media box in pixels
     const minMediaBoxWidth = 160;
 
+    /** Webcam locale dans `streamableCollectionStore` (`myCameraPeerStore`). */
+    const LOCAL_CAMERA_VIDEO_BOX_UNIQUE_ID = "-1";
+
     const gameScene = gameManager.getCurrentGameScene();
 
-    $: myCameraStreamable = $myCameraPeerStore.streamable as Writable<MyLocalStreamable | undefined>;
+    function excludeLocalCamera(videoBoxes: VideoBoxModel[]): VideoBoxModel[] {
+        return videoBoxes.filter((box) => box.uniqueId !== LOCAL_CAMERA_VIDEO_BOX_UNIQUE_ID);
+    }
+
+    let isPictureInPictureGridMode = $derived($activePictureInPictureStore && oneLineMode === "vertical");
+    let pipDockLocalCamera = $derived(
+        isPictureInPictureGridMode &&
+            $oneLineStreamableCollectionStore.length > PIP_GRID_MAX_VIDEOS &&
+            $oneLineStreamableCollectionStore.some((box) => box.uniqueId === LOCAL_CAMERA_VIDEO_BOX_UNIQUE_ID),
+    );
+    let pipRemoteParticipantCount = $derived(excludeLocalCamera($oneLineStreamableCollectionStore).length);
 
     // Single IntersectionObserver shared across all VideoBox components
-    let intersectionObserver: IntersectionObserver | undefined;
+    let intersectionObserver: IntersectionObserver | undefined = $state();
 
     onMount(() => {
         // Create the IntersectionObserver once camerasContainer is bound
@@ -101,38 +127,22 @@
                 {
                     root: camerasContainer,
                     threshold: 0,
-                }
+                },
             );
         }
 
         // Subscriptions for store changes
         const unsubscriber = orderedStreamableCollectionStore.subscribe((orderedStreamableCollection) => {
+            // Sort the collection by priority
+            const sortedCollection = [...orderedStreamableCollection].sort((a, b) => b.priority - a.priority);
             // Each time the order of the videos changes, we update the displayOrder of each videoBox
-            for (let i = 0; i < orderedStreamableCollection.length; i++) {
-                orderedStreamableCollection[i].displayOrder.set(i);
+            for (let i = 0; i < sortedCollection.length; i++) {
+                sortedCollection[i].displayOrder.set(i);
             }
-        });
-
-        const unsubscribePictureInPictureMode = activePictureInPictureStore.subscribe((activePictureInPicture) => {
-            // If the picture in picture mode is activated, we update the displayInPictureInPictureMode of the local camera streamable
-            // To set true, the local camera streamable will appear like other camera boxes in the picture in picture mode
-            $myCameraStreamable?.setDisplayInPictureInPictureMode(
-                activePictureInPicture && $highlightedEmbedScreen != undefined
-            );
-        });
-
-        const unsubscribeHighlightedEmbedScreen = highlightedEmbedScreen.subscribe((highlightedEmbedScreen) => {
-            // If the highlighted embed screen is changed, we update the displayInPictureInPictureMode of the local camera streamable
-            // To set true, the local camera streamable will appear like other camera boxes in the picture in picture mode
-            $myCameraStreamable?.setDisplayInPictureInPictureMode(
-                highlightedEmbedScreen != undefined && $activePictureInPictureStore
-            );
         });
 
         return () => {
             unsubscriber();
-            unsubscribePictureInPictureMode();
-            unsubscribeHighlightedEmbedScreen();
             if (intersectionObserver) {
                 intersectionObserver.disconnect();
             }
@@ -143,9 +153,9 @@
         gameScene.reposition();
     });
 
-    $: maxMediaBoxWidth = (oneLineMaxHeight * 16) / 9;
+    let maxMediaBoxWidth = $derived((oneLineMaxHeight * 16) / 9);
 
-    $: {
+    $effect(() => {
         if (!isOnOneLine) {
             containerHeight = maxContainerHeight * localUserStore.getCameraContainerHeight();
             if (camerasContainer) {
@@ -156,21 +166,39 @@
                 camerasContainer.style.height = "";
             }
         }
-    }
+    });
 
-    $: {
+    $effect(() => {
         if (isOnOneLine) {
+            const oneLineCount = Math.max(1, $oneLineStreamableCollectionStore.length);
+            const pipVerticalGrid = $activePictureInPictureStore && oneLineMode === "vertical" && isOnOneLine;
+            const pipSortWindowCount = pipDockLocalCamera ? pipRemoteParticipantCount : oneLineCount;
+
             if (oneLineMode === "horizontal") {
-                videoWidth = Math.max(
-                    Math.min(maxMediaBoxWidth, containerWidth / $oneLineStreamableCollectionStore.length),
-                    minMediaBoxWidth
+                const countForTileSizing = pipVerticalGrid
+                    ? Math.min(PIP_GRID_MAX_VIDEOS, pipSortWindowCount)
+                    : oneLineCount;
+                const currentVideoWidth = Math.max(
+                    Math.min(maxMediaBoxWidth, containerWidth / countForTileSizing),
+                    minMediaBoxWidth,
                 );
+                videoWidth = currentVideoWidth;
                 videoHeight = undefined;
-                maxVisibleVideosStore.set(Math.ceil(containerWidth / videoWidth));
+                if (pipVerticalGrid) {
+                    maxVisibleVideosStore.set(Math.min(PIP_GRID_MAX_VIDEOS, pipSortWindowCount));
+                } else {
+                    maxVisibleVideosStore.set(Math.ceil(containerWidth / currentVideoWidth));
+                }
             } else {
-                videoWidth = containerWidth;
-                videoHeight = videoWidth * (9 / 16);
-                maxVisibleVideosStore.set(Math.ceil(containerHeight / videoHeight));
+                const currentVideoWidth = containerWidth;
+                const currentVideoHeight = currentVideoWidth * (9 / 16);
+                videoWidth = currentVideoWidth;
+                videoHeight = currentVideoHeight;
+                if (pipVerticalGrid) {
+                    maxVisibleVideosStore.set(Math.min(PIP_GRID_MAX_VIDEOS, pipSortWindowCount));
+                } else {
+                    maxVisibleVideosStore.set(Math.ceil(containerHeight / currentVideoHeight));
+                }
             }
         } else {
             const layout = calculateOptimalLayout(containerWidth, containerHeight);
@@ -178,7 +206,7 @@
             videoHeight = layout.videoHeight;
         }
         gameScene.reposition();
-    }
+    });
 
     function calculateOptimalLayout(containerWidth: number, containerHeight: number) {
         if (!containerWidth || !containerHeight) {
@@ -200,7 +228,7 @@
         // Calculate maximum number of videos that can fit in one row at minimum size
         const maxVideosPerRow = Math.min(
             Math.floor((containerWidth + gap) / (minMediaBoxWidth + gap)),
-            $oneLineStreamableCollectionStore.length
+            $oneLineStreamableCollectionStore.length,
         );
 
         let lastValidConfig = null;
@@ -308,9 +336,10 @@
         );
     }
 
-    let grabPointerEvents = false;
+    let grabPointerEvents = $state(false);
     const isWebkit = "WebkitAppearance" in document.documentElement.style;
-    $: {
+
+    $effect(() => {
         // In Webkit, the scroll event on the cameras-container is not triggered when the user scrolls unless the
         // pointer-events is set to auto. But we want to avoid that unless there is a scroll bar to keep the
         // pointer events to go through to the map.
@@ -323,10 +352,8 @@
             setTimeout(() => {
                 if (camerasContainer) {
                     if (camerasContainer.scrollWidth > containerWidth) {
-                        //eslint-disable-next-line svelte/infinite-reactive-loop
                         grabPointerEvents = true;
                     } else {
-                        //eslint-disable-next-line svelte/infinite-reactive-loop
                         grabPointerEvents = false;
                     }
                 }
@@ -334,9 +361,9 @@
         } else {
             grabPointerEvents = false;
         }
-    }
+    });
 
-    let resizeInProgress = false;
+    let resizeInProgress = $state(false);
     function onResizeHandler(height: number) {
         resizeInProgress = true;
         containerHeight = height;
@@ -353,13 +380,34 @@
     }
 
     // Scroll indicators: show when user can scroll to see more cameras
-    let canScrollLeft = false;
-    let canScrollRight = false;
-    let canScrollTop = false;
-    let canScrollBottom = false;
+    let canScrollLeft = $state(false);
+    let canScrollRight = $state(false);
+    let canScrollTop = $state(false);
+    let canScrollBottom = $state(false);
+    let pipVideoBoxes = $derived(
+        isPictureInPictureGridMode
+            ? pipDockLocalCamera
+                ? excludeLocalCamera($orderedStreamableCollectionStore).slice(0, PIP_GRID_MAX_VIDEOS)
+                : $orderedStreamableCollectionStore.slice(0, PIP_GRID_MAX_VIDEOS)
+            : $oneLineStreamableCollectionStore,
+    );
+    let pipLayout = $derived(
+        computePictureInPictureGridLayout(
+            pipVideoBoxes.length,
+            Math.max(1, containerWidth || 0),
+            Math.max(1, camerasContainerHeight || 0),
+        ),
+    );
 
     function updateScrollIndicators() {
         if (!camerasContainer) return;
+        if (isPictureInPictureGridMode) {
+            canScrollLeft = false;
+            canScrollRight = false;
+            canScrollTop = false;
+            canScrollBottom = false;
+            return;
+        }
         const { scrollLeft, scrollTop, scrollWidth, scrollHeight, clientWidth, clientHeight } = camerasContainer;
         const threshold = 4; // pixels tolerance
 
@@ -407,16 +455,18 @@
     }
 
     // Re-run scroll indicator check when layout or content changes
-    $: if (camerasContainer) {
-        const _exhaustiveCheck = [
-            $oneLineStreamableCollectionStore,
-            containerWidth,
-            containerHeight,
-            isOnOneLine,
-            oneLineMode,
-        ];
-        setTimeout(updateScrollIndicators, 100);
-    }
+    $effect(() => {
+        if (camerasContainer) {
+            const _exhaustiveCheck = [
+                $oneLineStreamableCollectionStore,
+                containerWidth,
+                containerHeight,
+                isOnOneLine,
+                oneLineMode,
+            ];
+            setTimeout(updateScrollIndicators, 100);
+        }
+    });
 </script>
 
 <div
@@ -426,24 +476,33 @@
 >
     <div
         bind:clientWidth={containerWidth}
+        bind:clientHeight={camerasContainerHeight}
         bind:this={camerasContainer}
-        class="no-scroll-bar gap-4 mx-1"
+        class="no-scroll-bar mx-1 justify-center"
         class:pointer-events-none={!grabPointerEvents}
         class:pointer-events-auto={grabPointerEvents}
         class:hidden={$highlightFullScreen && $highlightedEmbedScreen && oneLineMode !== "vertical"}
-        class:flex={true}
+        class:flex={!isPictureInPictureGridMode}
+        class:grid={isPictureInPictureGridMode}
+        style={isPictureInPictureGridMode
+            ? `grid-template-columns: ${pipGridTemplateColumns(pipLayout.columnTracks)}; grid-template-rows: ${pipGridTemplateRows(pipLayout.rowTracks)};`
+            : ""}
+        class:gap-2={isPictureInPictureGridMode}
+        class:p-2={isPictureInPictureGridMode}
+        class:gap-4={!isPictureInPictureGridMode}
         class:max-h-full={isOnOneLine && oneLineMode === "horizontal"}
         class:max-w-full={!isOnOneLine || (isOnOneLine && oneLineMode === "horizontal")}
-        class:flex-col={isOnOneLine && oneLineMode === "vertical"}
+        class:flex-col={isOnOneLine && oneLineMode === "vertical" && !isPictureInPictureGridMode}
         class:flex-wrap={!isOnOneLine}
         class:content-start={!isOnOneLine}
-        class:justify-start={isOnOneLine}
-        class:justify-center={!isOnOneLine || $activePictureInPictureStore}
+        class:!justify-start={canScrollLeft || canScrollRight}
         class:whitespace-nowrap={isOnOneLine}
         class:relative={true}
-        class:overflow-x-auto={isOnOneLine && oneLineMode === "horizontal"}
+        class:overflow-x-auto={isOnOneLine && oneLineMode === "horizontal" && !isPictureInPictureGridMode}
         class:overflow-x-hidden={!isOnOneLine}
-        class:overflow-y-auto={!isOnOneLine || (isOnOneLine && oneLineMode === "vertical")}
+        class:overflow-y-auto={!isOnOneLine ||
+            (isOnOneLine && oneLineMode === "vertical" && !isPictureInPictureGridMode)}
+        class:overflow-hidden={isPictureInPictureGridMode}
         class:overflow-y-hidden={isOnOneLine && oneLineMode === "horizontal"}
         class:pb-3={isOnOneLine && !$highlightedEmbedScreen}
         class:m-0={isOnOneLine}
@@ -457,27 +516,37 @@
         id="cameras-container"
         data-testid="cameras-container"
     >
-        {#each $oneLineStreamableCollectionStore as videoBox (videoBox.uniqueId)}
-            <VideoBox {videoBox} {isOnOneLine} {oneLineMode} {videoWidth} {videoHeight} {intersectionObserver} />
-        {/each}
-        <!-- in PictureInPicture, let's finish with our video feedback in small -->
-        {#if isOnOneLine && oneLineMode === "vertical" && !($myCameraStreamable?.displayInPictureInPictureMode ?? false)}
-            <div class="fixed bottom-20 right-0 z-50">
-                <div
-                    data-unique-id="my-camera"
-                    style={`top: -50px; width: ${videoWidth / 3}px; max-width: ${videoWidth / 3}px;${
-                        videoHeight ? `height: ${videoHeight / 3}px; max-height: ${videoHeight / 3}px;` : ""
-                    } ${
-                        $activePictureInPictureStore ? "min-width: 224px; min-height: 130px; margin-right: 0.5rem;" : ""
-                    }`}
-                    class="pointer-events-auto basis-40 shrink-0 min-h-24 grow camera-box"
-                    class:aspect-video={videoHeight === undefined}
-                >
-                    <MediaBox videoBox={$myCameraPeerStore} />
-                </div>
+        {#each pipVideoBoxes as videoBox, i (videoBox.uniqueId)}
+            <div
+                style={isPictureInPictureGridMode ? pipTileStyle(pipLayout.tiles[i]) : ""}
+                class:min-h-0={isPictureInPictureGridMode}
+                class:min-w-0={isPictureInPictureGridMode}
+            >
+                <VideoBox
+                    {videoBox}
+                    {isOnOneLine}
+                    {oneLineMode}
+                    {videoWidth}
+                    {videoHeight}
+                    intersectionObserver={isPictureInPictureGridMode ? undefined : intersectionObserver}
+                    forceDisplay={isPictureInPictureGridMode ||
+                        (videoBox.uniqueId === LOCAL_CAMERA_VIDEO_BOX_UNIQUE_ID &&
+                            isOnOneLine &&
+                            oneLineMode === "vertical" &&
+                            !pipDockLocalCamera)}
+                    fitContainer={isPictureInPictureGridMode}
+                />
             </div>
-        {/if}
+        {/each}
     </div>
+    {#if pipDockLocalCamera}
+        <div
+            class="pointer-events-auto fixed bottom-20 right-2 z-30 aspect-video w-40 max-w-[14rem] min-w-[8.75rem] overflow-hidden rounded-lg shadow-xl"
+            data-testid="pip-local-camera-overlay"
+        >
+            <MediaBox videoBox={$myCameraPeerStore} />
+        </div>
+    {/if}
     {#if !isOnOneLine}
         <ResizeHandle
             minHeight={maxContainerHeight * 0.1}
@@ -502,9 +571,9 @@
                 type="button"
                 class="scroll-indicator scroll-indicator-left scroll-indicator-button opacity-10 group-hover/cameras-container:opacity-100"
                 aria-label="Scroll left to see more cameras"
-                on:click={scrollCamerasLeft}
+                onclick={scrollCamerasLeft}
             >
-                <span class="scroll-indicator-gradient scroll-indicator-gradient-left" />
+                <span class="scroll-indicator-gradient scroll-indicator-gradient-left"></span>
                 <span class="scroll-indicator-chevron">
                     <ChevronLeftIcon height="h-8" width="w-8" strokeWidth="2" />
                 </span>
@@ -515,9 +584,9 @@
                 type="button"
                 class="scroll-indicator scroll-indicator-right scroll-indicator-button opacity-10 group-hover/cameras-container:opacity-100"
                 aria-label="Scroll right to see more cameras"
-                on:click={scrollCamerasRight}
+                onclick={scrollCamerasRight}
             >
-                <span class="scroll-indicator-gradient scroll-indicator-gradient-right" />
+                <span class="scroll-indicator-gradient scroll-indicator-gradient-right"></span>
                 <span class="scroll-indicator-chevron">
                     <ChevronRightIcon height="h-8" width="w-8" strokeWidth="2" />
                 </span>
@@ -529,9 +598,9 @@
                 type="button"
                 class="absolute scroll-indicator scroll-indicator-top scroll-indicator-button opacity-10 group-hover/cameras-container:opacity-100"
                 aria-label="Scroll up to see more cameras"
-                on:click={scrollCamerasUp}
+                onclick={scrollCamerasUp}
             >
-                <span class="scroll-indicator-gradient scroll-indicator-gradient-top" />
+                <span class="scroll-indicator-gradient scroll-indicator-gradient-top"></span>
                 <span class="scroll-indicator-chevron">
                     <ChevronUpIcon height="h-8" width="w-8" strokeWidth="2" />
                 </span>
@@ -542,9 +611,9 @@
                 type="button"
                 class="absolute scroll-indicator scroll-indicator-bottom scroll-indicator-button h-fit w-fit opacity-40 group-hover/cameras-container:opacity-100"
                 aria-label="Scroll down to see more cameras"
-                on:click={scrollCamerasDown}
+                onclick={scrollCamerasDown}
             >
-                <span class="scroll-indicator-gradient scroll-indicator-gradient-bottom h-full" />
+                <span class="scroll-indicator-gradient scroll-indicator-gradient-bottom h-full"></span>
                 <span class="scroll-indicator-chevron">
                     <ChevronDownIcon height="h-8" width="w-8" strokeWidth="2" />
                 </span>
@@ -663,7 +732,9 @@
         background: rgba(0, 0, 0, 0.55);
         color: white;
         box-shadow: 0 2px 8px rgba(0, 0, 0, 0.4);
-        transition: transform 0.2s ease, background 0.2s ease;
+        transition:
+            transform 0.2s ease,
+            background 0.2s ease;
     }
 
     .scroll-indicator-chevron :global(svg) {

@@ -20,7 +20,6 @@ import type { EntitiesManager } from "../../GameMap/EntitiesManager";
 import { AreaPreview } from "../../../Components/MapEditor/AreaPreview";
 import { waScaleManager } from "../../../Services/WaScaleManager";
 import { enableUserInputsStore } from "../../../../Stores/UserInputStore";
-import { CameraManagerEvent } from "../../CameraManager";
 import type { MapEditorTool } from "./MapEditorTool";
 
 const logger = debug("explorer-tool");
@@ -75,7 +74,7 @@ export class ExplorerTool implements MapEditorTool {
         gameObjects: Phaser.GameObjects.GameObject[],
         deltaX: number,
         deltaY: number,
-        deltaZ: number
+        deltaZ: number,
     ) => {
         this.scene.handleMouseWheel(deltaY);
     };
@@ -127,11 +126,10 @@ export class ExplorerTool implements MapEditorTool {
         this.scene.markDirty();
     };
 
-    private updateViewport = (): void => {
-        this.scene.throttledSendViewportToServer();
-    };
-
-    constructor(private mapEditorModeManager: MapEditorModeManager, private readonly scene: GameScene) {
+    constructor(
+        private mapEditorModeManager: MapEditorModeManager,
+        private readonly scene: GameScene,
+    ) {
         this.entitiesManager = this.scene.getGameMapFrontWrapper().getEntitiesManager();
     }
 
@@ -160,6 +158,7 @@ export class ExplorerTool implements MapEditorTool {
 
         // Restore controls of the scene
         this.scene.userInputManager.restoreControls("explorerTool");
+        this.scene.userInputManager.restoreRightClick();
 
         // Remove all controls for the exploration mode
         this.scene.input.keyboard?.off("keydown", this.keyDownHandler);
@@ -169,8 +168,6 @@ export class ExplorerTool implements MapEditorTool {
         this.scene.input.off("pointermove", this.pointerMoveHandler);
         this.scene.input.off("pointerup", this.pointerUpHandler);
         this.scene.input.off(Phaser.Input.Events.GAME_OUT, this.pointerUpHandler);
-        // Unsubscribe to camera updates
-        this.scene.getCameraManager().off(CameraManagerEvent.CameraUpdate, this.updateViewport);
 
         // Restore focus target
         waScaleManager.setFocusTarget(undefined);
@@ -249,7 +246,7 @@ export class ExplorerTool implements MapEditorTool {
 
         // Disable controls of the scene
         this.scene.userInputManager.disableControls("explorerTool");
-
+        this.scene.userInputManager.disableRightClick();
         // Implement all controls for the exploration mode
         this.scene.input.setTopOnly(false);
         this.scene.input.keyboard?.on("keydown", this.keyDownHandler);
@@ -270,10 +267,6 @@ export class ExplorerTool implements MapEditorTool {
 
         // Mark the scene as dirty
         this.scene.markDirty();
-
-        // Listen to camera updates
-        // We need to update the viewport when the camera is updated to ensure the viewport is always up to date
-        this.scene.getCameraManager().on(CameraManagerEvent.CameraUpdate, this.updateViewport);
     }
     public destroy(): void {
         this.clear();
@@ -287,7 +280,7 @@ export class ExplorerTool implements MapEditorTool {
     public handleIncomingCommandMessage(editMapCommandMessage: EditMapCommandMessage): Promise<void> {
         // Refresh the entities store
         mapExplorationEntitiesStore.set(
-            gameManager.getCurrentGameScene().getGameMapFrontWrapper().getEntitiesManager().getEntities()
+            gameManager.getCurrentGameScene().getGameMapFrontWrapper().getEntitiesManager().getEntities(),
         );
         return Promise.resolve();
     }

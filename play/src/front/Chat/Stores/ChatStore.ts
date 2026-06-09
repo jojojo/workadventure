@@ -1,5 +1,5 @@
 import { get, writable } from "svelte/store";
-import type { ComponentType } from "svelte";
+import type { WorkAdventureComponent, WorkAdventureComponentProps } from "../../../types/component";
 import type { ChatMessage as NewChatMessage } from "../Connection/ChatConnection";
 import { chatVisibilityStore } from "../../Stores/ChatStore";
 import { ENABLE_CHAT } from "../../Enum/EnvironmentVariable";
@@ -18,8 +18,8 @@ type NavChatTab =
       }
     | {
           key: "externalModule";
-          component: ComponentType;
-          props?: Record<string, unknown>;
+          component: WorkAdventureComponent;
+          props?: WorkAdventureComponentProps;
       };
 
 function createNavChatStore() {
@@ -42,7 +42,7 @@ function createNavChatStore() {
             }
             analyticsClient.openUserList();
         },
-        switchToCustomComponent(component: ComponentType, props?: Record<string, unknown>) {
+        switchToCustomComponent(component: WorkAdventureComponent, props?: WorkAdventureComponentProps) {
             set({ key: "externalModule", component, props });
         },
     };
@@ -81,7 +81,7 @@ export function initializeChatVisibilitySubscription() {
         const isEncrypted = get(selectedRoom.isEncrypted);
 
         if (visible && isEncrypted) {
-            matrixSecurity.openChooseDeviceVerificationMethodModal().catch((error) => {
+            matrixSecurity.openAutomaticChooseDeviceVerificationMethodModal().catch((error) => {
                 console.error(error);
             });
         }

@@ -88,6 +88,7 @@ test.describe("Scripting audio streams @nomobile @nofirefox @nowebkit", () => {
         // This test does not depend on the browser. Let's only run it in Chromium.
         test.skip(browserName !== "chromium" || isMobile(page), "Run only on Chromium and skip on mobile");
     });
+
     test("can play and listen to streams @scripting", async ({ browser }, { project }) => {
         // This test runs only on Chrome
         // Firefox fails it because the sample rate must be equal to the microphone sample rate
@@ -101,7 +102,7 @@ test.describe("Scripting audio streams @nomobile @nofirefox @nowebkit", () => {
         await Map.teleportToPosition(page, 32, 32);
 
         // Open new page for alice
-        const alice = await getPage(
+        await using alice = await getPage(
             browser,
             "Alice",
             publicTestMapUrl("tests/E2E/empty.json", "scripting_audio_stream"),
@@ -131,14 +132,18 @@ test.describe("Scripting audio streams @nomobile @nofirefox @nowebkit", () => {
         await expect.poll(() => evaluateScript(page, () => window.streamInterrupted)).toBe(false);
 
         // Now, let's add more users to test the switch to Livekit
-        const alice2 = await getPage(
+        await using alice2 = await getPage(
             browser,
             "Alice",
             publicTestMapUrl("tests/E2E/empty.json", "scripting_audio_stream"),
         );
         await Menu.turnOffMicrophone(alice2);
         await Map.teleportToPosition(alice2, 32, 32);
-        const eve = await getPage(browser, "Eve", publicTestMapUrl("tests/E2E/empty.json", "scripting_audio_stream"));
+        await using eve = await getPage(
+            browser,
+            "Eve",
+            publicTestMapUrl("tests/E2E/empty.json", "scripting_audio_stream"),
+        );
         await Menu.turnOffMicrophone(eve);
         const proximityChatPromise = waitForJoinProximityChat(eve);
         await Map.teleportToPosition(eve, 32, 32);
@@ -176,10 +181,9 @@ test.describe("Scripting audio streams @nomobile @nofirefox @nowebkit", () => {
 
         // Now, let's disconnect eve to force the switch back to WebRTC
         await eve.close();
-        await eve.context().close();
 
         // Let's wait for eve to be disconnected
-        await expect(alice2.getByText("Eve", { exact: true })).toBeHidden();
+        await expect(alice2.getByText("Eve", { exact: true }).first()).toBeHidden();
 
         // Wait for the delayed LiveKit -> WebRTC fallback before asserting audio again.
         await expectLivekitConnectionsCountToBe(alice2, 0, 35_000);
@@ -187,21 +191,18 @@ test.describe("Scripting audio streams @nomobile @nofirefox @nowebkit", () => {
 
         // After disconnect, alice2 should still receive the sound through WebRTC
         await hasAudioStream(alice2);
-
-        await alice.close();
-        await alice.context().close();
-        await alice2.close();
-        await alice2.context().close();
-
-        await page.context().close();
     });
 
     test("can play and listen to sound files", async ({ browser }, { project }) => {
-        const bob = await getPage(browser, "Bob", publicTestMapUrl("tests/E2E/empty.json", "scripting_audio_stream"));
+        await using bob = await getPage(
+            browser,
+            "Bob",
+            publicTestMapUrl("tests/E2E/empty.json", "scripting_audio_stream"),
+        );
         await Map.teleportToPosition(bob, 32, 32);
 
         // Open new page for alice
-        const alice = await getPage(
+        await using alice = await getPage(
             browser,
             "Alice",
             publicTestMapUrl("tests/E2E/empty.json", "scripting_audio_stream"),

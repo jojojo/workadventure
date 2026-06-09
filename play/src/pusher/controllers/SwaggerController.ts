@@ -1,7 +1,7 @@
 import fs from "fs";
 import path from "path";
 import swaggerJsdoc from "swagger-jsdoc";
-import * as cheerio from "cheerio";
+import { load as cheerioLoad } from "cheerio";
 import Debug from "debug";
 import { ADMIN_URL } from "../enums/EnvironmentVariable";
 import SwaggerGenerator from "../services/SwaggerGenerator";
@@ -70,7 +70,7 @@ export class SwaggerController extends BaseHttpController {
             debug(
                 `SwaggerController => [${request.method}] ${request.originalUrl} — IP: ${
                     request.ip
-                } — Time: ${Date.now()}`
+                } — Time: ${Date.now()}`,
             );
             fs.readFile(process.cwd() + "/../node_modules/swagger-ui-dist/index.html", "utf8", function (err, data) {
                 if (err) {
@@ -78,7 +78,7 @@ export class SwaggerController extends BaseHttpController {
                 }
 
                 // Load the html file
-                const $ = cheerio.load(data);
+                const $ = cheerioLoad(data);
 
                 // Replace the url of the swagger.json file
                 const urls = [
@@ -112,7 +112,7 @@ export class SwaggerController extends BaseHttpController {
             debug(
                 `SwaggerController => [${request.method}] ${request.originalUrl} — IP: ${
                     request.ip
-                } — Time: ${Date.now()}`
+                } — Time: ${Date.now()}`,
             );
             const fileParsed = path.parse(request.path);
             // Filter files

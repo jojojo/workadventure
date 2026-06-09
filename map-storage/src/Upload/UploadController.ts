@@ -1,12 +1,12 @@
-import * as fs from "fs";
-import path from "node:path";
+import fs from "fs";
+import path from "path";
 import { z, ZodError } from "zod";
 import type { Express, Request } from "express";
 import multer from "multer";
 import type { LimitFunction } from "p-limit";
 import pLimit from "p-limit";
-import archiver from "archiver";
-import * as unzipper from "unzipper";
+import ZipStream from "zip-stream";
+import { type File, type CentralDirectory, Open as UnzipperOpen } from "unzipper";
 import type { Operation } from "rfc6902";
 import { applyPatch } from "rfc6902";
 import type { OrganizedErrors } from "@workadventure/map-editor/src/GameMap/MapValidator";
@@ -47,7 +47,11 @@ export class UploadController {
      */
     private uploadLimiter: Map<string, LimitFunction>;
 
-    constructor(private app: Express, private fileSystem: FileSystemInterface, private mapListService: MapListService) {
+    constructor(
+        private app: Express,
+        private fileSystem: FileSystemInterface,
+        private mapListService: MapListService,
+    ) {
         this.uploadLimiter = new Map<string, LimitFunction>();
         this.index();
         this.postUpload();
@@ -101,9 +105,9 @@ export class UploadController {
 
                 await limiter(async () => {
                     // Read the contents of the ZIP archive
-                    const zipDirectory = await unzipper.Open.file(zipFile.path);
+                    const zipDirectory = await UnzipperOpen.file(zipFile.path);
                     const zipEntries = zipDirectory.files.filter(
-                        (zipEntry) => zipEntry.type !== "Directory" && this.filterFile(zipEntry.path)
+                        (zipEntry) => zipEntry.type !== "Directory" && this.filterFile(zipEntry.path),
                     );
 
                     let totalSize = 0;
@@ -115,7 +119,7 @@ export class UploadController {
 
                     if (totalSize > MAX_UNCOMPRESSED_SIZE) {
                         res.status(413).send(
-                            `File too large. Unzipped files should be less than ${MAX_UNCOMPRESSED_SIZE} bytes.`
+                            `File too large. Unzipped files should be less than ${MAX_UNCOMPRESSED_SIZE} bytes.`,
                         );
                         return;
                     }
@@ -304,7 +308,7 @@ export class UploadController {
                     await limiter(async () => {
                         if (file && file.size > MAX_UNCOMPRESSED_SIZE) {
                             res.status(413).send(
-                                `File too large. Files should be less than ${MAX_UNCOMPRESSED_SIZE} bytes.`
+                                `File too large. Files should be less than ${MAX_UNCOMPRESSED_SIZE} bytes.`,
                             );
                             return;
                         }
@@ -322,7 +326,7 @@ export class UploadController {
                                 content = JSON.stringify(req.body);
                             } else {
                                 throw new Error(
-                                    "Unsupported mime-type. Allowed types are application/json and multipart/form-data."
+                                    "Unsupported mime-type. Allowed types are application/json and multipart/form-data.",
                                 );
                             }
                         }
@@ -399,7 +403,7 @@ export class UploadController {
                     Sentry.captureException(e);
                     next(e);
                 });
-            }
+            },
         );
     }
 
@@ -432,7 +436,7 @@ export class UploadController {
                     let errors: Partial<OrganizedErrors> = {};
 
                     const content = WAMFileFormat.parse(
-                        wamFileMigration.migrate(JSON.parse(await this.fileSystem.readFileAsString(virtualPath)))
+                        wamFileMigration.migrate(JSON.parse(await this.fileSystem.readFileAsString(virtualPath))),
                     );
 
                     // Let's make things easy: if "vendor" or "metadata" is not defined, let's add an empty object.
@@ -449,7 +453,7 @@ export class UploadController {
                         console.error(
                             `[${new Date().toISOString()}] Failed to apply patch on WAM file:`,
                             patchErrors,
-                            typeof patchErrors
+                            typeof patchErrors,
                         );
                         res.status(400).json({
                             patch: patchErrors,
@@ -496,11 +500,7 @@ export class UploadController {
         });
     }
 
-    private async createWAMFileIfMissing(
-        tmjKey: string,
-        zipEntry: unzipper.File,
-        zip: unzipper.CentralDirectory
-    ): Promise<void> {
+    private async createWAMFileIfMissing(tmjKey: string, zipEntry: File, zip: CentralDirectory): Promise<void> {
         const wamPath = tmjKey.slice().replace(".tmj", ".wam");
         if (!(await this.fileSystem.exist(wamPath))) {
             // Get the content of the file as a string
@@ -511,7 +511,7 @@ export class UploadController {
             const tmjContent = JSON.parse(tmjString) as ITiledMap;
             await this.fileSystem.writeStringAsFile(
                 wamPath,
-                JSON.stringify(await this.getFreshWAMFileContent(`./${path.basename(tmjKey)}`, tmjContent), null, 4)
+                JSON.stringify(await this.getFreshWAMFileContent(`./${path.basename(tmjKey)}`, tmjContent), null, 4),
             );
         }
     }
@@ -618,19 +618,8 @@ export class UploadController {
 
                 res.attachment(archiveName);
 
-                const archive = archiver("zip", {
+                const archive = new ZipStream({
                     zlib: { level: 9 }, // Sets the compression level.
-                });
-
-                // good practice to catch warnings (ie stat failures and other non-blocking errors)
-                archive.on("warning", function (err) {
-                    if (err.code === "ENOENT") {
-                        // log warning
-                        console.warn(`[${new Date().toISOString()}] File not found: `, err);
-                    } else {
-                        console.error(`[${new Date().toISOString()}] A warning occurred while Zipping file: `, err);
-                        Sentry.captureException(`A warning occurred while Zipping file: ${JSON.stringify(err)}`);
-                    }
                 });
 
                 // good practice to catch this error explicitly
@@ -645,7 +634,7 @@ export class UploadController {
 
                 await this.fileSystem.archiveDirectory(archive, virtualDirectory);
 
-                await archive.finalize();
+                archive.finalize();
             })().catch((e) => {
                 console.error(`[${new Date().toISOString()}]`, e);
                 Sentry.captureException(e);
@@ -689,7 +678,7 @@ export class UploadController {
                         } catch (error) {
                             console.error(
                                 `[${new Date().toISOString()}] Failed to execute all request on resourceUrl`,
-                                error
+                                error,
                             );
                         }
                     }

@@ -4,6 +4,7 @@ import * as Sentry from "@sentry/node";
 import type {
     BackEventMessage,
     BackToPusherSpaceMessage,
+    HandleLivekitWebhookRequest,
     PrivateEvent,
     PublicEvent,
     SpaceAnswerMessage,
@@ -51,7 +52,7 @@ export class Space implements CustomJsonReplacerInterface, ICommunicationSpace {
         private eventProcessor: EventProcessor,
         private _propertiesToSync: string[],
         public readonly world: string,
-        private _spaceUpdatedSubject = clientEventsEmitter.spaceUpdatedSubject
+        private _spaceUpdatedSubject = clientEventsEmitter.spaceUpdatedSubject,
     ) {
         this.name = name;
         this.users = new Map<SpacesWatcher, Map<SpaceUser["spaceUserId"], SpaceUser>>();
@@ -155,7 +156,7 @@ export class Space implements CustomJsonReplacerInterface, ICommunicationSpace {
                 });
             } else if (oldFilter && !newFilter) {
                 debug(
-                    `${this.name} : user updated => removed ${user.spaceUserId} updateMask : ${updateMask.join(", ")}`
+                    `${this.name} : user updated => removed ${user.spaceUserId} updateMask : ${updateMask.join(", ")}`,
                 );
 
                 this.communicationManager.handleUserDeleted(user).catch((error) => {
@@ -175,8 +176,8 @@ export class Space implements CustomJsonReplacerInterface, ICommunicationSpace {
             } else if (oldFilter !== false && newFilter !== false) {
                 debug(
                     `${this.name} : user updated => updated ${user.spaceUserId} updateMask : ${updateMask.join(
-                        ", "
-                    )} in space ${this.name}`
+                        ", ",
+                    )} in space ${this.name}`,
                 );
                 this.notifyWatchers({
                     message: {
@@ -272,7 +273,7 @@ export class Space implements CustomJsonReplacerInterface, ICommunicationSpace {
                     if (processedValue !== undefined) {
                         processedMetadata[key] = processedValue;
                     }
-                })
+                }),
             );
         }
 
@@ -369,7 +370,7 @@ export class Space implements CustomJsonReplacerInterface, ICommunicationSpace {
         for (const spaceUser of spaceUsers?.values() || []) {
             if (this.filterOneUser(spaceUser)) {
                 debug(
-                    `${this.name} => removing space user ${spaceUser.spaceUserId} from watcher ${watcher.id} before removing watcher`
+                    `${this.name} => removing space user ${spaceUser.spaceUserId} from watcher ${watcher.id} before removing watcher`,
                 );
                 this.notifyWatchers({
                     message: {
@@ -470,7 +471,7 @@ export class Space implements CustomJsonReplacerInterface, ICommunicationSpace {
         const processedEvent = await this.eventProcessor.processPublicEvent(
             publicEvent.spaceEvent.event,
             publicEvent.senderUserId,
-            this
+            this,
         );
 
         // Create new public event with processed event
@@ -524,7 +525,7 @@ export class Space implements CustomJsonReplacerInterface, ICommunicationSpace {
         const processedEvent = this.eventProcessor.processPrivateEvent(
             privateEvent.spaceEvent.event,
             privateEvent.senderUserId,
-            privateEvent.receiverUserId
+            privateEvent.receiverUserId,
         );
 
         // Create new private event with processed event
@@ -561,7 +562,7 @@ export class Space implements CustomJsonReplacerInterface, ICommunicationSpace {
             case "meetingConnectionRestartMessage": {
                 this.communicationManager.handleMeetingConnectionRestartMessage(
                     event.meetingConnectionRestartMessage,
-                    backEvent.senderUserId
+                    backEvent.senderUserId,
                 );
                 break;
             }
@@ -577,7 +578,7 @@ export class Space implements CustomJsonReplacerInterface, ICommunicationSpace {
 
     public async handleQuery(
         watcher: SpacesWatcher,
-        spaceQueryMessage: SpaceQueryMessage
+        spaceQueryMessage: SpaceQueryMessage,
     ): Promise<Pick<SpaceAnswerMessage, "answer">> {
         try {
             if (!spaceQueryMessage.query) {
@@ -751,6 +752,9 @@ export class Space implements CustomJsonReplacerInterface, ICommunicationSpace {
     }
     public async stopRecordingByServer(): Promise<void> {
         await this.communicationManager.handleServerStopRecording();
+    }
+    public async handleLivekitWebhook(request: HandleLivekitWebhookRequest): Promise<void> {
+        await this.communicationManager.handleLivekitWebhook(request);
     }
     public getRecordingState(): ManagedRecordingState {
         return this.communicationManager.getRecordingState();

@@ -2,7 +2,7 @@ import * as Sentry from "@sentry/svelte";
 import Debug from "debug";
 import { ForwardableStore, MapStore, SearchableArrayStore } from "@workadventure/store-utils";
 import type { Readable, Writable, Unsubscriber } from "svelte/store";
-import { get, readable, writable } from "svelte/store";
+import { derived, get, readable, writable } from "svelte/store";
 import { v4 as uuidv4 } from "uuid";
 import type { Subscription } from "rxjs";
 import type { CharacterTextureMessage } from "@workadventure/messages";
@@ -15,6 +15,7 @@ import { abortAny } from "@workadventure/shared-utils/src/Abort/AbortAny";
 import { type WAMSettings, WAMSettingsUtils } from "@workadventure/map-editor";
 import type {
     AnyKindOfUser,
+    ChatConversation,
     ChatMessage,
     ChatMessageContent,
     ChatMessageReaction,
@@ -54,6 +55,7 @@ import { screenWakeLock } from "../../../Utils/ScreenWakeLock";
 import type { PictureStore } from "../../../Stores/PictureStore";
 import { CharacterLayerManager } from "../../../Phaser/Entity/CharacterLayerManager";
 import { BubbleNotification as BasicNotification } from "../../../Notification/BubbleNotification";
+import { createProximityTimelineItemsStore } from "./ProximityTimelineItemsStore";
 
 const debug = Debug("ProximityChatRoom");
 
@@ -70,7 +72,7 @@ export class ProximityChatMessage implements ChatMessage {
         public content: Readable<ChatMessageContent>,
         public date: Date,
         public isMyMessage: boolean,
-        public type: ChatMessageType
+        public type: ChatMessageType,
     ) {}
 
     remove(): void {
@@ -95,14 +97,18 @@ const MAX_PARTICIPANTS_FOR_SOUND_NOTIFICATIONS = 5;
 
 export class ProximityChatRoom implements ChatRoom {
     id = "proximity";
+    conversationKind = "room" as const;
     name = writable("Proximity Chat");
     type = readable<"direct" | "multiple">("multiple");
     hasUnreadMessages = writable(false);
     unreadMessagesCount = writable(0);
     unreadNotificationCount = writable(0);
+    initializationState = readable<"ready">("ready");
+    initializationError = readable<Error | undefined>(undefined);
     pictureStore = readable(undefined);
     avatarFallbackColor = readable(undefined);
     messages: SearchableArrayStore<string, ChatMessage> = new SearchableArrayStore((item) => item.id);
+    timelineItems = createProximityTimelineItemsStore(this.messages);
     messageReactions: MapStore<string, MapStore<string, ChatMessageReaction>> = new MapStore();
     hasPreviousMessage = writable(false);
     isEncrypted = writable(false);
@@ -125,11 +131,22 @@ export class ProximityChatRoom implements ChatRoom {
     hasUserInProximityChat = writable(false);
     /** Space users of the current space (forwarded from _space.usersStore on join, empty map on leave). */
     public readonly spaceUsersStore = new ForwardableStore<Map<string, SpaceUserExtended>>(new Map());
+    readonly joinedMemberCount = derived(this.spaceUsersStore, (users) => users.size);
     /** Participants currently in the same meeting/space (reactive list from space users). */
     private _currentMeetingParticipantsStore = writable<MeetingParticipant[]>([]);
     public readonly currentMeetingParticipantsStore: Readable<MeetingParticipant[]> =
         this._currentMeetingParticipantsStore;
-    currentMatrixRoom: ChatRoom | undefined;
+
+    ensureInitialized(): Promise<void> {
+        return Promise.resolve();
+    }
+    ensureTimelineInitialized(): Promise<void> {
+        return Promise.resolve();
+    }
+    ensureMembersInitialized(): Promise<void> {
+        return Promise.resolve();
+    }
+    currentMatrixRoom: ChatConversation | undefined;
     currentChatVisibility = false;
 
     private unknownUser = {
@@ -176,11 +193,11 @@ export class ProximityChatRoom implements ChatRoom {
                     message.sender.username ?? "unknown",
                     get(message.content).body,
                     this.id,
-                    get(this.name)
-                )
+                    get(this.name),
+                ),
             );
         },
-        private _shouldDisableChatInProximityRoomStore: Writable<boolean> = shouldDisableChatInProximityRoomStore
+        private _shouldDisableChatInProximityRoomStore: Writable<boolean> = shouldDisableChatInProximityRoomStore,
     ) {
         this.typingMembers = writable([]);
 
@@ -239,7 +256,7 @@ export class ProximityChatRoom implements ChatRoom {
             writable(newChatMessageContent),
             new Date(),
             true,
-            action
+            action,
         );
 
         // Add message to the list
@@ -297,7 +314,7 @@ export class ProximityChatRoom implements ChatRoom {
         message: string,
         senderUserId: string,
         characterTextures: CharacterTextureMessage[],
-        name: string
+        name: string,
     ): void {
         // Ignore messages from the current user
         if (senderUserId === this._spaceUserId) {
@@ -311,7 +328,7 @@ export class ProximityChatRoom implements ChatRoom {
         };
 
         const spaceUser = this.users?.get(senderUserId);
-        let chatUser: AnyKindOfUser = this.unknownUser;
+        let chatUser: AnyKindOfUser = { ...this.unknownUser, spaceUserId: senderUserId };
         if (spaceUser) {
             chatUser = mapExtendedSpaceUserToChatUser(spaceUser);
         }
@@ -340,7 +357,7 @@ export class ProximityChatRoom implements ChatRoom {
             writable(newChatMessageContent),
             new Date(),
             false,
-            "proximity"
+            "proximity",
         );
 
         // Add message to the list
@@ -390,7 +407,7 @@ export class ProximityChatRoom implements ChatRoom {
             writable(newChatMessageContent),
             new Date(),
             false,
-            "proximity"
+            "proximity",
         );
 
         // Add message to the list
@@ -433,7 +450,7 @@ export class ProximityChatRoom implements ChatRoom {
     private addTypingUser(
         senderUserId: string,
         characterTextures: CharacterTextureMessage[],
-        name: string | undefined
+        name: string | undefined,
     ): void {
         this.typingMembers.update((typingMembers) => {
             if (typingMembers.find((user) => user.id === senderUserId) == undefined) {
@@ -458,14 +475,13 @@ export class ProximityChatRoom implements ChatRoom {
 
     private removeTypingUser(senderUserId: string): void {
         const sender = this.users?.get(senderUserId);
-        if (sender === undefined) {
-            return;
+        let userIdToRemove = senderUserId;
+        if (sender !== undefined) {
+            userIdToRemove = sender.spaceUserId.toString();
         }
 
-        const id = sender.spaceUserId.toString();
-
         this.typingMembers.update((typingMembers) => {
-            return typingMembers.filter((user) => user.id !== id);
+            return typingMembers.filter((user) => user.id !== userIdToRemove);
         });
     }
 
@@ -500,7 +516,7 @@ export class ProximityChatRoom implements ChatRoom {
         isMeetingRoomChat: boolean = false,
         filterType: FilterType = FilterType.ALL_USERS,
         disableChat: boolean = false,
-        signal?: AbortSignal
+        signal?: AbortSignal,
     ): Promise<SpaceInterface> {
         if (this.joinSpaceAbortController) {
             this.joinSpaceAbortController.abort(new AbortError("A space is already being joined"));
@@ -589,7 +605,7 @@ export class ProximityChatRoom implements ChatRoom {
                 event.spaceMessage.message,
                 event.sender,
                 event.spaceMessage.characterTextures ?? [],
-                event.spaceMessage.name ?? ""
+                event.spaceMessage.name ?? "",
             );
 
             // Get the last message to use for notification
@@ -823,7 +839,7 @@ export class ProximityChatRoom implements ChatRoom {
         throw new AbortError(
             typeof joinSignal.reason === "object" && joinSignal.reason instanceof Error
                 ? joinSignal.reason.message
-                : "Join space aborted"
+                : "Join space aborted",
         );
     }
 
@@ -855,7 +871,7 @@ export class ProximityChatRoom implements ChatRoom {
                     subscription.unsubscribe();
                     reject(asError(eventToAbortReason(event)));
                 },
-                { once: true }
+                { once: true },
             );
         });
     }
@@ -904,7 +920,7 @@ export class ProximityChatRoom implements ChatRoom {
         }
         if (space.getName() !== spaceName) {
             console.error(
-                "Trying to leave a space different from the one joined : " + space.getName() + " !== " + spaceName
+                "Trying to leave a space different from the one joined : " + space.getName() + " !== " + spaceName,
             );
             return;
         }

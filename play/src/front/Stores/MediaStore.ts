@@ -27,6 +27,7 @@ import { inExternalServiceStore, myCameraStore, myMicrophoneStore, proximityMeet
 import { userMovingStore } from "./GameStore";
 import { hideHelpCameraSettings } from "./HelpSettingsStore";
 import { isLiveStreamingStore } from "./IsStreamingStore";
+import { currentPlayerGroupIdStore } from "./CurrentPlayerGroupStore";
 
 import { backgroundConfigStore, backgroundProcessingEnabledStore } from "./BackgroundTransformStore";
 
@@ -220,14 +221,25 @@ export const mouseIsHoveringCameraButton = writable(false);
 export const cameraNoEnergySavingStore = writable<boolean>(false);
 
 export const streamingMegaphoneStore = writable<boolean>(false);
+export const inJitsiStore = writable(false);
+export const inBbbStore = writable(false);
+export const isSpeakerStore = writable(false);
+export const inLivekitStore = writable(false);
+export const isListenerStore = writable(false);
+export const listenerWaitingMediaStore = writable<string | undefined>(undefined);
+/**
+ * When true, the listener has consented to share their camera with the speaker (seeAttendees feature).
+ * This store is set to true when the listener accepts the camera sharing popup.
+ */
+export const listenerSharingCameraStore = writable(false);
 
 export const requestedCameraDeviceIdStore: Writable<string | undefined> = writable(
-    localUserStore.getPreferredVideoInputDevice() ? localUserStore.getPreferredVideoInputDevice() : undefined
+    localUserStore.getPreferredVideoInputDevice() ? localUserStore.getPreferredVideoInputDevice() : undefined,
 );
 
 export const frameRateStore: Writable<number | undefined> = writable();
 export const requestedMicrophoneDeviceIdStore: Writable<string | undefined> = writable(
-    localUserStore.getPreferredAudioInputDevice() ? localUserStore.getPreferredAudioInputDevice() : undefined
+    localUserStore.getPreferredAudioInputDevice() ? localUserStore.getPreferredAudioInputDevice() : undefined,
 );
 
 export const usedCameraDeviceIdStore: Writable<string | undefined> = writable();
@@ -265,7 +277,7 @@ export const videoConstraintStore = derived(
         }
 
         return constraints;
-    }
+    },
 );
 
 /**
@@ -304,6 +316,8 @@ export const cameraEnergySavingStore = derived(
         cameraNoEnergySavingStore,
         devicesNotLoaded,
         isLiveStreamingStore,
+        currentPlayerGroupIdStore,
+        inLivekitStore,
         displayedMegaphoneScreenStore,
     ],
     ([
@@ -314,6 +328,8 @@ export const cameraEnergySavingStore = derived(
         $cameraNoEnergySavingStore,
         $devicesNotLoaded,
         $isLiveStreamingStore,
+        $currentPlayerGroupIdStore,
+        $inLivekitStore,
         $displayedMegaphoneScreenStore,
     ]) => {
         return (
@@ -324,22 +340,12 @@ export const cameraEnergySavingStore = derived(
             !$cameraNoEnergySavingStore &&
             !$devicesNotLoaded &&
             !$isLiveStreamingStore &&
+            $currentPlayerGroupIdStore === undefined &&
+            !$inLivekitStore &&
             !$displayedMegaphoneScreenStore
         );
-    }
+    },
 );
-
-export const inJitsiStore = writable(false);
-export const inBbbStore = writable(false);
-export const isSpeakerStore = writable(false);
-export const inLivekitStore = writable(false);
-export const isListenerStore = writable(false);
-export const listenerWaitingMediaStore = writable<string | undefined>(undefined);
-/**
- * When true, the listener has consented to share their camera with the speaker (seeAttendees feature).
- * This store is set to true when the listener accepts the camera sharing popup.
- */
-export const listenerSharingCameraStore = writable(false);
 
 export const requestedStatusStore: Writable<RequestedStatus | null> = writable(localUserStore.getRequestedStatus());
 
@@ -348,7 +354,7 @@ export const inCowebsiteZone = derived(
     ([$inJitsiStore, $inBbbStore, $inOpenWebsite]) => {
         return $inJitsiStore || $inBbbStore || $inOpenWebsite;
     },
-    false
+    false,
 );
 
 export const silentStore = createSilentStore();
@@ -390,7 +396,7 @@ export const availabilityStatusStore = derived(
 
         return AvailabilityStatus.ONLINE;
     },
-    AvailabilityStatus.ONLINE
+    AvailabilityStatus.ONLINE,
 );
 
 // This is a singleton so we can safely not ever unsubscribe from it.
@@ -442,7 +448,7 @@ export const mediaStreamConstraintsStore = derived(
             $batchGetUserMediaStore,
             $inBackgroundSettingsStore,
         ],
-        set
+        set,
     ) => {
         // If a batch is in process, don't do anything.
         if ($batchGetUserMediaStore) {
@@ -518,7 +524,7 @@ export const mediaStreamConstraintsStore = derived(
     } as {
         video: false | MediaTrackConstraints;
         audio: false | MediaTrackConstraints;
-    }
+    },
 );
 
 export type LocalStreamStoreValue = StreamSuccessValue | StreamErrorValue;
@@ -596,6 +602,10 @@ let rawStreamUpdateQueue: Promise<void> = Promise.resolve();
 
 type SetRawStreamIfCurrent = (value: LocalStreamStoreValue) => void;
 
+function hasLiveTrack(tracks: MediaStreamTrack[]): boolean {
+    return tracks.some((track) => track.readyState === "live");
+}
+
 function classifyMediaAccessError(error: unknown): MediaAccessIssue | null {
     const name = error instanceof Error ? error.name : "";
     if (name === "NotAllowedError" || name === "PermissionDeniedError" || name === "SecurityError") {
@@ -625,7 +635,7 @@ function emitCurrentStreamOrError(setIfCurrent: SetRawStreamIfCurrent, error: un
 async function runRawStreamUpdate(
     constraints: { video: false | MediaTrackConstraints; audio: false | MediaTrackConstraints },
     setIfCurrent: SetRawStreamIfCurrent,
-    generation: number
+    generation: number,
 ): Promise<{ video: false | MediaTrackConstraints; audio: false | MediaTrackConstraints }> {
     if (navigator.mediaDevices === undefined) {
         if (window.location.protocol === "http:") {
@@ -664,12 +674,12 @@ async function runRawStreamUpdate(
         audio: constraints.audio ?? false,
     };
 
+    const hasLiveVideoTrack = currentStream ? hasLiveTrack(currentStream.getVideoTracks()) : false;
+    const hasLiveAudioTrack = currentStream ? hasLiveTrack(currentStream.getAudioTracks()) : false;
     const mustRequestNewVideo =
-        (constraints.video && !deepEqual(oldConstraints.video, constraints.video)) ||
-        (!currentStream && constraints.video);
+        constraints.video !== false && (!deepEqual(oldConstraints.video, constraints.video) || !hasLiveVideoTrack);
     const mustRequestNewAudio =
-        (constraints.audio && !deepEqual(oldConstraints.audio, constraints.audio)) ||
-        (!currentStream && constraints.audio);
+        constraints.audio !== false && (!deepEqual(oldConstraints.audio, constraints.audio) || !hasLiveAudioTrack);
 
     if (currentStream) {
         const oldStream = currentStream;
@@ -757,11 +767,9 @@ async function runRawStreamUpdate(
             batchGetUserMediaStore.startBatch();
             if (currentStream.getVideoTracks().length > 0) {
                 usedCameraDeviceIdStore.set(currentStream.getVideoTracks()[0]?.getSettings().deviceId);
-                requestedCameraState.enableWebcam();
             }
             if (currentStream.getAudioTracks().length > 0) {
                 usedMicrophoneDeviceIdStore.set(currentStream.getAudioTracks()[0]?.getSettings().deviceId);
-                requestedMicrophoneState.enableMicrophone();
             }
             batchGetUserMediaStore.commitChanges();
             hideHelpCameraSettings();
@@ -770,7 +778,7 @@ async function runRawStreamUpdate(
                 console.info(
                     "Could not access the requested microphone or webcam. Falling back to default microphone and webcam",
                     newConstraints,
-                    e
+                    e,
                 );
                 batchGetUserMediaStore.startBatch();
                 requestedCameraDeviceIdStore.set(undefined);
@@ -780,7 +788,7 @@ async function runRawStreamUpdate(
                 console.info(
                     "Error. Unable to get microphone and/or camera access. Trying audio only.",
                     newConstraints,
-                    e
+                    e,
                 );
                 emitCurrentStreamOrError(setIfCurrent, e);
                 const classified = classifyMediaAccessError(e);
@@ -811,6 +819,25 @@ async function runRawStreamUpdate(
 }
 
 /**
+ * In case a device is removed, we need to retry the getUserMedia call to get another device if available.
+ */
+const userMediaRetryCountStore = writable(0);
+
+/**
+ * Triggers a new call to getUserMedia to refresh the stream.
+ * Useful when a default device has been removed.
+ */
+function retryGetUserMedia(retryVideo: boolean, retryAudio: boolean) {
+    if (retryVideo) {
+        oldConstraints.video = false;
+    }
+    if (retryAudio) {
+        oldConstraints.audio = false;
+    }
+    userMediaRetryCountStore.update((count) => count + 1);
+}
+
+/**
  * A store containing the MediaStream object (or undefined if nothing requested, or Error if an error occurred)
  * This stream includes background transformations when enabled
  *
@@ -818,9 +845,12 @@ async function runRawStreamUpdate(
  * Parameter changes (blurAmount, etc.) are handled by a separate subscriber to avoid recreating
  * the transformer on every change (which causes WebGL context leaks).
  */
-export const rawLocalStreamStore = derived<[typeof mediaStreamConstraintsStore], LocalStreamStoreValue>(
-    [mediaStreamConstraintsStore],
-    ([$mediaStreamConstraintsStore], set) => {
+export const rawLocalStreamStore = derived<
+    [typeof mediaStreamConstraintsStore, typeof userMediaRetryCountStore],
+    LocalStreamStoreValue
+>(
+    [mediaStreamConstraintsStore, userMediaRetryCountStore],
+    ([$mediaStreamConstraintsStore, $userMediaRetryCountStore], set) => {
         const constraints = { ...$mediaStreamConstraintsStore };
         const myGen = ++rawStreamGeneration;
         const setIfCurrent: SetRawStreamIfCurrent = (value) => {
@@ -843,7 +873,7 @@ export const rawLocalStreamStore = derived<[typeof mediaStreamConstraintsStore],
                     error: e instanceof Error ? e : new Error("An unknown error happened"),
                 });
             });
-    }
+    },
 );
 
 /**
@@ -858,7 +888,7 @@ async function runLocalStreamUpdate(
     rawValue: LocalStreamStoreValue,
     backgroundProcessingEnabled: boolean,
     setIfCurrent: SetLocalStreamIfCurrent,
-    signal: AbortSignal
+    signal: AbortSignal,
 ): Promise<void> {
     // This can happen when the user navigates away from the page while the stream is being updated
     if (rawValue == undefined) return;
@@ -942,10 +972,10 @@ export const localStreamStore = derived<
                     $rawLocalStreamStore,
                     $backgroundProcessingEnabled,
                     setIfCurrent,
-                    controller.signal
-                )
+                    controller.signal,
+                ),
             );
-    }
+    },
 );
 
 /**
@@ -977,7 +1007,7 @@ export const localStreamStoreForPublishing = derived<
             return;
         }
         set($localStreamStore);
-    }
+    },
 );
 
 /**
@@ -1024,7 +1054,7 @@ export const localVolumeStore = derived<typeof localStreamStore, number[] | unde
             soundMeter.stop();
         };
     },
-    undefined
+    undefined,
 );
 
 const talkIconVolumeThreshold = 10;
@@ -1042,7 +1072,7 @@ export const localVoiceIndicatorStore = derived<Readable<number[] | undefined>, 
         const averageVolume = volume.reduce((a, b) => a + b, 0);
         return averageVolume > talkIconVolumeThreshold;
     },
-    false
+    false,
 );
 
 /**
@@ -1056,40 +1086,6 @@ export const deviceListStore = readable<MediaDeviceInfo[] | undefined>(undefined
         navigator.mediaDevices
             .enumerateDevices()
             .then((mediaDeviceInfos) => {
-                // check if the new list has the preferred device
-                const preferredVideoInputDevice = localUserStore.getPreferredVideoInputDevice();
-                const preferredAudioInputDevice = localUserStore.getPreferredAudioInputDevice();
-                const preferredSpeakerDevice = localUserStore.getSpeakerDeviceId();
-
-                if (
-                    preferredVideoInputDevice &&
-                    mediaDeviceInfos.find((device) => device.deviceId === preferredVideoInputDevice)
-                ) {
-                    requestedCameraDeviceIdStore.set(preferredVideoInputDevice);
-                }
-                if (
-                    preferredAudioInputDevice &&
-                    mediaDeviceInfos.find((device) => device.deviceId === preferredAudioInputDevice)
-                ) {
-                    requestedMicrophoneDeviceIdStore.set(preferredAudioInputDevice);
-                }
-                if (
-                    preferredSpeakerDevice &&
-                    mediaDeviceInfos.find((device) => device.deviceId === preferredSpeakerDevice)
-                ) {
-                    speakerSelectedStore.set(preferredSpeakerDevice);
-                }
-
-                const actualsMediaDevices = get(deviceListStore);
-                // get all media that not exist in the list
-                if (actualsMediaDevices != undefined) {
-                    // set the last new media devices detected
-                    const newDevices = mediaDeviceInfos.filter(
-                        (device) => actualsMediaDevices.find((d) => d.deviceId === device.deviceId) == undefined
-                    );
-                    lastNewMediaDeviceDetectedStore.set(newDevices);
-                }
-
                 set(mediaDeviceInfos);
                 devicesNotLoaded.set(false);
             })
@@ -1145,7 +1141,7 @@ export const cameraButtonHelpContextStore = derived(
             return "no_device" as const;
         }
         return null;
-    }
+    },
 );
 
 export const microphoneListStore = derived(deviceListStore, ($deviceListStore) => {
@@ -1172,7 +1168,7 @@ export const microphoneButtonHelpContextStore = derived(
             return "no_device" as const;
         }
         return null;
-    }
+    },
 );
 
 export const speakerListStore = derived(deviceListStore, ($deviceListStore) => {
@@ -1217,6 +1213,74 @@ speakerListStore.subscribe((devices) => {
 
 export const speakerSelectedStore = writable<string | undefined>(localUserStore.getSpeakerDeviceId() ?? undefined);
 
+let previousMediaDevices: MediaDeviceInfo[] | undefined = undefined;
+
+// It is ok to not unsubscribe to this store because it is a singleton.
+// eslint-disable-next-line svelte/no-ignored-unsubscribe
+deviceListStore.subscribe((mediaDeviceInfos) => {
+    if (mediaDeviceInfos === undefined) {
+        return;
+    }
+
+    // check if the new list has the preferred device
+    const preferredVideoInputDevice = localUserStore.getPreferredVideoInputDevice();
+    const preferredAudioInputDevice = localUserStore.getPreferredAudioInputDevice();
+    const preferredSpeakerDevice = localUserStore.getSpeakerDeviceId();
+
+    if (preferredVideoInputDevice && mediaDeviceInfos.find((device) => device.deviceId === preferredVideoInputDevice)) {
+        requestedCameraDeviceIdStore.set(preferredVideoInputDevice);
+    }
+    if (preferredAudioInputDevice && mediaDeviceInfos.find((device) => device.deviceId === preferredAudioInputDevice)) {
+        requestedMicrophoneDeviceIdStore.set(preferredAudioInputDevice);
+    }
+    if (preferredSpeakerDevice && mediaDeviceInfos.find((device) => device.deviceId === preferredSpeakerDevice)) {
+        speakerSelectedStore.set(preferredSpeakerDevice);
+    }
+
+    const thePreviousMediaDevices = previousMediaDevices;
+    // get all media that not exist in the list
+    if (thePreviousMediaDevices !== undefined) {
+        // set the last new media devices detected (new devices detection)
+        const newDevices = mediaDeviceInfos.filter(
+            (device) => thePreviousMediaDevices.find((d) => d.deviceId === device.deviceId) === undefined,
+        );
+        lastNewMediaDeviceDetectedStore.set(newDevices);
+
+        // Detect removed devices
+        const removedDevices = thePreviousMediaDevices.filter(
+            (device) => mediaDeviceInfos.find((d) => d.deviceId === device.deviceId) === undefined,
+        );
+
+        for (const removedDevice of removedDevices) {
+            if (
+                removedDevice.kind === "videoinput" &&
+                currentStream?.getVideoTracks()[0]?.getSettings().deviceId === removedDevice.deviceId
+            ) {
+                if (get(requestedCameraDeviceIdStore) === undefined) {
+                    // If we removed the default camera device, we retry (and ask for the new default camera that the OS will pick)
+                    retryGetUserMedia(true, false);
+                } else {
+                    // If we removed a camera specifically requested, we retry without passing a device id.
+                    requestedCameraDeviceIdStore.set(undefined);
+                }
+            } else if (
+                removedDevice.kind === "audioinput" &&
+                currentStream?.getAudioTracks()[0]?.getSettings().deviceId === removedDevice.deviceId
+            ) {
+                if (get(requestedMicrophoneDeviceIdStore) === undefined) {
+                    // If we removed the default microphone device, we retry (and ask for the new default microphone that the OS will pick)
+                    retryGetUserMedia(false, true);
+                } else {
+                    // If we removed a microphone specifically requested, we retry without passing a device id.
+                    requestedMicrophoneDeviceIdStore.set(undefined);
+                }
+            }
+        }
+    }
+
+    previousMediaDevices = [...mediaDeviceInfos];
+});
+
 function removeDuplicateDevices(devices: MediaDeviceInfo[]) {
     const uniqueDevices = new Map<string, MediaDeviceInfo>();
     devices.forEach((device) => {
@@ -1224,63 +1288,6 @@ function removeDuplicateDevices(devices: MediaDeviceInfo[]) {
     });
     return Array.from(uniqueDevices.values());
 }
-
-function isConstrainDOMStringParameters(param: ConstrainDOMString): param is ConstrainDOMStringParameters {
-    return (
-        typeof param === "object" &&
-        ((param as ConstrainDOMStringParameters).ideal !== undefined ||
-            (param as ConstrainDOMStringParameters).exact !== undefined)
-    );
-}
-
-// TODO: detect the new webcam and automatically switch on it.
-// It is ok to not unsubscribe to this store because it is a singleton.
-// eslint-disable-next-line svelte/no-ignored-unsubscribe
-cameraListStore.subscribe((devices) => {
-    // Store not initialized yet
-    if (devices === undefined) {
-        return;
-    }
-    // If the selected camera is unplugged, let's remove the constraint on deviceId
-    const constraints = get(videoConstraintStore);
-    const deviceId = constraints.deviceId;
-    if (!deviceId) {
-        return;
-    }
-
-    // If we cannot find the device ID, let's remove it.
-    if (isConstrainDOMStringParameters(deviceId)) {
-        if (!devices.find((device) => device.deviceId === deviceId.exact)) {
-            requestedCameraDeviceIdStore.set(undefined);
-        }
-    }
-});
-
-// It is ok to not unsubscribe to this store because it is a singleton.
-// eslint-disable-next-line svelte/no-ignored-unsubscribe
-microphoneListStore.subscribe((devices) => {
-    // Store not initialized yet
-    if (devices === undefined) {
-        return;
-    }
-
-    // If the selected camera is unplugged, let's remove the constraint on deviceId
-    const constraints = get(audioConstraintStore);
-    if (typeof constraints === "boolean") {
-        return;
-    }
-    const deviceId = constraints.deviceId;
-    if (!deviceId) {
-        return;
-    }
-
-    // If we cannot find the device ID, let's remove it.
-    if (isConstrainDOMStringParameters(deviceId)) {
-        if (!devices.find((device) => device.deviceId === deviceId.exact)) {
-            requestedMicrophoneDeviceIdStore.set(undefined);
-        }
-    }
-});
 
 // It is ok to not unsubscribe to this store because it is a singleton.
 // eslint-disable-next-line svelte/no-ignored-unsubscribe

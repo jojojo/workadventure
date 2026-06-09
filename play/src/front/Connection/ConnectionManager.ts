@@ -23,7 +23,9 @@ import { ABSOLUTE_PUSHER_URL } from "../Enum/ComputedConst";
 import { openChatRoom } from "../Chat/Utils";
 import LL from "../../i18n/i18n-svelte";
 import waLogo from "../Components/images/logo.svg";
+import WebsocketReconnectingToast from "../Components/Toasts/WebsocketReconnectingToast.svelte";
 import { errorScreenStore } from "../Stores/ErrorScreenStore";
+import { toastStore } from "../Stores/ToastStore";
 import { axiosToPusher, axiosWithRetry } from "./AxiosUtils";
 import { Room } from "./Room";
 import { LocalUser } from "./LocalUser";
@@ -34,7 +36,14 @@ import { HtmlUtils } from "./../WebRtc/HtmlUtils";
 import { hasCapability } from "./Capabilities";
 import { externalPresenceSync } from "./ExternalPresenceSync";
 
+const connectionRetryBaseDelayMs = 1_000;
+const connectionRetryMaxDelayMs = 10_000;
+const connectionRetryJitterMs = 500;
+const websocketReconnectingToastId = "websocket-reconnecting-toast";
+
 class ConnectionManager {
+    private static readonly TAB_ID_STORAGE_KEY = "workadventure_tab_id";
+
     private localUser!: LocalUser;
 
     private connexionType?: GameConnexionTypes;
@@ -48,9 +57,8 @@ class ConnectionManager {
     private readonly _roomConnectionStream = new Subject<RoomConnection>();
     public readonly roomConnectionStream = this._roomConnectionStream.asObservable();
 
-    // Unique identifier for this browser tab, used to detect reconnections from the same tab
-    // and kill stale connections on the server side immediately instead of waiting for ping timeout
-    private readonly _tabId: string = uuidv4();
+    // Unique identifier for this browser tab, kept across reloads but remains scoped to the tab context.
+    private readonly _tabId: string = ConnectionManager.getOrCreateTabId();
 
     get unloading() {
         return this._unloading;
@@ -63,6 +71,21 @@ class ConnectionManager {
             this._unloading = true;
             if (this.reconnectingTimeout) clearTimeout(this.reconnectingTimeout);
         });
+    }
+
+    private static getOrCreateTabId(): string {
+        try {
+            const existingTabId = sessionStorage.getItem(ConnectionManager.TAB_ID_STORAGE_KEY);
+            if (existingTabId) {
+                return existingTabId;
+            }
+
+            const tabId = uuidv4();
+            sessionStorage.setItem(ConnectionManager.TAB_ID_STORAGE_KEY, tabId);
+            return tabId;
+        } catch {
+            return uuidv4();
+        }
     }
 
     /**
@@ -225,8 +248,8 @@ class ConnectionManager {
                         window.location.host +
                         roomUrl +
                         (query ? "?" + query : "") + //use urlParams because the token param must be deleted
-                        window.location.hash
-                )
+                        window.location.hash,
+                ),
             );
             urlManager.pushRoomIdToUrl(this._currentRoom);
         } else if (this.connexionType === GameConnexionTypes.room || this.connexionType === GameConnexionTypes.empty) {
@@ -412,7 +435,8 @@ class ConnectionManager {
         name: string,
         characterTextureIds: string[],
         companionTextureId: string | null,
-        lastCommandId?: string
+        lastCommandId?: string,
+        retryAttempt = 0,
     ): Promise<OnConnectInterface> {
         return new Promise<OnConnectInterface>((resolve, reject) => {
             const connection = new RoomConnection(
@@ -420,7 +444,7 @@ class ConnectionManager {
                 roomUrl,
                 characterTextureIds,
                 companionTextureId,
-                lastCommandId
+                lastCommandId,
             );
 
             // The websocketErrorStream stream is completed in the RoomConnection. No need to unsubscribe.
@@ -434,6 +458,7 @@ class ConnectionManager {
                 .then((connect) => {
                     // Set the default application integration for the room
 
+                    this.bindWebsocketReconnectingToast(connection);
                     this._roomConnectionStream.next(connection);
                     errorScreenStore.delete();
                     resolve(connect);
@@ -445,8 +470,8 @@ class ConnectionManager {
 
                         reject(
                             new Error(
-                                "An error occurred while connecting to socket server. Retrying." + asError(err).message
-                            )
+                                "An error occurred while connecting to socket server. Retrying." + asError(err).message,
+                            ),
                         );
 
                         return;
@@ -458,7 +483,7 @@ class ConnectionManager {
                         "An error occurred while connecting to socket server. Retrying => Event: ",
                         event.reason,
                         event.code,
-                        event
+                        event,
                     );
 
                     //However, Chrome will rarely report any close code 1006 reasons to the Javascript side.
@@ -485,12 +510,13 @@ class ConnectionManager {
                             "An error occurred while connecting to socket server. Retrying. Code: " +
                                 event.code +
                                 ", Reason: " +
-                                event.reason
-                        )
+                                event.reason,
+                        ),
                     );
                 });
         }).catch((err) => {
             console.info("connectToRoomSocket => catch => new Promise[OnConnectInterface] => err", err);
+
             errorScreenStore.setError(
                 ErrorScreenMessage.fromPartial({
                     type: "reconnecting",
@@ -498,35 +524,58 @@ class ConnectionManager {
                     title: get(LL).messageScreen.connecting(),
                     subtitle: get(LL).messageScreen.pleaseWait(),
                     image: gameManager?.currentStartedRoom?.loadingLogo ?? waLogo,
-                })
+                }),
             );
-            // Let's retry in 4-6 seconds
-            return new Promise<OnConnectInterface>((resolve) => {
+            const retryDelay = this.getConnectionRetryDelay(retryAttempt);
+            return new Promise<OnConnectInterface>((resolve, reject) => {
                 console.info("connectToRoomSocket => catch => new Promise[OnConnectInterface] => reconnectingTimeout");
 
                 this.reconnectingTimeout = setTimeout(() => {
-                    //todo: allow a way to break recursion?
-                    //todo: find a way to avoid recursive function. Otherwise, the call stack will grow indefinitely.
                     console.info(
-                        "[ConnectionManager] connectToRoomSocket => catch => ew Promise[OnConnectInterface] reconnectingTimeout => setTimeout",
+                        "[ConnectionManager] connectToRoomSocket => catch => new Promise[OnConnectInterface] reconnectingTimeout => setTimeout",
                         roomUrl,
                         name,
                         characterTextureIds,
                         companionTextureId,
-                        lastCommandId
+                        lastCommandId,
                     );
 
-                    this.connectToRoomSocket(roomUrl, name, characterTextureIds, companionTextureId, lastCommandId)
+                    this.connectToRoomSocket(
+                        roomUrl,
+                        name,
+                        characterTextureIds,
+                        companionTextureId,
+                        lastCommandId,
+                        retryAttempt + 1,
+                    )
                         .then((connection) => {
                             this._roomConnectionStream.next(connection.connection);
                             resolve(connection);
                         })
-                        .catch(() => {
-                            /* Do nothing, the error is already handled in the connectToRoomSocket call */
-                        });
-                }, 4000 + Math.floor(Math.random() * 2000));
+                        .catch(reject);
+                }, retryDelay);
             });
         });
+    }
+
+    private bindWebsocketReconnectingToast(connection: RoomConnection): void {
+        // The websocketReconnectingStream stream is completed with the RoomConnection lifecycle.
+        //eslint-disable-next-line rxjs/no-ignored-subscription, svelte/no-ignored-unsubscribe
+        connection.websocketReconnectingStream.subscribe((reconnecting) => {
+            if (reconnecting) {
+                toastStore.addToast(WebsocketReconnectingToast, {}, websocketReconnectingToastId);
+                return;
+            }
+
+            toastStore.removeToast(websocketReconnectingToastId);
+        });
+    }
+
+    private getConnectionRetryDelay(retryAttempt: number): number {
+        const exponentialDelay = connectionRetryBaseDelayMs * 2 ** retryAttempt;
+        const jitter = Math.floor(Math.random() * connectionRetryJitterMs);
+
+        return Math.max(0, Math.min(connectionRetryMaxDelayMs, exponentialDelay + jitter));
     }
 
     get getConnexionType() {
@@ -637,7 +686,7 @@ class ConnectionManager {
                     headers: {
                         Authorization: this.authToken,
                     },
-                }
+                },
             );
             return true;
         } else {
@@ -661,7 +710,7 @@ class ConnectionManager {
                     headers: {
                         Authorization: this.authToken,
                     },
-                }
+                },
             );
             return true;
         } else {
@@ -685,7 +734,7 @@ class ConnectionManager {
                     headers: {
                         Authorization: this.authToken,
                     },
-                }
+                },
             );
             return true;
         } else {
@@ -748,7 +797,7 @@ class ConnectionManager {
                 "EPING",
                 response.config,
                 response.request,
-                response
+                response,
             );
         });
     }

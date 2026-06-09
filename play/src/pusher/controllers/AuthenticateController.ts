@@ -15,6 +15,7 @@ import { adminService } from "../services/AdminService";
 import { validateQuery } from "../services/QueryValidator";
 import { VerifyDomainService } from "../services/verifyDomain/VerifyDomainService";
 import { matrixProvider } from "../services/MatrixProvider";
+import { getClientIpFromXForwardedFor } from "../services/ClientIp";
 import { BaseHttpController } from "./BaseHttpController";
 
 const debug = Debug("pusher:requests");
@@ -109,7 +110,7 @@ export class AuthenticateController extends BaseHttpController {
                     chatRoomId: z.string().optional(),
                     providerId: z.string().optional(),
                     providerScopes: z.string().array().optional(), // Optional scopes to request
-                })
+                }),
             );
             if (query === undefined) {
                 return;
@@ -131,7 +132,7 @@ export class AuthenticateController extends BaseHttpController {
                 query.manuallyTriggered,
                 query.chatRoomId,
                 query.providerId,
-                query.providerScopes
+                query.providerScopes,
             );
             res.cookie("playUri", query.playUri, {
                 httpOnly: true, // dont let browser javascript access cookie ever
@@ -180,8 +181,10 @@ export class AuthenticateController extends BaseHttpController {
          */
 
         this.app.get("/me", async (req, res) => {
-            debug(`AuthenticateController => [${req.method}] ${req.originalUrl} — IP: ${req.ip} — Time: ${Date.now()}`);
-            const IPAddress = req.header("x-forwarded-for") ?? "";
+            const IPAddress = getClientIpFromXForwardedFor(req.header("x-forwarded-for"));
+            debug(
+                `AuthenticateController => [${req.method}] ${req.originalUrl} — IP: ${IPAddress} — Time: ${Date.now()}`,
+            );
             const query = validateQuery(req, res, MeRequest);
             if (query === undefined) {
                 return;
@@ -205,7 +208,7 @@ export class AuthenticateController extends BaseHttpController {
                     localStorageCompanionTextureId,
                     req.header("accept-language"),
                     authTokenData.tags,
-                    chatID
+                    chatID,
                 );
 
                 if (resUserData.status === "error") {
@@ -318,7 +321,7 @@ export class AuthenticateController extends BaseHttpController {
                 userInfo?.username,
                 userInfo?.locale,
                 userInfo?.tags,
-                email ? matrixProvider.getBareMatrixIdFromEmail(email) : undefined
+                email ? matrixProvider.getBareMatrixIdFromEmail(email) : undefined,
             );
 
             const matrixPublicUri = userInfo.matrix_url ?? MATRIX_PUBLIC_URI;
@@ -381,7 +384,7 @@ export class AuthenticateController extends BaseHttpController {
             const query = validateQuery(
                 req,
                 res,
-                z.object({ loginToken: z.string(), chatRoomId: z.string().optional() })
+                z.object({ loginToken: z.string(), chatRoomId: z.string().optional() }),
             );
             if (query === undefined) {
                 return;
@@ -467,7 +470,7 @@ export class AuthenticateController extends BaseHttpController {
             const data = await adminService.fetchMemberDataByToken(
                 organizationMemberToken,
                 playUri,
-                req.header("accept-language")
+                req.header("accept-language"),
             );
             const userUuid = data.userUuid;
             const email = data.email;
@@ -481,7 +484,7 @@ export class AuthenticateController extends BaseHttpController {
                 undefined,
                 undefined,
                 [],
-                matrixUserId
+                matrixUserId,
             );
 
             res.json({
@@ -565,7 +568,7 @@ export class AuthenticateController extends BaseHttpController {
                 z.object({
                     token: z.string(),
                     playUri: z.string(),
-                })
+                }),
             );
             if (query === undefined) {
                 return;
@@ -638,7 +641,7 @@ export class AuthenticateController extends BaseHttpController {
                     playUri: z.string(),
                     token: z.string(),
                     redirect: z.string().optional(),
-                })
+                }),
             );
             if (query === undefined) {
                 return;

@@ -136,6 +136,52 @@ message WebRtcSignal {
   string connectionId = 3;
 }
 
+enum VideoQualityStreamCategory {
+  VIDEO_QUALITY_STREAM_CATEGORY_UNSPECIFIED = 0;
+  VIDEO_QUALITY_STREAM_CATEGORY_VIDEO = 1;
+  VIDEO_QUALITY_STREAM_CATEGORY_SCREEN_SHARING = 2;
+}
+
+enum VideoQualityTransportType {
+  VIDEO_QUALITY_TRANSPORT_TYPE_UNSPECIFIED = 0;
+  VIDEO_QUALITY_TRANSPORT_TYPE_P2P = 1;
+  VIDEO_QUALITY_TRANSPORT_TYPE_LIVEKIT = 2;
+}
+
+enum VideoQualityRelayProtocol {
+  VIDEO_QUALITY_RELAY_PROTOCOL_UNSPECIFIED = 0;
+  VIDEO_QUALITY_RELAY_PROTOCOL_UDP = 1;
+  VIDEO_QUALITY_RELAY_PROTOCOL_TCP = 2;
+  VIDEO_QUALITY_RELAY_PROTOCOL_TLS = 3;
+}
+
+message VideoQualitySampleMessage {
+  uint64 clientEventTimeMs = 1;
+  optional uint64 sampleSeq = 2;
+  string streamId = 3;
+  optional string connectionId = 4;
+  optional string sessionId = 5;
+  optional string remoteUserUuid = 6;
+  string remoteSpaceUserId = 7;
+  string spaceName = 8;
+  VideoQualityStreamCategory streamCategory = 9;
+  VideoQualityTransportType transportType = 10;
+  optional bool relay = 11;
+  optional VideoQualityRelayProtocol relayProtocol = 12;
+  optional string livekitServerUrl = 13;
+  double fps = 14;
+  optional double fpsStdDev = 15;
+  double jitter = 16;
+  double bandwidthBytesPerSecond = 17;
+  uint32 frameWidth = 18;
+  uint32 frameHeight = 19;
+  optional string mimeType = 20;
+}
+
+message VideoQualityReportMessage {
+  repeated VideoQualitySampleMessage samples = 1;
+}
+
 message ReportPlayerMessage {
   string reportedUserUuid = 1;
   string reportComment = 2;
@@ -339,6 +385,18 @@ message ModifyEntityMessage {
   uint32 height = 8;
 }
 
+// Transport envelope for websocket frames sent from front to pusher.
+message FrontToPusherWebSocketMessage {
+  uint32 nonce = 1;
+  ClientToServerMessage message = 2;
+}
+
+// Transport envelope for websocket frames sent from pusher to front.
+message PusherToFrontWebSocketMessage {
+  uint32 nonce = 1;
+  ServerToClientMessage message = 2;
+}
+
 message ClientToServerMessage {
   oneof message {
     JoinRoomFrontMessage joinRoomFrontMessage = 1;
@@ -373,6 +431,7 @@ message ClientToServerMessage {
     MeetingInvitationRequestMessage meetingInvitationRequestMessage = 48;
     MeetingInvitationResponseMessage meetingInvitationResponseMessage = 49;
     SetAreaPropertyVariableMessage setAreaPropertyVariableMessage = 46;
+    VideoQualityReportMessage videoQualityReportMessage = 50;
   }
 }
 
@@ -814,6 +873,31 @@ message StartSpaceRecordingAnswer {
 message StopSpaceRecordingAnswer {
 }
 
+enum RecordingWebhookPhase {
+  RECORDING_WEBHOOK_PHASE_UNSPECIFIED = 0;
+  RECORDING_WEBHOOK_PHASE_STARTED = 1;
+  RECORDING_WEBHOOK_PHASE_ENDED = 2;
+}
+
+message HandleRecordingWebhookRequest {
+  string spaceName = 1;
+  string eventId = 2;
+  string recordingSessionId = 3;
+  string egressId = 4;
+  string roomName = 5;
+  RecordingWebhookPhase phase = 6;
+  string status = 7;
+  string error = 8;
+  int64 createdAt = 9;
+}
+
+message HandleLivekitWebhookRequest {
+  string spaceName = 1;
+  string recordingSessionId = 2;
+  bytes rawBody = 3;
+  string authorizationHeader = 4;
+}
+
 /*********** SERVER TO CLIENT MESSAGES *************/
 
 message UserMovedMessage {
@@ -998,9 +1082,6 @@ message RefreshRoomMessage{
 message DeleteMapMessage{
 }
 
-message WorldFullMessage{
-}
-
 message TokenExpiredMessage{
 }
 
@@ -1087,6 +1168,9 @@ message MuteVideoForEverybodyPublicMessage {
 message KickOffUserPrivateMessage {
 }
 
+message RecordingUnexpectedlyStoppedPrivateMessage {
+}
+
 message PublicEventFrontToPusher {
   string spaceName = 1;
   SpaceEvent spaceEvent = 2;
@@ -1132,6 +1216,7 @@ message PrivateSpaceEvent {
     BlockUserMessage blockUserMessage = 20;
     UnblockUserMessage unblockUserMessage = 21;
     MeetingConnectionRestartMessage meetingConnectionRestartMessage = 22;
+    RecordingUnexpectedlyStoppedPrivateMessage recordingUnexpectedlyStoppedMessage = 23;
   }
 }
 
@@ -1257,7 +1342,6 @@ message ServerToClientMessage {
     BanUserMessage banUserMessage = 13;
     //AdminRoomMessage adminRoomMessage = 14;
     WorldFullWarningMessage worldFullWarningMessage = 15;
-    WorldFullMessage worldFullMessage = 16;
     RefreshRoomMessage refreshRoomMessage = 17;
     WorldConnectionMessage worldConnectionMessage = 18;
     //EmoteEventMessage emoteEventMessage = 19;
@@ -1304,9 +1388,6 @@ message JoinRoomFrontMessage {
   ViewportMessage viewportMessage = 2;
   string name = 3;
   AvailabilityStatus availabilityStatus = 6;
-  // Unique identifier for the browser tab, used to detect reconnections from the same tab
-  // and kill stale connections immediately instead of waiting for ping timeout
-  string tabId = 8;
 }
 
 /**

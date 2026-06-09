@@ -1,17 +1,16 @@
 import * as Sentry from "@sentry/svelte";
 import type { Subscription } from "rxjs";
 import { TimeoutError } from "@workadventure/shared-utils/src/Abort/TimeoutError";
-import Phaser from "phaser";
+import * as Phaser from "phaser";
 import AnimatedTiles from "phaser-animated-tiles";
 import { Queue } from "queue-typescript";
-import type { ComponentType } from "svelte";
 import type { Readable, Unsubscriber } from "svelte/store";
 import { get } from "svelte/store";
 import { throttle } from "throttle-debounce";
 import { ForwardableStore, MapStore } from "@workadventure/store-utils";
 import { MathUtils } from "@workadventure/math-utils";
-import CancelablePromise from "cancelable-promise";
-import { Deferred } from "@workadventure/shared-utils";
+import { CancelablePromise } from "cancelable-promise";
+import { Deferred, SpatialMap } from "@workadventure/shared-utils";
 import {
     AvailabilityStatus,
     availabilityStatusToJSON,
@@ -127,6 +126,7 @@ import { GameSceneUserInputHandler } from "../UserInput/GameSceneUserInputHandle
 import { followUsersColorStore, followUsersStore } from "../../Stores/FollowStore";
 import { axiosWithRetry, hideConnectionIssueMessage, showConnectionIssueMessage } from "../../Connection/AxiosUtils";
 import { StringUtils } from "../../Utils/StringUtils";
+import { PHASER_COLOR_DESIGN_SYSTEM_SECONDARY } from "../../Utils/DesignSystemPhaserColors";
 
 import { SuperLoaderPlugin } from "../Services/SuperLoaderPlugin";
 import { embedScreenLayoutStore } from "../../Stores/EmbedScreenLayoutStore";
@@ -193,13 +193,14 @@ import type { ChatConnectionInterface, ChatUser } from "../../Chat/Connection/Ch
 import { selectedRoomStore } from "../../Chat/Stores/SelectRoomStore";
 import { raceTimeout } from "../../Utils/PromiseUtils";
 import { PLAYTEXT_NEW_MEDIA_DEVICE_PREFIX } from "../Entity/Character";
-import { ConversationBubble } from "../Entity/ConversationBubble";
+import { type Avatar, ConversationBubble } from "../Entity/ConversationBubble";
 import { DarkenOutsideAreaEffect } from "../Components/DarkenOutsideArea/DarkenOutsideAreaEffect";
 import { isInsidePersonalAreaStore } from "../../Stores/PersonalDeskStore";
 import { areaPropertyVariablesManagerStore } from "../../Stores/AreaPropertyVariablesStore";
 import { ApplicationManager } from "../../Chat/Applications/ApplicationManager";
 import { isNotSuspendedAudioContextStore } from "../../Stores/AudioContextStore";
 import { requestedScreenSharingState } from "../../Stores/ScreenSharingStore";
+import { EnterLeaveScriptingService } from "../Helpers/EnterLeaveScriptingService";
 import { GameMapFrontWrapper } from "./GameMap/GameMapFrontWrapper";
 import { gameManager } from "./GameManager";
 import { EmoteManager } from "./EmoteManager";
@@ -232,6 +233,7 @@ import { InviteManager } from "./InviteManager";
 import { LocateManager } from "./LocateManager";
 import { uiWebsiteManager } from "./UI/UIWebsiteManager";
 import { ScriptingVideoManager } from "./ScriptingVideoManager";
+import { UsernameDomLayer } from "./UsernameDomLayer";
 import EVENT_TYPE = Phaser.Scenes.Events;
 import Sprite = Phaser.GameObjects.Sprite;
 import CanvasTexture = Phaser.Textures.CanvasTexture;
@@ -240,6 +242,9 @@ import Tileset = Phaser.Tilemaps.Tileset;
 import SpriteSheetFile = Phaser.Loader.FileTypes.SpriteSheetFile;
 import FILE_LOAD_ERROR = Phaser.Loader.Events.FILE_LOAD_ERROR;
 import Clamp = Phaser.Math.Clamp;
+
+const MOUSE_WHEEL_ZOOM_RATE = 0.5;
+const CONVERSATION_BUBBLE_SPATIAL_GRID_SIZE = 64;
 
 export interface GameSceneInitInterface {
     reconnecting: boolean;
@@ -259,6 +264,11 @@ interface DeleteGroupEventInterface {
 interface GroupUsersUpdatedEventInterface {
     type: "GroupUsersUpdatedEvent";
     event: GroupUsersUpdateMessage;
+}
+
+interface PositionCoordinates {
+    x: number;
+    y: number;
 }
 
 const WORLD_SPACE_NAME = "allWorldUser";
@@ -333,6 +343,7 @@ export class GameScene extends DirtyScene {
     private isReconnecting: boolean | undefined = undefined;
     private playerName!: string;
     private popUpElements: Map<number, DOMElement> = new Map<number, Phaser.GameObjects.DOMElement>();
+    private remotePlayersSpatialIndex = new SpatialMap<number, RemotePlayer>(CONVERSATION_BUBBLE_SPATIAL_GRID_SIZE);
     private originalMapUrl: string | undefined;
     private pinchManager: PinchManager | undefined;
     private outlineManager!: OutlineManager;
@@ -372,6 +383,7 @@ export class GameScene extends DirtyScene {
     private playersEventDispatcher = new IframeEventDispatcher();
     private playersMovementEventDispatcher = new IframeEventDispatcher();
     private remotePlayersRepository = new RemotePlayersRepository();
+    public usernameDomLayer!: UsernameDomLayer;
     private throttledSendViewportToServer_!: throttle<() => void>;
     private lastSentViewport: ViewportInterface | undefined;
     private serverViewportDebugGraphics: Phaser.GameObjects.Graphics | undefined;
@@ -404,6 +416,8 @@ export class GameScene extends DirtyScene {
     // Listeners for when the player finishes moving
     private onPlayerMovementEndedCallbacks: Array<(event: HasPlayerMovedInterface) => void> = [];
 
+    private enterLeaveScriptingService: EnterLeaveScriptingService | undefined;
+
     public _chatConnection: ChatConnectionInterface | undefined;
     private _proximityChatRoomDeferred: Deferred<ProximityChatRoom> = new Deferred();
     private _focusFx: DarkenOutsideAreaEffect | undefined;
@@ -414,7 +428,7 @@ export class GameScene extends DirtyScene {
     constructor(
         private _room: Room,
         customKey?: string,
-        private _isInsidePersonalAreaStore = isInsidePersonalAreaStore
+        private _isInsidePersonalAreaStore = isInsidePersonalAreaStore,
     ) {
         super({
             key: customKey ?? _room.key,
@@ -454,12 +468,6 @@ export class GameScene extends DirtyScene {
         //initialize frame event of scripting API
         this.listenToIframeEvents();
 
-        this.load.image("iconTalk", "/resources/icons/icon_talking.png");
-        this.load.image("iconSpeaker", "/resources/icons/icon_speaking.png");
-        this.load.image("iconMegaphone", "/resources/icons/icon_megaphone.png");
-        this.load.image("iconStatusIndicatorInside", "/resources/icons/icon_status_indicator_inside.png");
-        this.load.image("iconStatusIndicatorOutline", "/resources/icons/icon_status_indicator_outline.png");
-
         this.load.image("iconFocus", "/resources/icons/icon_focus.png");
         this.load.image("iconLink", "/resources/icons/icon_link.png");
         this.load.image("iconListenerMegaphone", "/resources/icons/icon_listener.png");
@@ -475,11 +483,11 @@ export class GameScene extends DirtyScene {
         const selectedBubbleSound = get(bubbleSoundStore);
         this.load.audio(
             `audio-webrtc-in-${selectedBubbleSound}`,
-            `/resources/objects/webrtc-in-${selectedBubbleSound}.mp3`
+            `/resources/objects/webrtc-in-${selectedBubbleSound}.mp3`,
         );
         this.load.audio(
             `audio-webrtc-out-${selectedBubbleSound}`,
-            `/resources/objects/webrtc-out-${selectedBubbleSound}.mp3`
+            `/resources/objects/webrtc-out-${selectedBubbleSound}.mp3`,
         );
         this.load.audio("audio-report-message", "/resources/objects/report-message.mp3");
         this.load.audio("audio-cloud", "/resources/objects/cloud.mp3");
@@ -504,7 +512,7 @@ export class GameScene extends DirtyScene {
                     "filecomplete-tilemapJSON-" + this.mapUrlFile,
                     (key: string, type: string, data: unknown) => {
                         this.onMapLoad(data).catch((e) => console.error(e));
-                    }
+                    },
                 );
                 return;
             }
@@ -528,7 +536,7 @@ export class GameScene extends DirtyScene {
                     "filecomplete-tilemapJSON-" + this.mapUrlFile,
                     (key: string, type: string, data: unknown) => {
                         this.onMapLoad(data).catch((e) => console.error(e));
-                    }
+                    },
                 );
                 // If the map has already been loaded as part of another GameScene, the "on load" event will not be triggered.
                 // In this case, we check in the cache to see if the map is here and trigger the event manually.
@@ -547,7 +555,7 @@ export class GameScene extends DirtyScene {
                     new Error('Cannot load "' + (file?.src ?? this.originalMapUrl) + '"'),
                     "NETWORK_ERROR",
                     "Network error",
-                    "An error occurred while loading a resource"
+                    "An error occurred while loading a resource",
                 );
             }
         });
@@ -568,26 +576,14 @@ export class GameScene extends DirtyScene {
                             error,
                             "WAM_FILE_LOAD_ISSUE",
                             "Error when loading WAM file",
-                            "Unknown error while loading WAM file"
+                            "Unknown error while loading WAM file",
                         );
                         return;
                     }
-                })
+                }),
             );
         } else {
             this.doLoadTMJFile(this.mapUrlFile);
-        }
-
-        // The condition is here for Webkit in headless mode (CI / automated tests). It doesn't have a proper font support.
-        //eslint-disable-next-line @typescript-eslint/no-explicit-any
-        if (typeof (this.load as any).rexWebFont === "function") {
-            //eslint-disable-next-line @typescript-eslint/no-explicit-any
-            (this.load as any).rexWebFont({
-                custom: {
-                    families: ["Press Start 2P"],
-                    testString: "abcdefg",
-                },
-            });
         }
 
         //this function must stay at the end of preload function
@@ -598,7 +594,7 @@ export class GameScene extends DirtyScene {
         error: Error | unknown,
         errorCode: string,
         errorTitle: string,
-        errorSubtitle: string
+        errorSubtitle: string,
     ) {
         console.error(error);
 
@@ -615,7 +611,7 @@ export class GameScene extends DirtyScene {
                 title: errorTitle,
                 subtitle: errorSubtitle,
                 details: error instanceof Error ? error.message : "Unknown error",
-            })
+            }),
         );
 
         this.cleanupClosingScene();
@@ -671,7 +667,7 @@ export class GameScene extends DirtyScene {
                 e,
                 "MAP_FILE_LOAD_ISSUE",
                 "Error when loading map file",
-                `An error occurred while loading the map file "${this.mapUrlFile}". Please check the URL or contact the map administrator.`
+                `An error occurred while loading the map file "${this.mapUrlFile}". Please check the URL or contact the map administrator.`,
             );
             return;
         }
@@ -679,12 +675,12 @@ export class GameScene extends DirtyScene {
         this.mapFile.tilesets.forEach((tileset: ITiledMapTileset) => {
             if ("source" in tileset) {
                 throw new Error(
-                    `Tilesets must be embedded in a map. The tileset "${tileset.source}" must be embedded in the Tiled map "${this.mapUrlFile}".`
+                    `Tilesets must be embedded in a map. The tileset "${tileset.source}" must be embedded in the Tiled map "${this.mapUrlFile}".`,
                 );
             }
             if (!("image" in tileset)) {
                 throw new Error(
-                    `Tilesets made of a collection of images are not supported in WorkAdventure in the Tiled map "${this.mapUrlFile}".`
+                    `Tilesets made of a collection of images are not supported in WorkAdventure in the Tiled map "${this.mapUrlFile}".`,
                 );
             }
             const tilesetImage = this.Map.addTilesetImage(
@@ -693,7 +689,7 @@ export class GameScene extends DirtyScene {
                 tileset.tilewidth,
                 tileset.tileheight,
                 tileset.margin,
-                tileset.spacing /*, tileset.firstgid*/
+                tileset.spacing /*, tileset.firstgid*/,
             );
             if (tilesetImage) {
                 this.Terrains.push(tilesetImage);
@@ -709,6 +705,8 @@ export class GameScene extends DirtyScene {
         //permit to set bound collision
         this.physics.world.setBounds(0, 0, this.Map.widthInPixels, this.Map.heightInPixels);
 
+        this.usernameDomLayer = new UsernameDomLayer(this);
+
         this.embeddedWebsiteManager = new EmbeddedWebsiteManager(this);
 
         //add layer on map
@@ -716,7 +714,7 @@ export class GameScene extends DirtyScene {
             this,
             new GameMap(this.mapFile, this.wamFile),
             this.Map,
-            this.Terrains
+            this.Terrains,
         );
         this.gameMapFrontWrapper.initialize().catch((e) => console.error(e));
         for (const layer of this.gameMapFrontWrapper.getFlatLayers()) {
@@ -724,7 +722,7 @@ export class GameScene extends DirtyScene {
                 const exitSceneUrl = this.getExitSceneUrl(layer);
                 if (exitSceneUrl !== undefined) {
                     this.loadNextGame(
-                        Room.getRoomPathFromExitSceneUrl(exitSceneUrl, window.location.toString(), this.mapUrlFile)
+                        Room.getRoomPathFromExitSceneUrl(exitSceneUrl, window.location.toString(), this.mapUrlFile),
                     ).catch((e) => console.error(e));
                 }
                 const exitUrl = this.getExitUrl(layer);
@@ -742,11 +740,11 @@ export class GameScene extends DirtyScene {
                         const url = PropertyUtils.mustFindStringProperty(
                             GameMapProperties.URL,
                             object.properties,
-                            'in the "' + object.name + '" object of type "website"'
+                            'in the "' + object.name + '" object of type "website"',
                         );
                         const allowApi = PropertyUtils.findBooleanProperty(
                             GameMapProperties.ALLOW_API,
-                            object.properties
+                            object.properties,
                         );
                         const policy = PropertyUtils.findStringProperty(GameMapProperties.POLICY, object.properties);
 
@@ -761,7 +759,7 @@ export class GameScene extends DirtyScene {
                             allowApi ?? false,
                             policy ?? "",
                             "map",
-                            1
+                            1,
                         );
                     }
                 }
@@ -779,7 +777,7 @@ export class GameScene extends DirtyScene {
             this.gameMapFrontWrapper,
             this.mapFile,
             this.initPosition,
-            urlManager.getStartPositionNameFromUrl()
+            urlManager.getStartPositionNameFromUrl(),
         );
 
         //create input to move
@@ -798,7 +796,7 @@ export class GameScene extends DirtyScene {
 
         this.pathfindingManager = new PathfindingManager(
             this.gameMapFrontWrapper.getCollisionGrid(),
-            this.gameMapFrontWrapper.getTileDimensions()
+            this.gameMapFrontWrapper.getTileDimensions(),
         );
 
         this.subscribeToGameMapChanged();
@@ -811,7 +809,7 @@ export class GameScene extends DirtyScene {
         this.cameraManager = new CameraManager(
             this,
             { width: this.Map.widthInPixels, height: this.Map.heightInPixels },
-            waScaleManager
+            waScaleManager,
         );
 
         biggestAvailableAreaStore.recompute();
@@ -842,7 +840,7 @@ export class GameScene extends DirtyScene {
                             // If an error message is already displayed, don't display the "connection lost" message.
                             console.error(
                                 "Error message store already displayed for CONNECTION_LOST",
-                                get(errorScreenStore)
+                                get(errorScreenStore),
                             );
                             return;
                         }
@@ -853,7 +851,7 @@ export class GameScene extends DirtyScene {
                                 title: get(LL).warning.connectionLostTitle(),
                                 details: get(LL).warning.connectionLostSubtitle(),
                                 image: this._room.errorSceneLogo,
-                            })
+                            }),
                         );
                     }
                 }, 0);
@@ -871,7 +869,7 @@ export class GameScene extends DirtyScene {
                             // If an error message is already displayed, don't display the "connection lost" message.
                             console.error(
                                 "Error message store already displayed for CONNECTION_PENDING: ",
-                                get(errorScreenStore)
+                                get(errorScreenStore),
                             );
                             return;
                         }
@@ -899,13 +897,13 @@ export class GameScene extends DirtyScene {
         const scripts = this.getScriptUrls(this.mapFile);
         const disableModuleMode = PropertyUtils.findBooleanProperty(
             GameMapProperties.SCRIPT_DISABLE_MODULE_SUPPORT,
-            this.mapFile.properties
+            this.mapFile.properties,
         );
         const scriptPromises = [];
         for (const script of scripts) {
             scriptPromises.push(
                 // Note: registerScript fails after 7 seconds if the script cannot be loaded
-                iframeListener.registerScript(script, !disableModuleMode)
+                iframeListener.registerScript(script, !disableModuleMode),
             );
         }
 
@@ -938,14 +936,14 @@ export class GameScene extends DirtyScene {
 
         Promise.all([
             this.connectionAnswerPromiseDeferred.promise.then(() =>
-                debug("Loading process: Websocket connection ready")
+                debug("Loading process: Websocket connection ready"),
             ),
             Promise.allSettled(scriptPromises).then((results) => {
                 debug("Loading process: Scripts loaded");
                 return results;
             }),
             this.gameMapFrontWrapper.initializedPromise.promise.then(() =>
-                debug("Loading process: Game map initialized")
+                debug("Loading process: Game map initialized"),
             ),
             // Wait at most 5 seconds for the chat connection to be established
             // If not, we can still proceed starting the scene without chat fully loaded
@@ -977,13 +975,20 @@ export class GameScene extends DirtyScene {
                             }
                         }
                         return Promise.resolve();
-                    })
+                    }),
                 )
                     .then((scriptReload) => {
                         for (const r of scriptReload) {
                             if (r.status === "rejected") {
                                 console.error("Error while reloading script after connection established", r.reason);
                             }
+                        }
+
+                        if (this.cleanupDone) {
+                            // The GameScene was closed before completing.
+                            // For instance, the websocket is closed while the map was loading.
+                            // Let's not join the room.
+                            return;
                         }
 
                         this.joinRoom()
@@ -1072,12 +1077,12 @@ export class GameScene extends DirtyScene {
                 PopUpRoomAccessDenied,
                 {
                     message: get(LL).warning.accessDenied.room(),
-                    click: () => {
+                    onclick: () => {
                         popupStore.removePopup("roomAccessDenied");
                     },
                     userInputManager: this.userInputManager,
                 },
-                "roomAccessDenied"
+                "roomAccessDenied",
             );
 
             this.mapTransitioning = false;
@@ -1102,7 +1107,7 @@ export class GameScene extends DirtyScene {
         } else {
             //if the exit points to the current map, we simply teleport the user back to the startLayer
             const startPosition = this.startPositionCalculator.computeStartPosition(
-                urlManager.getStartPositionNameFromUrl()
+                urlManager.getStartPositionNameFromUrl(),
             );
             this.CurrentPlayer.setPosition(startPosition.x, startPosition.y);
             this.CurrentPlayer.finishFollowingPath(true);
@@ -1233,10 +1238,12 @@ export class GameScene extends DirtyScene {
         this._sayManager?.close();
         this.playersEventDispatcher.cleanup();
         this.playersMovementEventDispatcher.cleanup();
+        this.usernameDomLayer?.destroy();
         this.gameMapFrontWrapper?.close();
         this.followManager?.close();
         this.inviteManager?.close();
         this.spaceScriptingBridgeService?.destroy();
+        this.enterLeaveScriptingService?.destroy();
         iceServersManager.finalize();
         if (this.localVolumeStoreUnsubscriber) {
             this.localVolumeStoreUnsubscriber();
@@ -1295,6 +1302,10 @@ export class GameScene extends DirtyScene {
         this.dirty = false;
         this.currentTick = time;
 
+        const currentPlayerPreviousPosition = this.hasJoinedRoom
+            ? { x: this.CurrentPlayer.x, y: this.CurrentPlayer.y }
+            : undefined;
+
         if (this.hasJoinedRoom) {
             this.CurrentPlayer.moveUser(delta, this.userInputManager.getEventListForGameTick());
         }
@@ -1336,7 +1347,7 @@ export class GameScene extends DirtyScene {
                 "Updated players:",
                 this.remotePlayersRepository.getUpdatedPlayers(),
                 "Removed players:",
-                this.remotePlayersRepository.getRemovedPlayers()
+                this.remotePlayersRepository.getRemovedPlayers(),
             );
             this.playersDebugLogAlreadyDisplayed = true;
         }
@@ -1389,22 +1400,40 @@ export class GameScene extends DirtyScene {
         }
         // Let's move all users
         const updatedPlayersPositions = this.playersPositionInterpolator.getUpdatedPositions(time);
+        const conversationBubblesToUpdate = new Set<ConversationBubble>();
         updatedPlayersPositions.forEach((moveEvent: HasPlayerMovedInterface, userId: number) => {
             this.dirty = true;
             const player: RemotePlayer | undefined = this.MapPlayersByKey.get(userId);
             if (player === undefined) {
                 throw new Error('Cannot find player with ID "' + userId + '"');
             }
+            const previousPosition = { x: player.x, y: player.y };
             player.updatePosition(moveEvent);
+            this.addConversationBubblesAffectedByPlayerMove(
+                userId,
+                previousPosition,
+                player,
+                conversationBubblesToUpdate,
+            );
             // If the camera is following the player, we need to update the viewport
             if (this.cameraManager?.playerFollowing === player) {
                 this._sendViewportToServer();
             }
         });
-        // If any of the users (including me) has moved, we need to recompute the shape of all bubbles
+
+        if (this.hasMovedThisFrame && currentPlayerPreviousPosition !== undefined) {
+            this.addConversationBubblesAffectedByPlayerMove(
+                this.connection?.getUserId(),
+                currentPlayerPreviousPosition,
+                this.CurrentPlayer,
+                conversationBubblesToUpdate,
+            );
+        }
+
+        // If a user close to a bubble has moved, we need to recompute that bubble shape.
         for (const group of this.groups.values()) {
-            if (updatedPlayersPositions.size > 0 || this.hasMovedThisFrame || group.isAnimating) {
-                group.step();
+            if (group.needsStep || group.isAnimating || conversationBubblesToUpdate.has(group)) {
+                group.step(this.getConversationBubbleAvatars(group));
             }
         }
         this.hasMovedThisFrame = false;
@@ -1412,6 +1441,69 @@ export class GameScene extends DirtyScene {
         if (DEBUG_MODE) {
             this.updateServerViewportDebugOverlay();
         }
+    }
+
+    private addConversationBubblesAffectedByPlayerMove(
+        userId: number | undefined,
+        previousPosition: PositionCoordinates,
+        currentPosition: PositionCoordinates,
+        conversationBubblesToUpdate: Set<ConversationBubble>,
+    ): void {
+        for (const group of this.groups.values()) {
+            if (
+                (userId !== undefined && group.containsUserId(userId)) ||
+                this.isPointInConversationBubbleInfluence(group, previousPosition) ||
+                this.isPointInConversationBubbleInfluence(group, currentPosition)
+            ) {
+                conversationBubblesToUpdate.add(group);
+            }
+        }
+    }
+
+    private getConversationBubbleAvatars(group: ConversationBubble): Avatar[] {
+        const remotePlayers = new Map<number, RemotePlayer>();
+        for (const remotePlayer of this.remotePlayersSpatialIndex.queryCircle(
+            group.x,
+            group.y,
+            group.getInfluenceRadius(),
+        )) {
+            remotePlayers.set(remotePlayer.userId, remotePlayer);
+        }
+        for (const userId of group.getUserIds()) {
+            const remotePlayer = this.MapPlayersByKey.get(userId);
+            if (remotePlayer !== undefined) {
+                remotePlayers.set(userId, remotePlayer);
+            }
+        }
+
+        const avatars: Avatar[] = [];
+        for (const remotePlayer of remotePlayers.values()) {
+            const avatar = group.turnInAvatar(remotePlayer);
+            if (avatar !== undefined) {
+                avatars.push(avatar);
+            }
+        }
+
+        const currentUserId = this.connection?.getUserId();
+        if (
+            currentUserId !== undefined &&
+            (group.containsUserId(currentUserId) ||
+                this.isPointInConversationBubbleInfluence(group, this.CurrentPlayer))
+        ) {
+            const avatar = group.turnInAvatar(this.CurrentPlayer);
+            if (avatar !== undefined) {
+                avatars.push(avatar);
+            }
+        }
+
+        return avatars;
+    }
+
+    private isPointInConversationBubbleInfluence(group: ConversationBubble, position: PositionCoordinates): boolean {
+        const influenceRadius = group.getInfluenceRadius();
+        const dx = position.x - group.x;
+        const dy = position.y - group.y;
+        return dx * dx + dy * dy <= influenceRadius * influenceRadius;
     }
 
     private updateServerViewportDebugOverlay(): void {
@@ -1461,7 +1553,7 @@ export class GameScene extends DirtyScene {
             console.info(
                 "Could not set new details to character with ID ",
                 update.player.userId,
-                ". Did he/she left before te message was received?"
+                ". Did he/she left before te message was received?",
             );
             return;
         }
@@ -1525,7 +1617,7 @@ export class GameScene extends DirtyScene {
         const viewport = this.intersectViewportWithMapBounds(
             { left: baseLeft, top: baseTop, right: baseRight, bottom: baseBottom },
             this.Map.widthInPixels,
-            this.Map.heightInPixels
+            this.Map.heightInPixels,
         );
 
         return viewport;
@@ -1537,7 +1629,7 @@ export class GameScene extends DirtyScene {
     private intersectViewportWithMapBounds(
         viewport: ViewportInterface,
         mapWidth: number,
-        mapHeight: number
+        mapHeight: number,
     ): ViewportInterface | null {
         if (mapWidth <= 0 || mapHeight <= 0) {
             return null;
@@ -1600,10 +1692,12 @@ export class GameScene extends DirtyScene {
         const gameSceneKey = "somekey" + Math.round(Math.random() * 10000);
         const game = new GameScene(this._room, gameSceneKey);
         this.scene.add(gameSceneKey, game, autostart, {
-            initPosition: {
-                x: this.CurrentPlayer.x,
-                y: this.CurrentPlayer.y,
-            },
+            initPosition: this.CurrentPlayer
+                ? {
+                      x: this.CurrentPlayer.x,
+                      y: this.CurrentPlayer.y,
+                  }
+                : undefined,
             reconnecting: reconnecting,
         });
 
@@ -1646,7 +1740,7 @@ export class GameScene extends DirtyScene {
     }
 
     public getPlayerVariablesManager(): PlayerVariablesManager | undefined {
-        return this.playerVariablesManager as PlayerVariablesManager | undefined;
+        return this.playerVariablesManager;
     }
 
     public getActivatablesManager(): ActivatablesManager {
@@ -1675,7 +1769,7 @@ export class GameScene extends DirtyScene {
             (collectionUrl) => ({
                 url: collectionUrl.url,
                 type: "Default",
-            })
+            }),
         );
         collectionDescriptors.push({ url: customEntityCollectionUrl, type: "Custom" });
 
@@ -1714,7 +1808,7 @@ export class GameScene extends DirtyScene {
         this.mapFile.tilesets.forEach((tileset) => {
             if ("source" in tileset) {
                 throw new Error(
-                    `Tilesets must be embedded in a map. The tileset "${tileset.source}" must be embedded in the Tiled map "${this.mapUrlFile}".`
+                    `Tilesets must be embedded in a map. The tileset "${tileset.source}" must be embedded in the Tiled map "${this.mapUrlFile}".`,
                 );
             }
             if (typeof tileset.name === "undefined" || !("image" in tileset)) {
@@ -1813,7 +1907,7 @@ export class GameScene extends DirtyScene {
                 gameMapAreas,
                 this.connection.getAllTags() ?? [],
                 userCanEdit,
-                localUserStore.getLocalUser()?.uuid
+                localUserStore.getLocalUser()?.uuid,
             );
             this.entityPermissionsDeferred.resolve(this.entityPermissions);
         }
@@ -1843,10 +1937,40 @@ export class GameScene extends DirtyScene {
                 this.playerName,
                 gameManager.getCharacterTextureIds() ?? [],
                 gameManager.getCompanionTextureId(),
-                this.getGameMap().getWamFile()?.getLastCommandId()
+                this.getGameMap().getWamFile()?.getLastCommandId(),
             )
             .then(async (onConnect: OnConnectInterface) => {
                 this.connection = onConnect.connection;
+
+                // The serverDisconnected stream is completed in the RoomConnection. No need to unsubscribe.
+                //eslint-disable-next-line rxjs/no-ignored-subscription, svelte/no-ignored-unsubscribe
+                this.connection.serverDisconnected.subscribe(() => {
+                    showConnectionIssueMessage();
+                    console.info("Player disconnected from server. Waiting for pusher ping.");
+                    connectionManager
+                        .waitForPusherPing()
+                        .then(() => {
+                            console.info("Pusher reachable again. Reloading scene.");
+                            this.cleanupClosingScene();
+                            this.createSuccessorGameScene(true, true);
+                        })
+                        .catch((e) => {
+                            console.error(
+                                `Error while waiting for Pusher to come back online: ${asError(e).message}`,
+                                e,
+                            );
+                            Sentry.captureException(e);
+                            this.handleErrorAndCleanup(
+                                e,
+                                "CONNECTION_BROKEN",
+                                "Unable to reconnect",
+                                "Error when trying to reconnect after the connection was lost",
+                            );
+                            hideConnectionIssueMessage();
+                            return;
+                        });
+                });
+                hideConnectionIssueMessage();
 
                 const commandsToApply = onConnect.roomConnectedMessage.editMapCommandsArrayMessage?.editMapCommands;
                 if (commandsToApply) {
@@ -1859,7 +1983,7 @@ export class GameScene extends DirtyScene {
                 }
 
                 const startPosition = this.startPositionCalculator.computeStartPosition(
-                    urlManager.getStartPositionNameFromUrl()
+                    urlManager.getStartPositionNameFromUrl(),
                 );
 
                 this.createCurrentPlayer(startPosition);
@@ -1868,6 +1992,8 @@ export class GameScene extends DirtyScene {
                 this.cameraManager.startFollowPlayer(this.CurrentPlayer, 0);
 
                 this.mapEditorModeManager?.subscribeToRoomConnection(this.connection);
+
+                this.enterLeaveScriptingService = new EnterLeaveScriptingService(this.gameMapFrontWrapper, this);
 
                 this._spaceRegistry = new SpaceRegistry(this.connection);
                 this.spaceScriptingBridgeService = new SpaceScriptingBridgeService(this._spaceRegistry);
@@ -1962,7 +2088,7 @@ export class GameScene extends DirtyScene {
                 this.connection.groupUpdateMessageStream.subscribe(
                     (groupPositionMessage: GroupCreatedUpdatedMessageInterface) => {
                         this.shareGroupPosition(groupPositionMessage);
-                    }
+                    },
                 );
 
                 // The groupDeleteMessageStream stream is completed in the RoomConnection. No need to unsubscribe.
@@ -1975,36 +2101,6 @@ export class GameScene extends DirtyScene {
                     }
                 });
 
-                // The serverDisconnected stream is completed in the RoomConnection. No need to unsubscribe.
-                //eslint-disable-next-line rxjs/no-ignored-subscription, svelte/no-ignored-unsubscribe
-                this.connection.serverDisconnected.subscribe(() => {
-                    showConnectionIssueMessage();
-                    console.info("Player disconnected from server. Waiting for pusher ping.");
-                    connectionManager
-                        .waitForPusherPing()
-                        .then(() => {
-                            console.info("Pusher reachable again. Reloading scene.");
-                            this.cleanupClosingScene();
-                            this.createSuccessorGameScene(true, true);
-                        })
-                        .catch((e) => {
-                            console.error(
-                                `Error while waiting for Pusher to come back online: ${asError(e).message}`,
-                                e
-                            );
-                            Sentry.captureException(e);
-                            this.handleErrorAndCleanup(
-                                e,
-                                "CONNECTION_BROKEN",
-                                "Unable to reconnect",
-                                "Error when trying to reconnect after the connection was lost"
-                            );
-                            hideConnectionIssueMessage();
-                            return;
-                        });
-                });
-                hideConnectionIssueMessage();
-
                 // The itemEventMessageStream stream is completed in the RoomConnection. No need to unsubscribe.
                 //eslint-disable-next-line rxjs/no-ignored-subscription, svelte/no-ignored-unsubscribe
                 this.connection.itemEventMessageStream.subscribe((message) => {
@@ -2013,7 +2109,7 @@ export class GameScene extends DirtyScene {
                         console.warn(
                             'Received an event about object "' +
                                 message.itemId +
-                                '" but cannot find this item on the map.'
+                                '" but cannot find this item on the map.',
                         );
                         return;
                     }
@@ -2094,44 +2190,6 @@ export class GameScene extends DirtyScene {
                     }) || [];
 
                 this.gameMapFrontWrapper.setPosition(this.CurrentPlayer.x, this.CurrentPlayer.y);
-                // Init layer change listener
-                this.gameMapFrontWrapper.onEnterLayer((layers) => {
-                    layers.forEach((layer) => {
-                        iframeListener.sendEnterLayerEvent(layer.name);
-                    });
-                });
-
-                this.gameMapFrontWrapper.onLeaveLayer((layers) => {
-                    layers.forEach((layer) => {
-                        iframeListener.sendLeaveLayerEvent(layer.name);
-                    });
-                });
-
-                // NOTE: Leaving events names as "enterArea" and "leaveArea" to not introduce any breaking changes.
-                //       We are only looking through dynamic areas when handling those events.
-                this.gameMapFrontWrapper.onEnterDynamicArea((areas) => {
-                    areas.forEach((area) => {
-                        iframeListener.sendEnterAreaEvent(area.name);
-                    });
-                });
-
-                this.gameMapFrontWrapper.onLeaveDynamicArea((areas) => {
-                    areas.forEach((area) => {
-                        iframeListener.sendLeaveAreaEvent(area.name);
-                    });
-                });
-
-                this.gameMapFrontWrapper.onEnterDynamicArea((areas) => {
-                    areas.forEach((area) => {
-                        iframeListener.sendEnterMapEditorAreaEvent(area.name);
-                    });
-                });
-
-                this.gameMapFrontWrapper.onLeaveDynamicArea((areas) => {
-                    areas.forEach((area) => {
-                        iframeListener.sendLeaveMapEditorAreaEvent(area.name);
-                    });
-                });
 
                 this.emoteManager = new EmoteManager(this, this.connection);
 
@@ -2156,7 +2214,7 @@ export class GameScene extends DirtyScene {
                                 if (!isNotSuspended) return;
                                 if (timeoutId) clearTimeout(timeoutId);
                                 isNotSuspendedAudioContextStoreSubscription?.();
-                            }
+                            },
                         );
 
                         // Update the user status. This is a specific status to indicate that the user has not allow to receive audio.
@@ -2170,10 +2228,11 @@ export class GameScene extends DirtyScene {
 
                 // Get position from UUID only after the connection to the pusher is established
                 this.tryMovePlayerWithMoveToUserParameter();
-
-                gameSceneStore.set(this);
             })
-            .catch((e) => console.error(e));
+            .catch((e) => {
+                Sentry.captureException(e);
+                console.error("Error while connecting to pusher", e);
+            });
     }
 
     /**
@@ -2199,7 +2258,6 @@ export class GameScene extends DirtyScene {
             },
             this.getViewport(true),
             get(availabilityStatusStore),
-            connectionManager.tabId
         );
 
         // TODO: what happens if we never receive the room joined message?
@@ -2224,7 +2282,7 @@ export class GameScene extends DirtyScene {
                 })
                 .catch((e) => {
                     this.currentPlayerTexturesReject(e);
-                })
+                }),
         );
 
         if (room.companionTexture) {
@@ -2235,7 +2293,7 @@ export class GameScene extends DirtyScene {
                     })
                     .catch((e) => {
                         this.currentCompanionTextureReject(e);
-                    })
+                    }),
             );
         }
 
@@ -2243,13 +2301,13 @@ export class GameScene extends DirtyScene {
         this.sharedVariablesManager = new SharedVariablesManager(
             this.connection,
             this.gameMapFrontWrapper,
-            room.variables
+            room.variables,
         );
 
         // Set up area property variables manager
         this.areaPropertyVariablesManager = new AreaPropertyVariablesManager(
             this.connection,
-            room.areaPropertyVariables
+            room.areaPropertyVariables,
         );
         areaPropertyVariablesManagerStore.set(this.areaPropertyVariablesManager);
 
@@ -2292,7 +2350,7 @@ export class GameScene extends DirtyScene {
             this.playersEventDispatcher,
             playerVariables,
             this._room.id,
-            this._room.group ?? undefined
+            this._room.group ?? undefined,
         );
 
         if (this._spaceRegistry === undefined) {
@@ -2305,7 +2363,7 @@ export class GameScene extends DirtyScene {
                 WORLD_SPACE_NAME,
                 FilterType.ALL_USERS,
                 ["availabilityStatus", "chatID"],
-                this.abortController.signal
+                this.abortController.signal,
             )
             .then((space) => {
                 this.allUserSpace = space;
@@ -2335,7 +2393,8 @@ export class GameScene extends DirtyScene {
             })
             .catch((e) => {
                 const errorMessage = "Failed to get chatConnection from gameManager : " + e;
-                console.error(errorMessage);
+                console.error(errorMessage, e);
+                Sentry.captureException(e);
             });
 
         this._proximityChatRoom = new ProximityChatRoom(
@@ -2345,7 +2404,7 @@ export class GameScene extends DirtyScene {
             this.remotePlayersRepository,
             this,
             this.wamFile?.settings,
-            this.connection.getAllTags()
+            this.connection.getAllTags(),
         );
 
         this._proximityChatRoomDeferred.resolve(this._proximityChatRoom);
@@ -2364,14 +2423,14 @@ export class GameScene extends DirtyScene {
             this._spaceRegistry,
             this.wamFile?.settings,
             this.connection.getAllTags(),
-            this.abortController.signal
+            this.abortController.signal,
         );
         this._broadcastService = broadcastService;
 
         const megaphoneSpaceName = WAMSettingsUtils.getMegaphoneUrl(
             this.getGameMap().getWamFile()?.getWam()?.settings,
             new URL(this.roomUrl).host,
-            this.roomUrl
+            this.roomUrl,
         );
         if (!megaphoneSpaceName) {
             megaphoneSpaceSettingsStore.set(undefined);
@@ -2384,15 +2443,15 @@ export class GameScene extends DirtyScene {
                 canRecord: WAMSettingsUtils.canStartRecordingMegaphone(
                     this.getGameMap().getWamFile()?.getWam()?.settings,
                     this.connection.getAllTags(),
-                    localUserStore.isLogged()
+                    localUserStore.isLogged(),
                 ),
             });
         }
         megaphoneCanBeUsedStore.set(
             WAMSettingsUtils.canUseMegaphone(
                 this.getGameMap().getWamFile()?.getWam()?.settings,
-                this.connection.getAllTags()
-            )
+                this.connection.getAllTags(),
+            ),
         );
 
         this.subscribeToStores();
@@ -2400,6 +2459,7 @@ export class GameScene extends DirtyScene {
         await Promise.all(allPromises);
 
         this.roomJoinedPromiseDeferred.resolve(room);
+        gameSceneStore.set(this);
     }
 
     private initExtensionModule() {
@@ -2449,7 +2509,7 @@ export class GameScene extends DirtyScene {
                             connectionManager.logout();
                         },
                         externalRestrictedMapEditorProperties: mapEditorRestrictedPropertiesStore,
-                        showComponentInChat(component: ComponentType, props: Record<string, unknown>) {
+                        showComponentInChat(component, props?) {
                             navChat.switchToCustomComponent(component, props);
                             chatVisibilityStore.set(true);
                         },
@@ -2489,7 +2549,7 @@ export class GameScene extends DirtyScene {
                 this.followUsersColorStoreUnsubscriber,
                 this.mapEditorModeStoreUnsubscriber,
                 this.mapExplorationStoreUnsubscriber,
-                this.lastNewMediaDeviceDetectedStoreUnsubscriber
+                this.lastNewMediaDeviceDetectedStoreUnsubscriber,
             );
 
             throw new Error("One store is already subscribed.");
@@ -2499,7 +2559,7 @@ export class GameScene extends DirtyScene {
             (dominantSpeaker) => {
                 this.jitsiDominantSpeaker = dominantSpeaker;
                 this.tryChangeShowVoiceIndicatorState(this.jitsiDominantSpeaker && this.jitsiParticipantsCount > 1);
-            }
+            },
         );
 
         this.jitsiParticipantsCountStoreUnsubscriber = jitsiParticipantsCountStore.subscribe((participantsCount) => {
@@ -2514,7 +2574,7 @@ export class GameScene extends DirtyScene {
             this.connection.emitPlayerStatusChange(availabilityStatus);
             this.CurrentPlayer.setAvailabilityStatus(availabilityStatus);
             if (availabilityStatus === AvailabilityStatus.SILENT) {
-                this.CurrentPlayer.toggleTalk(false, true);
+                this.CurrentPlayer.toggleTalk(false);
             }
         });
 
@@ -2627,7 +2687,7 @@ export class GameScene extends DirtyScene {
                     () => {
                         localUserStore.addIgnoredNewMediaDeviceId(device.deviceId);
                         this.CurrentPlayer.destroyText(id);
-                    }
+                    },
                 );
             }
         });
@@ -2640,7 +2700,7 @@ export class GameScene extends DirtyScene {
                 } else {
                     toastStore.removeToast(NO_MICROPHONE_SOUND_TOAST_ID);
                 }
-            })
+            }),
         );
 
         this.isLiveStreamingUnsubscriber = this.spaceRegistry.isLiveStreamingStore.subscribe((isStreaming) => {
@@ -2656,7 +2716,7 @@ export class GameScene extends DirtyScene {
                 if (!shouldPublish && get(requestedScreenSharingState)) {
                     requestedScreenSharingState.disableScreenSharing();
                 }
-            }
+            },
         );
 
         // Subscribe to bubble sound changes
@@ -2665,7 +2725,7 @@ export class GameScene extends DirtyScene {
                 this.load.audio(`audio-webrtc-in-${soundType}`, `/resources/objects/webrtc-in-${soundType}.mp3`);
                 this.load.audio(`audio-webrtc-out-${soundType}`, `/resources/objects/webrtc-out-${soundType}.mp3`);
                 this.load.start();
-            })
+            }),
         );
     }
 
@@ -2680,7 +2740,7 @@ export class GameScene extends DirtyScene {
                     console.error(
                         "Error while opening a popup. Cannot find an object on the map with name '" +
                             openPopupEvent.targetObject +
-                            "'. The first parameter of WA.openPopup() must be the name of a rectangle object in your map."
+                            "'. The first parameter of WA.openPopup() must be the name of a rectangle object in your map.",
                     );
                     return;
                 }
@@ -2699,7 +2759,7 @@ ${escapedMessage}
                 let id = 0;
                 for (const button of openPopupEvent.buttons) {
                     html += `<div class="flex w-full"><button type="button" class="btn btn-xs hover:bg-contrast-600/50 justify-center w-full pb-4 ${HtmlUtils.escapeHtml(
-                        button.className ?? ""
+                        button.className ?? "",
                     )}" id="popup-${openPopupEvent.popupId}-${id}">${HtmlUtils.escapeHtml(button.label)}</button>`;
                     id++;
                 }
@@ -2719,7 +2779,7 @@ ${escapedMessage}
                 // eslint-disable-next-line @typescript-eslint/no-unused-vars
                 for (const button of openPopupEvent.buttons) {
                     const button = HtmlUtils.getElementByIdOrFail<HTMLButtonElement>(
-                        `popup-${openPopupEvent.popupId}-${id}`
+                        `popup-${openPopupEvent.popupId}-${id}`,
                     );
                     const btnId = id;
                     button.onclick = () => {
@@ -2743,7 +2803,7 @@ ${escapedMessage}
 
                 // Analytics tracking for popups
                 analyticsClient.openedPopup(openPopupEvent.targetObject, openPopupEvent.popupId);
-            })
+            }),
         );
 
         this.iframeSubscriptionList.push(
@@ -2753,7 +2813,7 @@ ${escapedMessage}
                     console.error(
                         "Could not close popup with ID ",
                         closePopupEvent.popupId,
-                        ". Maybe it has already been closed?"
+                        ". Maybe it has already been closed?",
                     );
                 }
 
@@ -2767,59 +2827,59 @@ ${escapedMessage}
                         this.popUpElements.delete(closePopupEvent.popupId);
                     },
                 });
-            })
+            }),
         );
 
         this.iframeSubscriptionList.push(
             iframeListener.openChatStream.subscribe(() => {
                 chatVisibilityStore.set(true);
-            })
+            }),
         );
 
         this.iframeSubscriptionList.push(
             iframeListener.closeChatStream.subscribe(() => {
                 chatVisibilityStore.set(false);
-            })
+            }),
         );
 
         this.iframeSubscriptionList.push(
             iframeListener.turnOffMicrophoneStream.subscribe(() => {
                 requestedMicrophoneState.disableMicrophone();
-            })
+            }),
         );
 
         this.iframeSubscriptionList.push(
             iframeListener.turnOffWebcamStream.subscribe(() => {
                 requestedCameraState.disableWebcam();
-            })
+            }),
         );
 
         this.iframeSubscriptionList.push(
             iframeListener.disableMicrophoneStream.subscribe(() => {
                 myMicrophoneBlockedStore.set(true);
                 mediaManager.disableMyMicrophone();
-            })
+            }),
         );
 
         this.iframeSubscriptionList.push(
             iframeListener.restoreMicrophoneStream.subscribe(() => {
                 myMicrophoneBlockedStore.set(false);
                 mediaManager.enableMyMicrophone();
-            })
+            }),
         );
 
         this.iframeSubscriptionList.push(
             iframeListener.disableWebcamStream.subscribe(() => {
                 myCameraBlockedStore.set(true);
                 mediaManager.disableMyCamera();
-            })
+            }),
         );
 
         this.iframeSubscriptionList.push(
             iframeListener.restoreWebcamStream.subscribe(() => {
                 myCameraBlockedStore.set(false);
                 mediaManager.enableMyCamera();
-            })
+            }),
         );
 
         this.iframeSubscriptionList.push(
@@ -2843,14 +2903,14 @@ ${escapedMessage}
                         console.error(`Unhandled status value: ${_exhaustiveCheck}`);
                     }
                 }
-            })
+            }),
         );
 
         this.iframeSubscriptionList.push(
             // FIXME: aren't we making a weird loop here?
             iframeListener.addPersonnalMessageStream.subscribe((text) => {
                 iframeListener.sendUserInputChat(text, undefined);
-            })
+            }),
         );
 
         this.iframeSubscriptionList.push(
@@ -2876,7 +2936,7 @@ ${escapedMessage}
                         console.error("Error while sending proximity chat message", error);
                         Sentry.captureException(error);
                     });
-            })
+            }),
         );
 
         this.iframeSubscriptionList.push(
@@ -2886,14 +2946,14 @@ ${escapedMessage}
                         room.addExternalTypingUser(
                             btoa(sartWriting.author ?? "unknow"),
                             sartWriting.author ?? "unknow",
-                            null
+                            null,
                         );
                     })
                     .catch((error) => {
                         console.error("Error while starting typing proximity message", error);
                         Sentry.captureException(error);
                     });
-            })
+            }),
         );
         this.iframeSubscriptionList.push(
             iframeListener.stopTypingProximityMessageStream.subscribe((stopWriting) => {
@@ -2905,7 +2965,7 @@ ${escapedMessage}
                         console.error("Error while stopping typing proximity message", error);
                         Sentry.captureException(error);
                     });
-            })
+            }),
         );
 
         /*this.iframeSubscriptionList.push(
@@ -2919,50 +2979,52 @@ ${escapedMessage}
             iframeListener.disablePlayerControlStream.subscribe((messageEventSource) => {
                 if (messageEventSource) {
                     this.userInputManager.disableControls(messageEventSource);
-
+                    this.userInputManager.disableRightClick();
                     iframeListener.onIframeCloseEvent(messageEventSource, () => {
                         this.userInputManager.restoreControls(messageEventSource);
+                        this.userInputManager.restoreRightClick();
                     });
                 }
-            })
+            }),
         );
 
         this.iframeSubscriptionList.push(
             iframeListener.enablePlayerControlStream.subscribe((messageEventSource) => {
                 if (messageEventSource) {
                     this.userInputManager.restoreControls(messageEventSource);
+                    this.userInputManager.restoreRightClick();
                 }
-            })
+            }),
         );
 
         this.iframeSubscriptionList.push(
             iframeListener.disablePlayerProximityMeetingStream.subscribe(() => {
                 mediaManager.disableProximityMeeting();
-            })
+            }),
         );
 
         this.iframeSubscriptionList.push(
             iframeListener.enablePlayerProximityMeetingStream.subscribe(() => {
                 mediaManager.enableProximityMeeting();
-            })
+            }),
         );
 
         this.iframeSubscriptionList.push(
             iframeListener.cameraSetStream.subscribe((cameraSetEvent) => {
-                const duration = cameraSetEvent.smooth ? cameraSetEvent.duration ?? 1000 : 0;
+                const duration = cameraSetEvent.smooth ? (cameraSetEvent.duration ?? 1000) : 0;
                 if (cameraSetEvent.lock) {
                     this.cameraManager.enterFocusMode({ ...cameraSetEvent }, undefined, duration);
                 } else {
                     this.cameraManager.setPosition({ ...cameraSetEvent }, duration);
                 }
-            })
+            }),
         );
 
         this.iframeSubscriptionList.push(
             iframeListener.cameraFollowPlayerStream.subscribe((cameraFollowPlayerEvent) => {
-                const duration = cameraFollowPlayerEvent.smooth ? cameraFollowPlayerEvent.duration ?? 1000 : 0;
+                const duration = cameraFollowPlayerEvent.smooth ? (cameraFollowPlayerEvent.duration ?? 1000) : 0;
                 this.cameraManager.leaveFocusMode(this.CurrentPlayer, duration);
-            })
+            }),
         );
 
         this.iframeSubscriptionList.push(
@@ -2971,14 +3033,14 @@ ${escapedMessage}
                 soundManager
                     .playSound(this.load, this.sound, url.toString(), playSoundEvent.config)
                     .catch((e) => console.error(e));
-            })
+            }),
         );
 
         this.iframeSubscriptionList.push(
             iframeListener.stopSoundStream.subscribe((stopSoundEvent) => {
                 const url = new URL(stopSoundEvent.url, this.mapUrlFile);
                 soundManager.stopSound(this.sound, url.toString());
-            })
+            }),
         );
 
         this.iframeSubscriptionList.push(
@@ -2989,13 +3051,13 @@ ${escapedMessage}
                         iframeListener.sendActionsMenuActionClickedEvent({ actionName: data.actionKey, id: data.id });
                     },
                 });
-            })
+            }),
         );
 
         this.iframeSubscriptionList.push(
             iframeListener.removeActionsMenuKeyFromRemotePlayerEvent.subscribe((data) => {
                 this.MapPlayersByKey.get(data.id)?.unregisterWokaMenuAction(data.actionKey);
-            })
+            }),
         );
 
         this.iframeSubscriptionList.push(
@@ -3024,17 +3086,17 @@ ${escapedMessage}
                             this.lastCameraEvent = cameraEvent;
                             iframeListener.sendCameraUpdated(cameraEvent);
                             this.firstCameraUpdateSent = true;
-                        }
+                        },
                     );
                 }
-            })
+            }),
         );
 
         this.iframeSubscriptionList.push(
             iframeListener.loadSoundStream.subscribe((loadSoundEvent) => {
                 const url = new URL(loadSoundEvent.url, this.mapUrlFile);
                 soundManager.loadSound(this.load, this.sound, url.toString()).catch((e) => console.error(e));
-            })
+            }),
         );
 
         this.iframeSubscriptionList.push(
@@ -3043,12 +3105,12 @@ ${escapedMessage}
                     .then(() => {
                         this.events.once(EVENT_TYPE.POST_UPDATE, () => {
                             this.onMapExit(Room.getRoomPathFromExitUrl(url, window.location.toString())).catch((e) =>
-                                console.error(e)
+                                console.error(e),
                             );
                         });
                     })
                     .catch((e) => console.error(e));
-            })
+            }),
         );
         let scriptedBubbleSprite: Sprite;
         this.iframeSubscriptionList.push(
@@ -3057,99 +3119,99 @@ ${escapedMessage}
                     this,
                     this.CurrentPlayer.x + 25,
                     this.CurrentPlayer.y,
-                    "circleSprite-white"
+                    "circleSprite-white",
                 );
                 scriptedBubbleSprite.setDisplayOrigin(48, 48).setDepth(DEPTH_BUBBLE_CHAT_SPRITE);
                 this.add.existing(scriptedBubbleSprite);
-            })
+            }),
         );
 
         this.iframeSubscriptionList.push(
             iframeListener.removeBubbleStream.subscribe(() => {
                 scriptedBubbleSprite.destroy();
-            })
+            }),
         );
 
         this.iframeSubscriptionList.push(
             iframeListener.showLayerStream.subscribe((layerEvent) => {
                 this.gameMapFrontWrapper.setLayerVisibility(layerEvent.name, true);
                 this.markDirty();
-            })
+            }),
         );
 
         this.iframeSubscriptionList.push(
             iframeListener.hideLayerStream.subscribe((layerEvent) => {
                 this.gameMapFrontWrapper.setLayerVisibility(layerEvent.name, false);
                 this.markDirty();
-            })
+            }),
         );
 
         this.iframeSubscriptionList.push(
             iframeListener.setPropertyStream.subscribe((setProperty) => {
                 this.setPropertyLayer(setProperty.layerName, setProperty.propertyName, setProperty.propertyValue);
-            })
+            }),
         );
 
         this.iframeSubscriptionList.push(
             iframeListener.setAreaPropertyStream.subscribe((setProperty) => {
                 this.setAreaProperty(setProperty.areaName, setProperty.propertyName, setProperty.propertyValue);
-            })
+            }),
         );
 
         this.iframeSubscriptionList.push(
             iframeListener.banPlayerIframeEvent.subscribe((banPlayerEvent) => {
                 this.connection?.emitBanPlayerMessage(banPlayerEvent.uuid, banPlayerEvent.name);
-            })
+            }),
         );
 
         this.iframeSubscriptionList.push(
             iframeListener.mapEditorStream.subscribe((isActivated: boolean) => {
                 mapManagerActivated.set(isActivated);
-            })
+            }),
         );
 
         this.iframeSubscriptionList.push(
             iframeListener.screenSharingStream.subscribe((isActivated: boolean) => {
                 screenSharingActivatedStore.set(isActivated);
-            })
+            }),
         );
 
         this.iframeSubscriptionList.push(
             iframeListener.rightClickStream.subscribe((isRestore: boolean) => {
                 if (isRestore) this.userInputManager.restoreRightClick();
                 else this.userInputManager.disableRightClick();
-            })
+            }),
         );
 
         this.iframeSubscriptionList.push(
             iframeListener.wheelZoomStream.subscribe((isRestore: boolean) => {
                 if (isRestore) this.cameraManager.unlockZoom();
                 else this.cameraManager.lockZoom();
-            })
+            }),
         );
 
         this.iframeSubscriptionList.push(
             iframeListener.inviteUserButtonStream.subscribe((isActivated: boolean) => {
                 inviteUserActivated.set(isActivated);
-            })
+            }),
         );
 
         this.iframeSubscriptionList.push(
             iframeListener.roomListButtonStream.subscribe((isActivated: boolean) => {
                 roomListActivated.set(isActivated);
-            })
+            }),
         );
 
         this.iframeSubscriptionList.push(
             iframeListener.addButtonActionBarStream.subscribe((event) => {
                 registerAdditionalMenuItem(event);
-            })
+            }),
         );
 
         this.iframeSubscriptionList.push(
             iframeListener.removeButtonActionBarStream.subscribe((event) => {
                 unregisterAdditionalMenuItem(event);
-            })
+            }),
         );
 
         iframeListener.registerAnswerer("openCoWebsite", (openCoWebsite, source) => {
@@ -3229,7 +3291,7 @@ ${escapedMessage}
                     this.gameMapFrontWrapper.putTile(eventTile.tile, eventTile.x, eventTile.y, eventTile.layer);
                     this.animatedTiles.updateAnimatedTiles(eventTile.x, eventTile.y);
                 }
-            })
+            }),
         );
         iframeListener.registerAnswerer("enablePlayersTracking", (enablePlayersTrackingEvent, source) => {
             if (source === null) {
@@ -3305,8 +3367,8 @@ ${escapedMessage}
                                     jsonTileset.tileHeight,
                                     jsonTileset.margin,
                                     jsonTileset.spacing,
-                                    jsonTileset.tiles
-                                )
+                                    jsonTileset.tiles,
+                                ),
                             );
                             const tilesetImage = this.Map.addTilesetImage(
                                 jsonTileset.name,
@@ -3314,7 +3376,7 @@ ${escapedMessage}
                                 jsonTileset.tilewidth,
                                 jsonTileset.tileheight,
                                 jsonTileset.margin,
-                                jsonTileset.spacing
+                                jsonTileset.spacing,
                             );
                             if (tilesetImage) {
                                 this.Terrains.push(tilesetImage);
@@ -3331,7 +3393,7 @@ ${escapedMessage}
                                 this,
                                 new GameMap(this.mapFile, this.wamFile),
                                 this.Map,
-                                this.Terrains
+                                this.Terrains,
                             );
                             // Unsubscribe if needed and subscribe to GameMapChanged event again
                             this.subscribeToGameMapChanged();
@@ -3344,7 +3406,7 @@ ${escapedMessage}
                             this.gameMapPropertiesListener?.destroy();
                             this.gameMapPropertiesListener = new GameMapPropertiesListener(
                                 this,
-                                this.gameMapFrontWrapper
+                                this.gameMapFrontWrapper,
                             );
                             this.gameMapPropertiesListener.register();
                             resolve(newFirstgid);
@@ -3364,21 +3426,21 @@ ${escapedMessage}
                 PopUpTriggerActionMessage,
                 {
                     message: message.message,
-                    click: () => {
+                    onclick: () => {
                         popupStore.removePopup(message.uuid);
                         iframeListener.sendActionMessageTriggered(message.uuid);
                     },
                     userInputManager: this.userInputManager,
                 },
-                message.uuid
-            )
+                message.uuid,
+            ),
         );
 
         iframeListener.registerAnswerer("triggerPlayerMessage", (message) =>
             this.CurrentPlayer.playText(message.uuid, message.message, undefined, () => {
                 this.CurrentPlayer.destroyText(message.uuid);
                 iframeListener.sendActionMessageTriggered(message.uuid);
-            })
+            }),
         );
 
         iframeListener.registerAnswerer("setVariable", (event, source) => {
@@ -3492,7 +3554,7 @@ ${escapedMessage}
     private setPropertyLayer(
         layerName: string,
         propertyName: string,
-        propertyValue: string | number | boolean | undefined
+        propertyValue: string | number | boolean | undefined,
     ): void {
         if (propertyName === GameMapProperties.EXIT_URL && typeof propertyValue === "string") {
             this.loadNextGameFromExitUrl(propertyValue).catch((e) => console.error(e));
@@ -3513,6 +3575,7 @@ ${escapedMessage}
             }
         });
         this.MapPlayersByKey.clear();
+        this.remotePlayersSpatialIndex.clear();
     }
 
     private tryOpenMapEditorWithToolEditorParameter(): void {
@@ -3523,12 +3586,12 @@ ${escapedMessage}
                     PopUpMapEditorNotEnabled,
                     {
                         message: get(LL).warning.mapEditorNotEnabled(),
-                        click: () => {
+                        onclick: () => {
                             popupStore.removePopup("mapEditorNotEnabled");
                         },
                         userInputManager: this.userInputManager,
                     },
-                    "mapEditorNotEnabled"
+                    "mapEditorNotEnabled",
                 );
 
                 setTimeout(() => popupStore.removePopup("mapEditorNotEnabled"), 6_000);
@@ -3542,7 +3605,7 @@ ${escapedMessage}
                             switch (menuItem) {
                                 case "megaphone": {
                                     mapEditorWamSettingsEditorToolCurrentMenuItemStore.set(
-                                        WAM_SETTINGS_EDITOR_TOOL_MENU_ITEM.Megaphone
+                                        WAM_SETTINGS_EDITOR_TOOL_MENU_ITEM.Megaphone,
                                     );
                                     break;
                                 }
@@ -3574,12 +3637,12 @@ ${escapedMessage}
                             PopUpMapEditorShortcut,
                             {
                                 message: get(LL).warning.mapEditorShortCut(),
-                                click: () => {
+                                onclick: () => {
                                     popupStore.removePopup("mapEditorShortCut");
                                 },
                                 userInputManager: this.userInputManager,
                             },
-                            "mapEditorShortCut"
+                            "mapEditorShortCut",
                         );
 
                         setTimeout(() => popupStore.removePopup("mapEditorShortCut"), 6_000);
@@ -3622,7 +3685,7 @@ ${escapedMessage}
                             endPos = destinationObject;
                         } else {
                             endPos = this.pathfindingManager.mapTileUnitToPixels(
-                                this.gameMapFrontWrapper.getRandomPositionFromLayer(moveToParam)
+                                this.gameMapFrontWrapper.getRandomPositionFromLayer(moveToParam),
                             );
                         }
                     }
@@ -3651,7 +3714,7 @@ ${escapedMessage}
     public async moveTo(
         position: { x: number; y: number },
         tryFindingNearestAvailable = false,
-        speed: number | undefined = undefined
+        speed: number | undefined = undefined,
     ): Promise<{ x: number; y: number; cancelled: boolean }> {
         const pathfindingManager = this.getPathfindingManager();
         pathfindingManager.setCollisionGrid(this.gameMapFrontWrapper.getCollisionGrid({ emitMapChangedEvent: false }));
@@ -3662,7 +3725,7 @@ ${escapedMessage}
                 y: this.CurrentPlayer.y,
             },
             position,
-            tryFindingNearestAvailable
+            tryFindingNearestAvailable,
         );
         if (path.length === 0) throw new Error("No path found");
         return this.CurrentPlayer.setPathToFollow(path, speed ?? this.CurrentPlayer.walkingSpeed);
@@ -3791,8 +3854,8 @@ ${escapedMessage}
                         | Phaser.Physics.Arcade.Body
                         | Phaser.Physics.Arcade.StaticBody
                         | Phaser.Tilemaps.Tile
-                        | Phaser.Types.Physics.Arcade.GameObjectWithBody
-                ) => {}
+                        | Phaser.Types.Physics.Arcade.GameObjectWithBody,
+                ) => {},
             );
             phaserLayer.setCollisionByProperty({ collides: true });
             if (DEBUG_MODE) {
@@ -3819,10 +3882,10 @@ ${escapedMessage}
                 this.currentPlayerTexturesPromise,
                 PositionMessage_Direction.DOWN,
                 false,
-                gameManager.getCompanionTextureId() != undefined ? this.currentCompanionTexturePromise : undefined
+                gameManager.getCompanionTextureId() != undefined ? this.currentCompanionTexturePromise : undefined,
             );
             this.CurrentPlayer.on(Phaser.Input.Events.POINTER_OVER, (pointer: Phaser.Input.Pointer) => {
-                this.CurrentPlayer.pointerOverOutline(0x365dff);
+                this.CurrentPlayer.pointerOverOutline(PHASER_COLOR_DESIGN_SYSTEM_SECONDARY);
             });
             this.CurrentPlayer.on(Phaser.Input.Events.POINTER_OUT, (pointer: Phaser.Input.Pointer) => {
                 this.CurrentPlayer.pointerOutOutline();
@@ -3929,7 +3992,7 @@ ${escapedMessage}
                 "Updated players:",
                 this.remotePlayersRepository.getUpdatedPlayers(),
                 "Removed players:",
-                this.remotePlayersRepository.getRemovedPlayers()
+                this.remotePlayersRepository.getRemovedPlayers(),
             );
             return;
         }
@@ -3953,7 +4016,7 @@ ${escapedMessage}
                     : undefined,
                 undefined,
                 addPlayerData.chatID,
-                addPlayerData.sayMessage
+                addPlayerData.sayMessage,
             );
         } catch (error) {
             if (error instanceof CharacterTextureError) {
@@ -3972,6 +4035,7 @@ ${escapedMessage}
         }
         this.MapPlayersByKey.set(player.userId, player);
         player.updatePosition(addPlayerData.position);
+        this.remotePlayersSpatialIndex.set(player.userId, player);
 
         player.on(Phaser.Input.Events.POINTER_OVER, () => {
             this.activatablesManager.handlePointerOverActivatableObject(player);
@@ -4016,7 +4080,7 @@ ${escapedMessage}
                     }
                     this.activatablesManager.handlePointerOverActivatableObject(entity);
                     this.markDirty();
-                })
+                }),
         );
         this.rxJsSubscriptions.push(
             this.gameMapFrontWrapper
@@ -4028,7 +4092,7 @@ ${escapedMessage}
                     }
                     this.activatablesManager.handlePointerOutActivatableObject();
                     this.markDirty();
-                })
+                }),
         );
     }
 
@@ -4044,6 +4108,7 @@ ${escapedMessage}
             }
         }
         this.MapPlayersByKey.delete(userId);
+        this.remotePlayersSpatialIndex.delete(userId);
         // console.debug("User removed in MapPlayersByKey in GameScene", userId);
         this.playersPositionInterpolator.removePlayer(userId);
     }
@@ -4078,7 +4143,7 @@ ${escapedMessage}
             {
                 ...message.position,
             },
-            this.currentTick + POSITION_DELAY
+            this.currentTick + POSITION_DELAY,
         );
         this.playersPositionInterpolator.updatePlayerPosition(player.userId, playerMovement);
     }
@@ -4091,6 +4156,11 @@ ${escapedMessage}
     }
 
     private doShareGroupPosition(groupPositionMessage: GroupCreatedUpdatedMessageInterface): void {
+        // NOTE: interestingly, the exact group position (x / y) is no longer used to draw the bubble.
+        // The center of the bubble is recomputed inside the ConversationBubble which allows having the center
+        // based on interpolated players position (so updated every frame and not every 200ms).
+        // The message is still useful for the bubble status (whether it's locked or not)
+
         const userId = this.connection?.getUserId();
         if (userId && groupPositionMessage.userIds.includes(userId)) {
             this.currentPlayerGroupId = groupPositionMessage.groupId;
@@ -4104,12 +4174,8 @@ ${escapedMessage}
         // TODO: keep a reference to the group sprite in the conversationBubble
         const existingGroup = this.groups.get(groupPositionMessage.groupId);
         if (existingGroup) {
-            existingGroup.setCenter(
-                Math.round(groupPositionMessage.position.x),
-                Math.round(groupPositionMessage.position.y)
-            );
             existingGroup.setLocked(
-                groupPositionMessage.groupSize === MAX_PER_GROUP || (groupPositionMessage.locked ?? false)
+                groupPositionMessage.groupSize === MAX_PER_GROUP || (groupPositionMessage.locked ?? false),
             );
             return;
         }
@@ -4120,7 +4186,7 @@ ${escapedMessage}
             Math.round(groupPositionMessage.position.x),
             Math.round(groupPositionMessage.position.y),
             groupPositionMessage.groupSize === MAX_PER_GROUP || (groupPositionMessage.locked ?? false),
-            groupPositionMessage.userIds
+            groupPositionMessage.userIds,
         );
 
         this.groups.set(groupPositionMessage.groupId, conversationBubble);
@@ -4135,12 +4201,13 @@ ${escapedMessage}
                 title: "BANNED",
                 subtitle: "You were banned from WorkAdventure",
                 details: "If you want more information, you may contact us at: hello@workadventu.re",
-            })
+            }),
         );
 
         this.cleanupClosingScene();
 
         this.userInputManager.disableControls("errorScreen");
+        this.userInputManager.disableRightClick();
     }
 
     //todo: put this into an 'orchestrator' scene (EntryScene?)
@@ -4150,6 +4217,7 @@ ${escapedMessage}
         this.scene.stop(ReconnectingSceneName);
         this.scene.remove(ReconnectingSceneName);
         this.userInputManager.disableControls("errorScreen");
+        this.userInputManager.disableRightClick();
         //FIX ME to use status code
         if (message == undefined) {
             this.scene.start(ErrorSceneName, {
@@ -4184,11 +4252,11 @@ ${escapedMessage}
 
         // Explanation of the formula: to Zoom x 2, we need a delta of 200
         // Question: Why 200 ? For mac usage, it's too slow
-        let zoomFactor = Math.exp((-deltaY * Math.log(2)) /* / 200 */ / 100);
+        let zoomFactor = Math.exp(((-deltaY * Math.log(2)) / 100) * MOUSE_WHEEL_ZOOM_RATE);
 
         // Sometimes, deltaY can be really high (this happens when the browser is lagging for 1 second or so)
         // Let's clamp the value to avoid zooming too much
-        zoomFactor = Clamp(zoomFactor, 0.5, 2);
+        zoomFactor = Clamp(zoomFactor, 0.1, 10);
 
         debugZoom("DeltaY: ", deltaY, "Zoom factor", zoomFactor);
 
@@ -4201,7 +4269,7 @@ ${escapedMessage}
             return;
         }
 
-        const time = zoomFactor > 1 ? (zoomFactor - 1) * 250 : (1 / zoomFactor - 1) * 250;
+        const time = zoomFactor > 1 ? zoomFactor * 250 : (1 / zoomFactor) * 250;
         this.cameraManager.zoomByFactor(zoomFactor, smooth ? time : 0);
     }
 
@@ -4279,7 +4347,7 @@ ${escapedMessage}
     }
 
     private disableVoiceIndicator(): void {
-        this.CurrentPlayer.toggleTalk(false, true);
+        this.CurrentPlayer.toggleTalk(false);
         if (!this.connection?.closed) {
             this.connection?.emitPlayerShowVoiceIndicator(false);
         }
@@ -4293,9 +4361,5 @@ ${escapedMessage}
 
     public get focusFx() {
         return this._focusFx;
-    }
-
-    public get throttledSendViewportToServer(): throttle<() => void> {
-        return this.throttledSendViewportToServer_;
     }
 }

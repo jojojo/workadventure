@@ -22,6 +22,8 @@ Environment variables for the Play service (frontend and pusher).
 | `PUSHER_HTTP_PORT` | No | HTTP port for the pusher service. Defaults to 3000 |
 | `PUSHER_WS_PORT` | No | WebSocket port for the pusher service. Defaults to 3001 |
 | `SOCKET_IDLE_TIMER` | No | maximum time (in second) without activity before a socket is closed. Should be greater than 60 seconds in order to cope for Chrome intensive throttling (https://developer.chrome.com/blog/timer-throttling-in-chrome-88/#intensive-throttling) |
+| `CLIENT_DISCONNECTION_RETENTION_MS` | No | Maximum time, in milliseconds, the client keeps sent websocket messages for replay after a short disconnection. Defaults to 30000. |
+| `PUSHER_ADMIN_WS_MAX_BACKPRESSURE_BYTES` | No | Maximum uWebSockets backpressure bytes accepted on admin websocket connections. Defaults to 1048576. |
 | `VITE_URL` | No | URL of the Vite development server (development only) |
 | `ALLOWED_CORS_ORIGIN` | No | Allowed CORS origin for API requests. Use '*' to allow any domain |
 | `PUSHER_URL` | No | Public URL of the pusher service |
@@ -61,6 +63,10 @@ Environment variables for the Play service (frontend and pusher).
 | `ENABLE_ISSUE_REPORT` | No | Whether the feature 'issue report' is enabled or not on this room. Defaults to true. |
 | `ENABLE_TUTORIAL` | No | Whether the onboarding tutorial is enabled or not on this room. Defaults to true. |
 | `ENABLE_OPENAPI_ENDPOINT` | No | Enable/disable the OpenAPI documentation endpoint. Defaults to false |
+| `VIDEO_ANALYTICS_FLUSH_INTERVAL_MS` | No | Interval in milliseconds between video quality analytics batch flushes. Defaults to 10000 |
+| `VIDEO_ANALYTICS_TIMEOUT_MS` | No | HTTP timeout in milliseconds for video quality analytics ingestion calls. Defaults to 2000 |
+| `VIDEO_ANALYTICS_MAX_QUEUE_SIZE` | No | Maximum number of video quality samples queued in pusher memory. Defaults to 10000 |
+| `VIDEO_ANALYTICS_MAX_BATCH_SIZE` | No | Maximum number of video quality samples sent in one admin batch. Defaults to 1000 |
 | `START_ROOM_URL` | No | Default room URL where users start when accessing the platform |
 | `DEBUG_MODE` | No | Enable debug mode with additional console logging. Defaults to false |
 | `UPLOADER_URL` | Yes | URL of the file uploader service |

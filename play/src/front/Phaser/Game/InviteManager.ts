@@ -1,6 +1,7 @@
 import type { Subscription } from "rxjs";
 import type { MeetingInvitationRequestReceivedMessage } from "@workadventure/messages";
 import { AskPositionMessage_AskType } from "@workadventure/messages";
+import { get } from "svelte/store";
 import type { RoomConnection } from "../../Connection/RoomConnection";
 import { meetingInvitationRequestStore } from "../../Stores/MeetingInvitationStore";
 import { toastStore } from "../../Stores/ToastStore";
@@ -33,7 +34,7 @@ export class InviteManager {
                 if (scene) {
                     scene.playMeetingInSound();
                 }
-            })
+            }),
         );
 
         // Show accepted or declined toast when the meeting invitation response is received
@@ -47,7 +48,7 @@ export class InviteManager {
                             responderName: payload.responderName,
                             toastUuid: toastId,
                         },
-                        toastId
+                        toastId,
                     );
                 }
                 if (payload.accepted) {
@@ -58,36 +59,47 @@ export class InviteManager {
                             responderName: payload.responderName,
                             toastUuid: toastId,
                         },
-                        toastId
+                        toastId,
                     );
                     // When the invitee accepts, reset the sender's antispam counter so they can send invites again
                     this.inviteRequestLog = [];
                 }
-            })
+            }),
         );
 
         // Show limit reached toast when the number of meeting invitation requests per sender is too high
         this.subscriptions.push(
             this.connection.meetingInvitationRequestTooHighStream.subscribe(() => {
                 this.showLimitReachedToast();
-            })
+            }),
         );
 
         // Clear the invitation if the user accepts or declines the invitation
         this.subscriptions.push(
             this.connection.meetingInvitationRequestClosedStream.subscribe(() => {
                 meetingInvitationRequestStore.set(null);
-            })
+            }),
+        );
+
+        // Clear the invitation if the user left the room
+        this.subscriptions.push(
+            this.connection.userLeftMessageStream.subscribe((payload) => {
+                if (payload.userId === get(meetingInvitationRequestStore)?.senderUserId) {
+                    meetingInvitationRequestStore.set(null);
+                }
+            }),
         );
     }
 
     public handleAccept(request: MeetingInvitationRequestReceivedMessage): void {
         this.connection.emitMeetingInvitationResponse(true, request.senderUserUuid);
+        // TODO: Change emitAskPosition to a server query to allow for error handling
+        // NOTE: For now, if the user leaves while their position is being requested, nothing happens
         this.connection.emitAskPosition(
             request.senderUserUuid,
             request.senderPlayUri,
             AskPositionMessage_AskType.MOVE,
-            request.senderUserId
+            request.senderUserId,
         );
     }
 

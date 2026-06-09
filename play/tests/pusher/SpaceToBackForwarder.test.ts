@@ -7,22 +7,24 @@ import type { Query } from "../../src/pusher/models/SpaceQuery";
 import { SpaceToBackForwarder } from "../../src/pusher/models/SpaceToBackForwarder";
 import type { SpaceToFrontDispatcher } from "../../src/pusher/models/SpaceToFrontDispatcher";
 import type { BackSpaceConnection } from "../../src/pusher/models/Websocket/SocketData";
-import type { Socket } from "../../src/pusher/services/SocketManager";
 import { eventProcessor } from "../../src/pusher/models/eventProcessorInit";
+import type { PusherWebSocket } from "../../src/pusher/services/PusherWebSocket";
+
+vi.mock("../../src/pusher/enums/EnvironmentVariable", () => import("./mocks/pusherEnvironmentVariableMock"));
 
 //TODO : see if there are not too many repetitions in the tests
 const flushPromises = () => new Promise(setImmediate);
 describe("SpaceToBackForwarder", () => {
     describe("registerUser", () => {
         it("should throw an error if the user is already added", async () => {
-            const mockSocket = mock<Socket>({
+            const mockSocket = mock<PusherWebSocket>({
                 getUserData: vi.fn().mockReturnValue({
                     spaceUserId: "foo_1",
                 }),
             });
             const mockSpace = mock<Space>({
                 _localConnectedUser: new Map([["foo_1", mockSocket]]),
-                _localConnectedUserWithSpaceUser: new Map<Socket, SpaceUser>([
+                _localConnectedUserWithSpaceUser: new Map<PusherWebSocket, SpaceUser>([
                     [
                         mockSocket,
                         SpaceUser.fromPartial({
@@ -50,14 +52,14 @@ describe("SpaceToBackForwarder", () => {
         });
 
         it("should throw an error when the space user id is not found", async () => {
-            const mockSocket = mock<Socket>({
+            const mockSocket = mock<PusherWebSocket>({
                 getUserData: vi.fn().mockReturnValue({
                     spaceUserId: undefined,
                 }),
             });
             const mockSpace = mock<Space>({
                 _localConnectedUser: new Map(),
-                _localConnectedUserWithSpaceUser: new Map<Socket, SpaceUser>(),
+                _localConnectedUserWithSpaceUser: new Map<PusherWebSocket, SpaceUser>(),
             });
             const spaceForwarder = new SpaceToBackForwarder(mockSpace, eventProcessor);
 
@@ -80,7 +82,7 @@ describe("SpaceToBackForwarder", () => {
                 }),
             });
 
-            const mockSocket = mock<Socket>({
+            const mockSocket = mock<PusherWebSocket>({
                 getUserData: vi.fn().mockReturnValue({
                     spaceUserId: "foo_1",
                     name: "foo_1",
@@ -101,8 +103,8 @@ describe("SpaceToBackForwarder", () => {
 
             const mockSpace = {
                 name: "test",
-                _localConnectedUser: new Map<string, Socket>(),
-                _localConnectedUserWithSpaceUser: new Map<Socket, SpaceUser>(),
+                _localConnectedUser: new Map<string, PusherWebSocket>(),
+                _localConnectedUserWithSpaceUser: new Map<PusherWebSocket, SpaceUser>(),
                 spaceStreamToBackPromise: Promise.resolve(mockBackSpaceConnection),
                 metadata: new Map(),
                 query: mock<Query>({
@@ -147,7 +149,7 @@ describe("SpaceToBackForwarder", () => {
                 }),
             });
 
-            const mockSocket = mock<Socket>({
+            const mockSocket = mock<PusherWebSocket>({
                 getUserData: vi.fn().mockReturnValue({
                     spaceUserId: "foo_1",
                     name: "foo_1",
@@ -155,13 +157,15 @@ describe("SpaceToBackForwarder", () => {
                 }),
             });
 
-            const mockNotifyMeFunction = vi.fn().mockImplementation((socket: Socket, message: SubMessage) => {});
+            const mockNotifyMeFunction = vi
+                .fn()
+                .mockImplementation((socket: PusherWebSocket, message: SubMessage) => {});
 
             const mockSpace = {
                 name: "test",
                 localName: "test",
-                _localConnectedUser: new Map<string, Socket>(),
-                _localConnectedUserWithSpaceUser: new Map<Socket, SpaceUser>(),
+                _localConnectedUser: new Map<string, PusherWebSocket>(),
+                _localConnectedUserWithSpaceUser: new Map<PusherWebSocket, SpaceUser>(),
                 spaceStreamToBackPromise: Promise.resolve(mockBackSpaceConnection),
                 metadata: new Map([["metadata-1", "value-1"]]),
                 dispatcher: mock<SpaceToFrontDispatcher>({
@@ -215,7 +219,7 @@ describe("SpaceToBackForwarder", () => {
                 }),
             });
 
-            const mockSocket = mock<Socket>({
+            const mockSocket = mock<PusherWebSocket>({
                 getUserData: vi.fn().mockReturnValue({
                     spaceUserId: "foo_1",
                     name: "foo_1",
@@ -223,12 +227,14 @@ describe("SpaceToBackForwarder", () => {
                 }),
             });
 
-            const mockNotifyMeFunction = vi.fn().mockImplementation((socket: Socket, message: SubMessage) => {});
+            const mockNotifyMeFunction = vi
+                .fn()
+                .mockImplementation((socket: PusherWebSocket, message: SubMessage) => {});
 
             const mockSpace = {
                 name: "test",
-                _localConnectedUser: new Map<string, Socket>(),
-                _localConnectedUserWithSpaceUser: new Map<Socket, SpaceUser>(),
+                _localConnectedUser: new Map<string, PusherWebSocket>(),
+                _localConnectedUserWithSpaceUser: new Map<PusherWebSocket, SpaceUser>(),
                 spaceStreamToBackPromise: Promise.resolve(mockBackSpaceConnection),
                 metadata: new Map(),
                 dispatcher: mock<SpaceToFrontDispatcher>({
@@ -277,7 +283,7 @@ describe("SpaceToBackForwarder", () => {
                 spaceUserId: "foo_1",
             });
 
-            const mockSocket = mock<Socket>({
+            const mockSocket = mock<PusherWebSocket>({
                 getUserData: vi.fn().mockReturnValue({
                     spaceUser,
                 }),
@@ -285,8 +291,8 @@ describe("SpaceToBackForwarder", () => {
 
             const mockSpace = {
                 name: "test",
-                _localConnectedUser: new Map<string, Socket>([["foo_1", mockSocket]]),
-                _localConnectedUserWithSpaceUser: new Map<Socket, SpaceUser>(),
+                _localConnectedUser: new Map<string, PusherWebSocket>([["foo_1", mockSocket]]),
+                _localConnectedUserWithSpaceUser: new Map<PusherWebSocket, SpaceUser>(),
                 spaceStreamToBackPromise: Promise.resolve(mockBackSpaceConnection),
                 metadata: new Map(),
             } as unknown as Space;
@@ -327,8 +333,8 @@ describe("SpaceToBackForwarder", () => {
 
             const mockSpace = {
                 name: "test",
-                _localConnectedUser: new Map<string, Socket>(),
-                _localConnectedUserWithSpaceUser: new Map<Socket, SpaceUser>(),
+                _localConnectedUser: new Map<string, PusherWebSocket>(),
+                _localConnectedUserWithSpaceUser: new Map<PusherWebSocket, SpaceUser>(),
                 spaceStreamToBackPromise: Promise.resolve(mockBackSpaceConnection),
                 metadata: new Map(),
             } as unknown as Space;
@@ -355,7 +361,7 @@ describe("SpaceToBackForwarder", () => {
                 spaceUserId: undefined,
             });
 
-            const mockSocket = mock<Socket>({
+            const mockSocket = mock<PusherWebSocket>({
                 getUserData: vi.fn().mockReturnValue({
                     spaceUser,
                 }),
@@ -363,8 +369,8 @@ describe("SpaceToBackForwarder", () => {
 
             const mockSpace = {
                 name: "test",
-                _localConnectedUser: new Map<string, Socket>([["foo_1", mockSocket]]),
-                _localConnectedUserWithSpaceUser: new Map<Socket, SpaceUser>(),
+                _localConnectedUser: new Map<string, PusherWebSocket>([["foo_1", mockSocket]]),
+                _localConnectedUserWithSpaceUser: new Map<PusherWebSocket, SpaceUser>(),
                 spaceStreamToBackPromise: Promise.resolve(mockBackSpaceConnection),
                 metadata: new Map(),
             } as unknown as Space;
@@ -394,7 +400,7 @@ describe("SpaceToBackForwarder", () => {
                 spaceUserId: undefined,
             });
 
-            const mockSocket = mock<Socket>({
+            const mockSocket = mock<PusherWebSocket>({
                 getUserData: vi.fn().mockReturnValue({
                     spaceUser,
                 }),
@@ -402,8 +408,8 @@ describe("SpaceToBackForwarder", () => {
 
             const mockSpace = {
                 name: "test",
-                _localConnectedUser: new Map<string, Socket>([["foo_1", mockSocket]]),
-                _localConnectedUserWithSpaceUser: new Map<Socket, SpaceUser>(),
+                _localConnectedUser: new Map<string, PusherWebSocket>([["foo_1", mockSocket]]),
+                _localConnectedUserWithSpaceUser: new Map<PusherWebSocket, SpaceUser>(),
                 spaceStreamToBackPromise: Promise.resolve(mockBackSpaceConnection),
                 metadata: new Map(),
             } as unknown as Space;
@@ -430,7 +436,7 @@ describe("SpaceToBackForwarder", () => {
                 spaceUserId: "foo_1",
             });
 
-            const mockSocket = mock<Socket>({
+            const mockSocket = mock<PusherWebSocket>({
                 getUserData: vi.fn().mockReturnValue({
                     spaceUser,
                 }),
@@ -438,8 +444,8 @@ describe("SpaceToBackForwarder", () => {
 
             const mockSpace = {
                 name: "test",
-                _localConnectedUser: new Map<string, Socket>(),
-                _localConnectedUserWithSpaceUser: new Map<Socket, SpaceUser>(),
+                _localConnectedUser: new Map<string, PusherWebSocket>(),
+                _localConnectedUserWithSpaceUser: new Map<PusherWebSocket, SpaceUser>(),
                 spaceStreamToBackPromise: Promise.resolve(mockBackSpaceConnection),
                 metadata: new Map(),
             } as unknown as Space;
@@ -462,7 +468,7 @@ describe("SpaceToBackForwarder", () => {
                 }),
             });
 
-            const mockSocket = mock<Socket>({
+            const mockSocket = mock<PusherWebSocket>({
                 getUserData: vi.fn().mockReturnValue({
                     spaceUserId: "foo_1",
                     spaces: new Set<string>(),
@@ -476,9 +482,9 @@ describe("SpaceToBackForwarder", () => {
 
             const mockSpace = {
                 name: "test",
-                _localConnectedUser: new Map<string, Socket>([["foo_1", mockSocket]]),
-                _localConnectedUserWithSpaceUser: new Map<Socket, SpaceUser>(),
-                _localWatchers: new Map<string, Socket>(),
+                _localConnectedUser: new Map<string, PusherWebSocket>([["foo_1", mockSocket]]),
+                _localConnectedUserWithSpaceUser: new Map<PusherWebSocket, SpaceUser>(),
+                _localWatchers: new Map<string, PusherWebSocket>(),
                 spaceStreamToBackPromise: Promise.resolve(mockBackSpaceConnection),
                 metadata: new Map(),
                 query: mock<Query>({
@@ -513,7 +519,7 @@ describe("SpaceToBackForwarder", () => {
                     return mockBackSpaceConnection;
                 }),
             });
-            const mockSocket = mock<Socket>({
+            const mockSocket = mock<PusherWebSocket>({
                 getUserData: vi.fn().mockReturnValue({
                     spaceUserId: "foo_1",
                     spaces: new Set<string>(),
@@ -526,11 +532,11 @@ describe("SpaceToBackForwarder", () => {
             });
             const mockSpace = {
                 name: "test",
-                _localConnectedUser: new Map<string, Socket>([
+                _localConnectedUser: new Map<string, PusherWebSocket>([
                     ["foo_1", mockSocket],
                     ["foo_2", mockSocket],
                 ]),
-                _localConnectedUserWithSpaceUser: new Map<Socket, SpaceUser>([
+                _localConnectedUserWithSpaceUser: new Map<PusherWebSocket, SpaceUser>([
                     [
                         mockSocket,
                         SpaceUser.fromPartial({
@@ -544,7 +550,7 @@ describe("SpaceToBackForwarder", () => {
                         }),
                     ],
                 ]),
-                _localWatchers: new Map<string, Socket>(),
+                _localWatchers: new Map<string, PusherWebSocket>(),
                 spaceStreamToBackPromise: Promise.resolve(mockBackSpaceConnection),
                 metadata: new Map(),
                 cleanup: cleanupMock,
@@ -585,9 +591,9 @@ describe("SpaceToBackForwarder", () => {
 
             const mockSpace = {
                 name: "test",
-                _localConnectedUser: new Map<string, Socket>(),
-                _localConnectedUserWithSpaceUser: new Map<Socket, SpaceUser>(),
-                _localWatchers: new Map<string, Socket>(),
+                _localConnectedUser: new Map<string, PusherWebSocket>(),
+                _localConnectedUserWithSpaceUser: new Map<PusherWebSocket, SpaceUser>(),
+                _localWatchers: new Map<string, PusherWebSocket>(),
                 spaceStreamToBackPromise: Promise.resolve(mockBackSpaceConnection),
                 metadata: new Map(),
             } as unknown as Space;
@@ -640,9 +646,9 @@ describe("SpaceToBackForwarder", () => {
 
             const mockSpace = {
                 name: "test",
-                _localConnectedUser: new Map<string, Socket>(),
-                _localConnectedUserWithSpaceUser: new Map<Socket, SpaceUser>(),
-                _localWatchers: new Map<string, Socket>(),
+                _localConnectedUser: new Map<string, PusherWebSocket>(),
+                _localConnectedUserWithSpaceUser: new Map<PusherWebSocket, SpaceUser>(),
+                _localWatchers: new Map<string, PusherWebSocket>(),
                 spaceStreamToBackPromise: undefined,
                 metadata: new Map(),
             } as unknown as Space;
@@ -680,9 +686,9 @@ describe("SpaceToBackForwarder", () => {
 
             const mockSpace = {
                 name: "test",
-                _localConnectedUser: new Map<string, Socket>(),
-                _localConnectedUserWithSpaceUser: new Map<Socket, SpaceUser>(),
-                _localWatchers: new Map<string, Socket>(),
+                _localConnectedUser: new Map<string, PusherWebSocket>(),
+                _localConnectedUserWithSpaceUser: new Map<PusherWebSocket, SpaceUser>(),
+                _localWatchers: new Map<string, PusherWebSocket>(),
                 spaceStreamToBackPromise: Promise.resolve(mockBackSpaceConnection),
                 metadata: new Map(),
             } as unknown as Space;
@@ -733,7 +739,7 @@ describe("SpaceToBackForwarder", () => {
                 spaceUserId: "foo_1",
             });
 
-            const mockSocket = mock<Socket>({
+            const mockSocket = mock<PusherWebSocket>({
                 getUserData: vi.fn().mockReturnValue({
                     spaceUserId: "foo_1",
                 }),
@@ -741,9 +747,9 @@ describe("SpaceToBackForwarder", () => {
 
             const mockSpace = {
                 name: "test",
-                _localConnectedUser: new Map<string, Socket>([["foo_1", mockSocket]]),
-                _localWatchers: new Map<string, Socket>(),
-                _localConnectedUserWithSpaceUser: new Map<Socket, SpaceUser>([[mockSocket, spaceUser]]),
+                _localConnectedUser: new Map<string, PusherWebSocket>([["foo_1", mockSocket]]),
+                _localWatchers: new Map<string, PusherWebSocket>(),
+                _localConnectedUserWithSpaceUser: new Map<PusherWebSocket, SpaceUser>([[mockSocket, spaceUser]]),
                 spaceStreamToBackPromise: Promise.resolve(mockBackSpaceConnection),
                 metadata: new Map(),
             } as unknown as Space;

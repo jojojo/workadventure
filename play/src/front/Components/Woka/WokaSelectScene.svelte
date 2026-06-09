@@ -292,7 +292,7 @@
                 {#if MATRIX_AUTO_SYNC === "false"}
                     <button
                         class="w-full px-4 py-3 bg-primary text-white rounded hover:opacity-90"
-                        on:click={() => saveAndContinue([selectedWokaTextureId["woka"]], true)}
+                        onclick={() => saveAndContinue([selectedWokaTextureId["woka"]], true)}
                     >
                         {$LL.chat.matrixSettings.syncButton()}
                     </button>

@@ -1,10 +1,10 @@
 import { get } from "svelte/store";
 import { AvailabilityStatus } from "@workadventure/messages";
-import { axiosToPusher } from "./AxiosUtils";
-import { localUserStore } from "./LocalUserStore";
 import { EXTERNAL_PRESENCE_ENABLED, EXTERNAL_PRESENCE_POLL_INTERVAL } from "../Enum/EnvironmentVariable";
 import { availabilityStatusStore, requestedStatusStore } from "../Stores/MediaStore";
 import { resetAllStatusStoreExcept } from "../Rules/StatusRules/statusChangerFunctions";
+import { localUserStore } from "./LocalUserStore";
+import { axiosToPusher } from "./AxiosUtils";
 
 type ExternalPresenceStatus = "ONLINE" | "BUSY" | "DO_NOT_DISTURB" | "BACK_IN_A_MOMENT";
 
@@ -51,11 +51,14 @@ class ExternalPresenceSync {
 
         this.inFlight = true;
         try {
-            const response = await axiosToPusher.get<{ status?: ExternalPresenceStatus }>(`external-presence-status?_t=${Date.now()}`, {
-                headers: {
-                    Authorization: authToken,
+            const response = await axiosToPusher.get<{ status?: ExternalPresenceStatus }>(
+                `external-presence-status?_t=${Date.now()}`,
+                {
+                    headers: {
+                        Authorization: authToken,
+                    },
                 },
-            });
+            );
 
             if (!response.data?.status) {
                 return;

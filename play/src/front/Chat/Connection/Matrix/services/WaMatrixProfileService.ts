@@ -98,7 +98,7 @@ async function sha256HexOfBlob(blob: Blob): Promise<string> {
 async function fetchWokaImageAsBlob(client: MatrixClient, src: string): Promise<Blob | undefined> {
     try {
         const isMxc = src.startsWith("mxc:");
-        const url = isMxc ? (client.mxcUrlToHttp(src) ?? undefined) : src;
+        const url = matrixOrPlainUrlToHttp(client, src);
         if (!url) {
             return undefined;
         }

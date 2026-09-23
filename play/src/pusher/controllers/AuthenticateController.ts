@@ -233,7 +233,8 @@ export class AuthenticateController extends BaseHttpController {
 
                 try {
                     const resCheckTokenAuth = await openIDClient.checkTokenAuth(authTokenData.accessToken);
-                    const { locale: _ignoredLocale, ...safeUserInfo } = resCheckTokenAuth;
+                    const safeUserInfo = { ...resCheckTokenAuth };
+                    delete safeUserInfo.locale;
                     res.json({
                         username: authTokenData?.username,
                         authToken: token,

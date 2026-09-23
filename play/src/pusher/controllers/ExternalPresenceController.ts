@@ -1,7 +1,6 @@
 import type { Application, Request } from "express";
 import axios from "axios";
 import { z } from "zod";
-import { BaseHttpController } from "./BaseHttpController";
 import { authenticated, type ResponseWithUserIdentifier } from "../middlewares/Authenticated";
 import {
     EXTERNAL_PRESENCE_AUTH_TOKEN,
@@ -11,6 +10,7 @@ import {
 } from "../enums/EnvironmentVariable";
 import { jwtTokenManager } from "../services/JWTTokenManager";
 import { threeCxPresenceService } from "../services/ThreeCxPresenceService";
+import { BaseHttpController } from "./BaseHttpController";
 
 const ExternalPresenceResponse = z
     .object({
@@ -42,7 +42,8 @@ export class ExternalPresenceController extends BaseHttpController {
 
                 const jwtData = await jwtTokenManager.verifyJWTToken(token);
                 const matchField = EXTERNAL_PRESENCE_URL ? EXTERNAL_PRESENCE_MATCH_FIELD : THREE_CX_MATCH_FIELD;
-                const identifier = matchField === "username" ? jwtData.username ?? jwtData.identifier : jwtData.identifier;
+                const identifier =
+                    matchField === "username" ? (jwtData.username ?? jwtData.identifier) : jwtData.identifier;
 
                 if (!identifier) {
                     res.status(204).send();
@@ -84,7 +85,7 @@ export class ExternalPresenceController extends BaseHttpController {
                 res.json({
                     status: data.status ?? (data.inCall ? "BUSY" : "ONLINE"),
                 });
-            }
+            },
         );
     }
 }

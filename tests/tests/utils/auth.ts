@@ -6,47 +6,60 @@ import Menu from "./menu";
 import { play_url } from "./urls";
 import { dismissPwaInstallScreenIfShown } from "./pwaInstall";
 import { dismissDuplicateUserConnectedModalIfShown } from "./duplicateUserModal";
-import { dismissDoNotDisturbInfoToast } from "./doNotDisturbInfoToast";
+import { dismissNoBrowserSoundInfoToast } from "./doNotDisturbInfoToast";
 
-function disposeWithContext(page: Page): Page {
-    const closePage = page.close.bind(page);
-    const context = page.context();
-    let closePromise: Promise<void> | undefined;
-    let contextClosed = false;
-
-    const closeContext = async () => {
-        if (contextClosed) {
-            return;
-        }
-        contextClosed = true;
-        try {
-            await context.close();
-        } catch (e) {
-            if (e instanceof Error && e.message.includes("has been closed")) {
-                return;
-            }
+/**
+ * `getPage()` gives every page its own browser context, and nothing else ever closes those
+ * contexts, so `page.close()` has to close the context too or it leaks for the rest of the worker.
+ *
+ * Closing the context is enough on its own: juggler's `BrowserContext.destroy()` already closes
+ * every page of the context and waits for each `TargetDestroyed`. Closing the page first only adds
+ * a second, redundant teardown of the same tab — and because juggler drops a page from
+ * `context.pages` on the async `TabClose` event, that second close can land on a window Firefox has
+ * already stopped tracking, which is where Firefox 153 throws
+ * `Browser.removeBrowserContext ... can't access property "_maybeDontRestoreTabs"`.
+ *
+ * `Page` already implements `Symbol.asyncDispose` as `close()`, so patching `close` is all it takes
+ * for `await using page = await getPage(...)` to tear the context down as well.
+ */
+/**
+ * Firefox 153 (bundled with Playwright 1.62) intermittently throws out of `context.close()`:
+ *
+ *     Protocol error (Browser.removeBrowserContext): can't access property
+ *     "_maybeDontRestoreTabs", this._windows[aWindow.__SSi] is undefined
+ *
+ * `SessionStore.maybeDontRestoreTabs()` indexes `this._windows[aWindow.__SSi]` with no guard, so it
+ * throws when juggler closes the last tab of a window SessionStore is no longer tracking. It is
+ * purely teardown-time bookkeeping for session restore, which tests never use, and every assertion
+ * in the test has already run by the time it fires — but it still fails the test.
+ *
+ * This is a workaround, not a fix. Firefox bails out of `closeWindow()` before it reaches
+ * `window.close()`, so the window it failed to close leaks for the rest of the worker. That happens
+ * whether or not we rethrow, so swallowing costs nothing beyond hiding the leak. Drop this once the
+ * upstream bug is fixed.
+ */
+async function closeContext(context: BrowserContext): Promise<void> {
+    try {
+        await context.close();
+    } catch (e) {
+        if (!(e instanceof Error)) {
             throw e;
         }
-    };
-
-    const closePageAndContext = async (args: Parameters<Page["close"]>) => {
-        if (!page.isClosed()) {
-            await closePage(...args);
+        if (e.message.includes("has been closed") || e.message.includes("_maybeDontRestoreTabs")) {
+            return;
         }
-        await closeContext();
-    };
+        throw e;
+    }
+}
 
-    page.close = (...args: Parameters<Page["close"]>) => {
-        closePromise ??= closePageAndContext(args);
+function disposeWithContext(page: Page): Page {
+    const context = page.context();
+    let closePromise: Promise<void> | undefined;
+
+    page.close = () => {
+        closePromise ??= closeContext(context);
         return closePromise;
     };
-
-    if (!(Symbol.asyncDispose in page)) {
-        Object.defineProperty(page, Symbol.asyncDispose, {
-            configurable: true,
-            value: () => page.close(),
-        });
-    }
 
     return page;
 }
@@ -117,7 +130,7 @@ async function createUser(
 
     await dismissDuplicateUserConnectedModalIfShown(page);
     await dismissPwaInstallScreenIfShown(page);
-    await dismissDoNotDisturbInfoToast(page);
+    await dismissNoBrowserSoundInfoToast(page);
     await skipOnboardingWhenShown(page);
 
     if (browser.browserType().name() !== "webkit") {
@@ -151,8 +164,9 @@ async function createUser(
 
     await page.context().storageState({ path: "./.auth/" + name + ".json" });
 
-    await page.close();
-    await context.close();
+    // Closing the context closes its pages; closing the page first is the redundant second teardown
+    // that Firefox 153 chokes on. See `disposeWithContext`.
+    await closeContext(context);
 }
 
 export async function getPage(
@@ -172,20 +186,20 @@ export async function getPage(
         | "User1",
     url: string,
     options: {
-        pageCreatedHook?: (page: Page) => void;
+        pageCreatedHook?: (page: Page) => void | Promise<void>;
     } = {},
 ): Promise<Page> {
     await createUser(name, browser, url);
     const newBrowser: BrowserContext = await browser.newContext({ storageState: "./.auth/" + name + ".json" });
     const page: Page = await newBrowser.newPage();
     if (options.pageCreatedHook) {
-        options.pageCreatedHook(page);
+        await options.pageCreatedHook(page);
     }
     const targetUrl = new URL(url, play_url).toString();
     await page.goto(targetUrl);
     await dismissPwaInstallScreenIfShown(page, true);
     await dismissDuplicateUserConnectedModalIfShown(page, true);
-    await dismissDoNotDisturbInfoToast(page);
+    await dismissNoBrowserSoundInfoToast(page);
     await skipOnboardingWhenShown(page);
 
     await expect(page.getByTestId("microphone-button")).toBeVisible({ timeout: 120_000 });

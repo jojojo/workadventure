@@ -7,6 +7,7 @@
 
     import { windowSize } from "../../Stores/CoWebsiteStore";
 
+    import { blocker } from "../../Utils/screenBlocker";
     import AreaEditor from "./AreaEditor/AreaEditor.svelte";
     import EntityEditor from "./EntityEditor/EntityEditor.svelte";
     import MapEditorSideBar from "./MapEditorSideBar.svelte";
@@ -55,7 +56,8 @@
     <div
         id="map-editor-right"
         bind:this={mapEditor}
-        class={`map-editor screen-blocker relative h-dvh max-w-full md:max-w-[calc(100%-64px)] pointer-events-auto ${$mapEditorSelectedToolStore}`}
+        {@attach blocker}
+        class={`map-editor relative h-dvh max-w-full md:max-w-[calc(100%-64px)] pointer-events-auto ${$mapEditorSelectedToolStore}`}
     >
         {#if $mapEditorVisibilityStore && $mapEditorSelectedToolStore !== EditorToolName.WAMSettingsEditor}
             <div class="absolute h-dvh -start-0.5 top-0 flex flex-col z-[2000]">
@@ -88,7 +90,7 @@
     </div>
 </div>
 
-<style lang="scss">
+<style>
     .map-editor {
         top: 0;
         inset-inline-end: 0;
@@ -96,10 +98,6 @@
         z-index: 1999;
         pointer-events: auto;
         color: whitesmoke;
-
-        button.close-window {
-            inset-inline-end: 0.5rem;
-        }
 
         &.WAMSettingsEditor {
             width: 80% !important;

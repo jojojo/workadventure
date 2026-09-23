@@ -63,10 +63,16 @@ const screenShareQualityKey = "screenShareQuality";
 const bandwidthConstrainedScreenSharePreferenceKey = "bandwidthConstrainedScreenSharePreference";
 const legacyVideoBandwidthKey = "videoBandwidth";
 const legacyScreenShareBandwidthKey = "screenShareBandwidth";
+const noiseSuppressionEnabledKey = "noiseSuppressionEnabled";
+const noiseSuppressionProviderKey = "noiseSuppressionProvider";
+const microphoneAutoGainControlKey = "microphoneAutoGainControl";
+const microphoneEchoCancellationKey = "microphoneEchoCancellation";
+const microphoneBrowserNoiseSuppressionKey = "microphoneBrowserNoiseSuppression";
 const INITIAL_MAP_EDITOR_SIDEBAR_WIDTH = 448;
 
 export type VideoQualitySetting = "low" | "recommended" | "high";
 export type BandwidthConstrainedPreference = "maintain-framerate" | "maintain-resolution" | "balanced";
+export type NoiseSuppressionProvider = "workadventure" | "voiceIsolation";
 
 const JwtAuthToken = z
     .object({
@@ -805,6 +811,55 @@ class LocalUserStore {
         return localStorage.getItem("backgroundVideo");
     }
 
+    setNoiseSuppressionEnabled(value: boolean) {
+        localStorage.setItem(noiseSuppressionEnabledKey, value.toString());
+    }
+
+    getNoiseSuppressionEnabled(): boolean {
+        if (localStorage.getItem(noiseSuppressionProviderKey) === "browser") {
+            localStorage.setItem(noiseSuppressionEnabledKey, "false");
+            localStorage.setItem(noiseSuppressionProviderKey, "workadventure");
+            return false;
+        }
+        return localStorage.getItem(noiseSuppressionEnabledKey) === "true";
+    }
+
+    setNoiseSuppressionProvider(value: NoiseSuppressionProvider) {
+        localStorage.setItem(noiseSuppressionProviderKey, value);
+    }
+
+    getNoiseSuppressionProvider(): NoiseSuppressionProvider {
+        const value = localStorage.getItem(noiseSuppressionProviderKey);
+        if (value === "voiceIsolation" || value === "workadventure") {
+            return value;
+        }
+        return "workadventure";
+    }
+
+    setMicrophoneAutoGainControl(value: boolean) {
+        localStorage.setItem(microphoneAutoGainControlKey, value.toString());
+    }
+
+    getMicrophoneAutoGainControl(): boolean {
+        return localStorage.getItem(microphoneAutoGainControlKey) !== "false";
+    }
+
+    setMicrophoneEchoCancellation(value: boolean) {
+        localStorage.setItem(microphoneEchoCancellationKey, value.toString());
+    }
+
+    getMicrophoneEchoCancellation(): boolean {
+        return localStorage.getItem(microphoneEchoCancellationKey) !== "false";
+    }
+
+    setMicrophoneBrowserNoiseSuppression(value: boolean) {
+        localStorage.setItem(microphoneBrowserNoiseSuppressionKey, value.toString());
+    }
+
+    getMicrophoneBrowserNoiseSuppression(): boolean {
+        return localStorage.getItem(microphoneBrowserNoiseSuppressionKey) !== "false";
+    }
+
     getRequestedStatus(): RequestedStatus | null {
         return requestedStatusFactory.createRequestedStatus(localStorage.getItem(requestedStatus));
     }
@@ -894,6 +949,23 @@ class LocalUserStore {
 
     getMatrixLoginToken() {
         return localStorage.getItem(matrixLoginToken);
+    }
+
+    /**
+     * Forgets everything that identifies the current Matrix session.
+     *
+     * Called on logout, and whenever the homeserver tells us the session is dead: credentials left behind
+     * are replayed on the next page load, and MatrixClientWrapper only resets its stores when the stored
+     * user id differs from the one it just logged in with - so a leftover user id would restore the broken
+     * session instead of starting over. The device id is deliberately kept: it is stored per user and the
+     * next login overwrites it with the one the homeserver hands out.
+     */
+    clearMatrixSession() {
+        this.setMatrixLoginToken(null);
+        this.setMatrixUserId(null);
+        this.setMatrixAccessToken(null);
+        this.setMatrixRefreshToken(null);
+        this.setMatrixAccessTokenExpireDate(null);
     }
 
     //TODO : Remove duplicate code (getMatrixUserId) and change matrix id to chatID in localStorage

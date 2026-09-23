@@ -1,5 +1,5 @@
 import Debug from "debug";
-import { ConnectionError } from "livekit-client";
+import { ConnectionError, ConnectionErrorReason } from "livekit-client";
 import type { Subscription } from "rxjs";
 import * as Sentry from "@sentry/svelte";
 import type { Readable } from "svelte/store";
@@ -22,7 +22,9 @@ export class LivekitConnection {
     private readonly unsubscribers: Subscription[] = [];
     private livekitRoom: LiveKitRoom | undefined;
     private shutdownAbortController: AbortController | undefined;
-    private streamToDispatch: MediaStream | undefined;
+    // Last scripting stream dispatched to this space. Every room (the first one and every replacement after a
+    // terminal disconnection) publishes it right after joining.
+    private lastDispatchedStream: MediaStream | undefined;
     constructor(
         private space: SpaceInterface,
         private _streamableSubjects: StreamableSubjects,
@@ -54,10 +56,13 @@ export class LivekitConnection {
     private initialize() {
         this.unsubscribers.push(
             this.space.observePrivateEvent(CommunicationMessageType.LIVEKIT_INVITATION_MESSAGE).subscribe((message) => {
-                if (this.shutdownAbortController) {
-                    console.error("Livekit invitation already triggered for this LivekitState");
-                    Sentry.captureException(new Error("Livekit invitation already triggered for this LivekitState"));
-                    this.shutdownAbortController.abort();
+                if (this.livekitRoom) {
+                    // The back re-invites us after the previous room died (see LiveKitRoom.handleDisconnected).
+                    // Tear the old room down first so two rooms never share the same identity.
+                    debug("Replacing the existing Livekit room with a new invitation");
+                    this.shutdownAbortController?.abort();
+                    this.livekitRoom.destroy();
+                    this.livekitRoom = undefined;
                 }
                 this.shutdownAbortController = new AbortController();
                 const serverUrl = message.livekitInvitationMessage.serverUrl;
@@ -68,16 +73,25 @@ export class LivekitConnection {
                 (async () => {
                     await room.prepareConnection();
                     await room.joinRoom();
-                    if (this.streamToDispatch) {
-                        await this.dispatchStream(this.streamToDispatch);
+                    if (this.lastDispatchedStream) {
+                        await this.dispatchStream(this.lastDispatchedStream);
                     }
-                    this.streamToDispatch = undefined;
                 })().catch((err) => {
                     if (err instanceof ConnectionError && err.message === "Client initiated disconnect") {
                         // This error is triggered when the "destroy" method is called before Livekit connection completes.
                         // It can happen when the user leaves the space just after joining it.
                         // In this case, we don't want to log an error.
                         debug("Livekit connection aborted because the user left the space");
+                        return;
+                    }
+                    if (
+                        err instanceof ConnectionError &&
+                        (err.reason === ConnectionErrorReason.ServerUnreachable ||
+                            err.reason === ConnectionErrorReason.Timeout)
+                    ) {
+                        // The LiveKit server cannot be reached (network outage on the user's side, typically).
+                        // LiveKitRoom.handleDisconnected already asked the back for a new invitation: not a bug.
+                        console.warn("Could not reach the Livekit server, a new connection will be requested", err);
                         return;
                     }
                     console.error("An error occurred in LivekitConnection initialize", err);
@@ -101,8 +115,8 @@ export class LivekitConnection {
     }
 
     async dispatchStream(mediaStream: MediaStream): Promise<void> {
+        this.lastDispatchedStream = mediaStream;
         if (!this.livekitRoom) {
-            this.streamToDispatch = mediaStream;
             return;
         }
 

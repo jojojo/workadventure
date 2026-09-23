@@ -44,6 +44,10 @@ const actionbar: DeepPartial<Translation["actionbar"]> = {
         noDevices: "لم يتم العثور على جهاز ميكروفون",
         noSoundWarning: "لم يتم اكتشاف أي صوت من الميكروفون. قد تكون هناك مشكلة — جرب تغيير الميكروفون في الإعدادات.",
         noSoundWarningPressEnter: "لم يتم اكتشاف أي صوت من الميكروفون. اضغط على Enter لفتح الإعدادات.",
+        advancedNoiseReduction: "تقليل الضوضاء المتقدم",
+        noiseSuppressionInitializing: "جارٍ تهيئة تقليل الضوضاء المخصص...",
+        noiseSuppressionUnsupported: "لا يمكن لهذا المتصفح تشغيل تقليل الضوضاء المخصص.",
+        noiseSuppressionError: "فشل تقليل الضوضاء المخصص. يتم الرجوع إلى تقليل الضوضاء الأصلي في المتصفح.",
         openSettings: "فتح الإعدادات",
         ignore: "تجاهل",
     },
@@ -68,6 +72,7 @@ const actionbar: DeepPartial<Translation["actionbar"]> = {
         SPEAKER: "في اجتماع",
         LIVEKIT: "في اجتماع",
         LISTENER: "في اجتماع",
+        SOUND_BLOCKED: "الصوت محجوب",
     },
     subtitle: {
         camera: "الكاميرا",

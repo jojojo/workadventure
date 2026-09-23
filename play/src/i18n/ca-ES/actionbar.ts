@@ -45,6 +45,11 @@ const actionbar: DeepPartial<Translation["actionbar"]> = {
         noSoundWarning:
             "No s'ha detectat cap so del micròfon. Pot haver-hi un problema; prova de canviar el micròfon a la configuració.",
         noSoundWarningPressEnter: "No s'ha detectat cap so del micròfon. Prem Enter per obrir la configuració.",
+        advancedNoiseReduction: "Reducció avançada del soroll",
+        noiseSuppressionInitializing: "S'està inicialitzant la supressió de soroll personalitzada...",
+        noiseSuppressionUnsupported: "Aquest navegador no pot executar la supressió de soroll personalitzada.",
+        noiseSuppressionError:
+            "La supressió de soroll personalitzada ha fallat. Es torna a la supressió de soroll nativa del navegador.",
         openSettings: "Obrir configuració",
         ignore: "Ignora",
     },
@@ -69,6 +74,7 @@ const actionbar: DeepPartial<Translation["actionbar"]> = {
         SPEAKER: "En una reunió",
         LIVEKIT: "En una reunió",
         LISTENER: "En una reunió",
+        SOUND_BLOCKED: "So bloquejat",
     },
     subtitle: {
         camera: "Càmera",

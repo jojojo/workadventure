@@ -7,8 +7,8 @@ import type { LimitFunction } from "p-limit";
 import pLimit from "p-limit";
 import ZipStream from "zip-stream";
 import { type File, type CentralDirectory, Open as UnzipperOpen } from "unzipper";
-import type { Operation } from "rfc6902";
-import { applyPatch } from "rfc6902";
+import jsonpatch from "fast-json-patch";
+import type { Operation } from "fast-json-patch";
 import type { OrganizedErrors } from "@workadventure/map-editor/src/GameMap/MapValidator";
 import { MapValidator } from "@workadventure/map-editor/src/GameMap/MapValidator";
 import { WAMFileFormat } from "@workadventure/map-editor";
@@ -20,7 +20,7 @@ import * as Sentry from "@sentry/node";
 import bodyParser from "body-parser";
 import type { ITiledMap } from "@workadventure/tiled-map-type-guard";
 import axios from "axios";
-import { mapPath } from "../Services/PathMapper";
+import { decodeStoragePath, mapPath } from "../Services/PathMapper";
 import { ENTITY_COLLECTION_URLS, MAX_UNCOMPRESSED_SIZE, WAM_TEMPLATE_URL } from "../Enum/EnvironmentVariable";
 import { passportAuthenticator } from "../Services/Authentication";
 import { uploadDetector } from "../Services/UploadDetector";
@@ -288,10 +288,18 @@ export class UploadController {
                     // Get the uploaded file
                     const file = req.file;
 
-                    const filePath = req.path;
-
-                    if (filePath.includes("..")) {
+                    if (req.path.includes("..")) {
                         // Attempt to override filesystem. That' a hack!
+                        res.status(400).send("Invalid path");
+                        return;
+                    }
+
+                    // `req.path` is percent-encoded while storage keys are literal (the ZIP upload
+                    // writes the entry names as-is), so decode to write under the same key.
+                    let filePath: string;
+                    try {
+                        filePath = decodeStoragePath(req.path);
+                    } catch {
                         res.status(400).send("Invalid path");
                         return;
                     }
@@ -413,10 +421,18 @@ export class UploadController {
          */
         this.app.patch(/.*\.wam$/, passportAuthenticator, (req, res, next) => {
             (async () => {
-                const filePath = req.path;
-
-                if (filePath.includes("..")) {
+                if (req.path.includes("..")) {
                     // Attempt to override filesystem. That' a hack!
+                    res.status(400).send("Invalid path");
+                    return;
+                }
+
+                // `req.path` is percent-encoded while storage keys are literal, so decode to patch
+                // the file that was actually written at upload time.
+                let filePath: string;
+                try {
+                    filePath = decodeStoragePath(req.path);
+                } catch {
                     res.status(400).send("Invalid path");
                     return;
                 }
@@ -447,16 +463,34 @@ export class UploadController {
                         content.metadata = {};
                     }
 
-                    const patchedContent = structuredClone(content);
-                    const patchErrors = applyPatch(patchedContent, req.body as Operation[]);
-                    if (patchErrors.some(Boolean)) {
-                        console.error(
-                            `[${new Date().toISOString()}] Failed to apply patch on WAM file:`,
-                            patchErrors,
-                            typeof patchErrors,
-                        );
+                    const operations = req.body as unknown;
+                    if (!Array.isArray(operations)) {
                         res.status(400).json({
-                            patch: patchErrors,
+                            patch: "Invalid patch: expected a JSON-Patch document (an array of operations)",
+                        });
+                        return;
+                    }
+
+                    // `validateOperation = true` makes fast-json-patch validate every operation
+                    // and refuse to resolve a JSON Pointer through an inherited (prototype)
+                    // property, so a patch cannot reach shared, process-wide state instead of the
+                    // map document. `mutateDocument = false` returns a fresh document and leaves
+                    // `content` untouched; prototype modifications are banned by default.
+                    // The operations are entirely client-supplied, so any failure applying them
+                    // (a JsonPatchError, or the prototype-ban TypeError) is a bad request, not a
+                    // server error.
+                    let patchedContent: typeof content;
+                    try {
+                        patchedContent = jsonpatch.applyPatch(
+                            content,
+                            operations as Operation[],
+                            true,
+                            false,
+                        ).newDocument;
+                    } catch (e) {
+                        console.error(`[${new Date().toISOString()}] Failed to apply patch on WAM file:`, e);
+                        res.status(400).json({
+                            patch: e instanceof Error ? e.message : "Invalid patch",
                         });
                         return;
                     }
@@ -625,16 +659,30 @@ export class UploadController {
                 // good practice to catch this error explicitly
                 archive.on("error", function (err) {
                     console.error(`[${new Date().toISOString()}] An error occurred while Zipping file: `, err);
-                    Sentry.captureException(`An error occurred while Zipping file: ${JSON.stringify(err)}`);
+                    Sentry.captureException(err);
                     res.status(500).send("An error occurred");
                 });
 
                 // pipe archive data to the file
                 archive.pipe(res);
 
+                // If the client disconnects before the archive is fully sent, destroy the
+                // archive so archiveDirectory() stops fetching S3 objects and releases any
+                // in-flight S3 response streams. Otherwise their sockets leak from the S3
+                // connection pool and eventually exhaust it (maxSockets).
+                res.on("close", () => {
+                    if (!res.writableFinished) {
+                        archive.destroy();
+                    }
+                });
+
                 await this.fileSystem.archiveDirectory(archive, virtualDirectory);
 
-                archive.finalize();
+                // If the client disconnected, the archive was already destroyed above; calling
+                // finalize() on it would write to a destroyed stream and emit a spurious error.
+                if (!archive.destroyed) {
+                    archive.finalize();
+                }
             })().catch((e) => {
                 console.error(`[${new Date().toISOString()}]`, e);
                 Sentry.captureException(e);
@@ -646,10 +694,16 @@ export class UploadController {
     private deleteFile() {
         this.app.delete("/{*splat}", passportAuthenticator, (req, res, next) => {
             (async () => {
-                const filePath = req.path;
-
-                if (filePath.includes("..")) {
+                if (req.path.includes("..")) {
                     // Attempt to override filesystem. That' a hack!
+                    res.status(400).send("Invalid path");
+                    return;
+                }
+
+                let filePath: string;
+                try {
+                    filePath = decodeStoragePath(req.path);
+                } catch {
                     res.status(400).send("Invalid path");
                     return;
                 }

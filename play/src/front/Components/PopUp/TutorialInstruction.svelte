@@ -4,6 +4,7 @@
     import ChevronRightIcon from "../Icons/ChevronRightIcon.svelte";
     import XIcon from "../Icons/XIcon.svelte";
     import { currentBannerIndex } from "../../Stores/PopupStore";
+    import Button from "../UI/Button.svelte";
     import PopUpContainer from "./PopUpContainer.svelte";
 
     interface Props {
@@ -31,39 +32,54 @@
 <PopUpContainer reduceOnSmallScreen={true}>
     <div class="flex p-3 sm:p-4 gap-2 sm:space-x-4 pointer-events-auto items-center">
         <div class="min-w-[2.5rem] sm:min-w-0">
-            <button
-                class="btn btn-light btn-ghost btn-sm min-h-10 min-w-10 sm:min-h-0 sm:min-w-0 p-2 {0 <
-                    $currentBannerIndex && $currentBannerIndex < 5
+            <Button
+                variant="light"
+                appearance="ghost"
+                size="sm"
+                square
+                class="min-h-10 min-w-10 sm:min-h-0 sm:min-w-0 p-2 {0 < $currentBannerIndex && $currentBannerIndex < 5
                     ? ''
                     : 'opacity-20'}"
                 id="chevron-left"
                 onclick={goToPreviousBanner}
                 aria-label="Previous"
             >
-                <ChevronLeftIcon height="h-4" width="w-4" />
-            </button>
+                {#snippet icon()}
+                    <ChevronLeftIcon height="h-4" width="w-4" />
+                {/snippet}
+            </Button>
         </div>
         <div class="grow flex justify-end">
-            <button
-                class="btn btn-light btn-ghost btn-sm min-h-10 min-w-10 sm:min-h-0 sm:min-w-0 p-2 {$currentBannerIndex ===
-                4
+            <Button
+                variant="light"
+                appearance="ghost"
+                size="sm"
+                square
+                class="min-h-10 min-w-10 sm:min-h-0 sm:min-w-0 p-2 {$currentBannerIndex === 4
                     ? 'opacity-20 disabled'
                     : ''}"
                 id="chevron-right"
                 onclick={goToNextBanner}
                 aria-label="Next"
             >
-                <ChevronRightIcon height="h-4" width="w-4" />
-            </button>
+                {#snippet icon()}
+                    <ChevronRightIcon height="h-4" width="w-4" />
+                {/snippet}
+            </Button>
         </div>
         <div class="min-w-[2.5rem] sm:min-w-0">
-            <button
-                class="btn btn-secondary btn-sm min-h-10 min-w-10 sm:min-h-0 sm:min-w-0 p-2"
+            <Button
+                variant="secondary"
+                size="sm"
+                square
+                class="min-h-10 min-w-10 sm:min-h-0 sm:min-w-0 p-2"
                 onclick={closeBanner}
                 aria-label="Close"
             >
-                <XIcon height="h-4" width="w-4" />
-            </button>
+                {#snippet icon()}
+                    <XIcon height="h-4" width="w-4" />
+                {/snippet}
+            </Button>
         </div>
     </div>
     <div class="flex flex-col sm:flex-row pb-4 px-4 sm:px-8 gap-3 sm:gap-4 sm:space-x-4 items-center sm:items-start">
@@ -219,17 +235,17 @@
     </div>
     {#snippet buttons()}
         <div class="tutorial-buttons flex flex-col-reverse sm:flex-row w-full gap-2 sm:gap-2 sm:space-x-2">
-            <button
-                class="btn btn-light btn-sm btn-ghost flex-1 min-h-10 sm:min-h-0 justify-center tutorial-btn-secondary"
-                >View full tutorial</button
+            <Button
+                variant="light"
+                appearance="ghost"
+                size="sm"
+                class="flex-1 min-h-10 sm:min-h-0 tutorial-btn-secondary"
             >
-            <button
-                data-testId="close-tutorial-button"
-                class="btn btn-secondary btn-sm flex-1 min-h-10 sm:min-h-0 justify-center"
-                onclick={closeBanner}
-            >
+                View full tutorial
+            </Button>
+            <Button variant="secondary" size="sm" class="flex-1 min-h-10 sm:min-h-0" onclick={closeBanner}>
                 Close
-            </button>
+            </Button>
         </div>
     {/snippet}
 </PopUpContainer>
@@ -237,7 +253,8 @@
 <style>
     /* Responsive: larger touch targets and readable text on small screens */
     @media (max-width: 768px) {
-        .tutorial-btn-secondary {
+        /* Global so it reaches the <button> rendered by <Button> (scoped CSS would not). */
+        :global(.tutorial-btn-secondary) {
             font-size: 0.9375rem; /* Slightly larger for readability */
         }
     }

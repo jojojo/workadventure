@@ -7,7 +7,7 @@
     import { selectedRoomStore } from "../../Chat/Stores/SelectRoomStore";
     import { navChat } from "../../Chat/Stores/ChatStore";
     import LL from "../../../i18n/i18n-svelte";
-    import { focusNotificationMessage } from "./NotificationRoomFocus";
+    import { focusNotificationTarget } from "./NotificationRoomFocus";
 
     interface Props {
         notification: ProximityNotification;
@@ -31,17 +31,17 @@
     });
 
     function handleClick() {
-        chatNotificationStore.clearAll();
-
         chatVisibilityStore.set(true);
         navChat.switchToChat();
 
         if (notification.openRoomOnClick !== false) {
             const room = notification.room;
+            chatNotificationStore.clearRoom(room.id);
             room.setTimelineAsRead();
             selectedRoomStore.set(room);
-            focusNotificationMessage(room, notification.messageId);
+            focusNotificationTarget(room, notification.messageId, notification.sidePanelSection);
         } else {
+            chatNotificationStore.clearAll();
             // Open the chat on the main chat panel
             selectedRoomStore.set(undefined);
         }

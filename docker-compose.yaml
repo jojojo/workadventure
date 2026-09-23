@@ -62,7 +62,6 @@ services:
       HOST: "0.0.0.0"
       NODE_ENV: development
       ALLOWED_CORS_ORIGIN: "http://play.workadventure.localhost"
-      VITE_URL: "http://front.workadventure.localhost"
       PUSHER_URL: http://play.workadventure.localhost
       FRONT_URL: http://play.workadventure.localhost
       UPLOADER_URL: http://uploader.workadventure.localhost
@@ -87,6 +86,7 @@ services:
       OPENID_USERNAME_CLAIM: ${OPENID_USERNAME_CLAIM:-}
       OPENID_LOCALE_CLAIM: ${OPENID_LOCALE_CLAIM:-}
       OPENID_LOGOUT_REDIRECT_URL: "${OPENID_LOGOUT_REDIRECT_URL:-}"
+      OPENID_WOKA_NAME_POLICY: ${OPENID_WOKA_NAME_POLICY:-}
 
       SECRET_KEY: "$SECRET_KEY"
       ADMIN_API_URL: "${ADMIN_API_URL:-}"
@@ -178,6 +178,15 @@ services:
       - "traefik.http.routers.front.rule=Host(`front.workadventure.localhost`)"
       - "traefik.http.routers.front.service=front"
       - "traefik.http.services.front.loadbalancer.server.port=8080"
+
+      # Serve Vite's dev module graph (/src, /node_modules, /@fs) same-origin under the play host
+      # (instead of the pusher 303-redirecting them to front.*). Web Workers must be same-origin, so
+      # without this the matrix-js-sdk IndexedDB worker fails to load cross-origin and persistence
+      # falls back to the main thread. Priority 2 beats the play catch-all (priority 1); the front
+      # router still wins on the front.* host via its longer (higher default priority) Host rule.
+      - "traefik.http.routers.play-vite.rule=HostRegexp(`^.+$`) && (PathPrefix(`/src`) || PathPrefix(`/node_modules`) || PathPrefix(`/@fs`) || PathPrefix(`/@vite`) || PathPrefix(`/@id`))"
+      - "traefik.http.routers.play-vite.priority=2"
+      - "traefik.http.routers.play-vite.service=front"
 
       - "traefik.http.routers.room-api.rule=Host(`room-api.workadventure.localhost`)"
       - "traefik.http.routers.room-api.service=room-api"

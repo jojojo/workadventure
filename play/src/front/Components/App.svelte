@@ -2,10 +2,18 @@
     /* eslint no-undef: 0 */
     import { onDestroy, onMount } from "svelte";
     import * as Sentry from "@sentry/svelte";
-    import AwaitLoaderPlugin from "phaser3-rex-plugins/plugins/awaitloader-plugin.js";
-    import OutlinePipelinePlugin from "phaser3-rex-plugins/plugins/outlinepipeline-plugin.js";
+    import * as Phaser from "phaser";
+    import "phaser4-rex-plugins/plugins/awaitloader.js";
+    import AwaitLoaderPlugin from "phaser4-rex-plugins/plugins/awaitloader-plugin.js";
+    import OutlineFilterPlugin from "phaser4-rex-plugins/plugins/outlinefilter-plugin.js";
     import type { Unsubscriber } from "svelte/store";
-    import { DEBUG_MODE, SENTRY_DSN_FRONT, SENTRY_ENVIRONMENT, SENTRY_RELEASE } from "../Enum/EnvironmentVariable";
+    import {
+        DEBUG_MODE,
+        SENTRY_DSN_FRONT,
+        SENTRY_ENVIRONMENT,
+        SENTRY_RELEASE,
+        SENTRY_TRACES_SAMPLE_RATE,
+    } from "../Enum/EnvironmentVariable";
     import { HdpiManager } from "../Phaser/Services/HdpiManager";
     import { EntryScene } from "../Phaser/Login/EntryScene";
     import { LoginScene } from "../Phaser/Login/LoginScene";
@@ -50,11 +58,21 @@
                     dsn: SENTRY_DSN_FRONT,
                     release: SENTRY_RELEASE,
                     environment: SENTRY_ENVIRONMENT,
-                    integrations: [Sentry.browserTracingIntegration()],
-                    // Set tracesSampleRate to 1.0 to capture 100%
-                    // of transactions for performance monitoring.
-                    // We recommend adjusting this value in production
-                    tracesSampleRate: 0.2,
+                    // Keep Sentry's default `browserApiErrors` integration but disable its
+                    // requestAnimationFrame wrapping: it re-wraps the rAF callback on every frame,
+                    // a measurable steady-state main-thread cost in a real-time/game app that runs
+                    // a rAF loop continuously. The other wrapped APIs (setTimeout/setInterval/
+                    // addEventListener/XHR) fire far less often and keep their instrumentation.
+                    integrations: (defaultIntegrations) =>
+                        defaultIntegrations
+                            .filter((integration) => integration.name !== "BrowserApiErrors")
+                            .concat(
+                                Sentry.browserApiErrorsIntegration({ requestAnimationFrame: false }),
+                                Sentry.browserTracingIntegration(),
+                            ),
+                    // Sample rate for performance tracing; configurable via env (default 0.2).
+                    // Set to 1.0 to capture 100% of transactions.
+                    tracesSampleRate: SENTRY_TRACES_SAMPLE_RATE ?? 0.2,
                     attachStacktrace: true,
                 };
 
@@ -179,10 +197,10 @@
             powerPreference: "low-power",
             callbacks: {
                 postBoot: (game) => {
-                    // Install rexOutlinePipeline only if the renderer is WebGL.
+                    // Install rexOutlineFilter only if the renderer is WebGL.
                     const renderer = game.renderer;
                     if (renderer instanceof WebGLRenderer) {
-                        game.plugins.install("rexOutlinePipeline", OutlinePipelinePlugin, true);
+                        game.plugins.install("rexOutlineFilter", OutlineFilterPlugin, true);
                     }
                 },
             },

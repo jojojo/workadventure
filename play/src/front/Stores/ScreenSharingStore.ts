@@ -1,11 +1,14 @@
 import type { Readable } from "svelte/store";
 import { get, derived, readable, writable } from "svelte/store";
+import { asError } from "catch-unknown";
 import type { DesktopCapturerSource } from "../Interfaces/DesktopAppInterfaces";
 import { localUserStore } from "../Connection/LocalUserStore";
 import type { VideoQualitySetting } from "../Connection/LocalUserStore";
+import { screenShareMaxResolution } from "../WebRtc/VideoPresets";
 import LL from "../../i18n/i18n-svelte";
 import type { Streamable, WebRtcStreamable } from "../Space/Streamable";
 import { VideoBox } from "../Space/VideoBox";
+import { localEncoderStatsStore } from "../WebRtc/LocalEncoderStats";
 import { isSpeakerStore, type LocalStreamStoreValue } from "./MediaStore";
 import { inExternalServiceStore, myCameraStore, myMicrophoneStore } from "./MyMediaStore";
 import type {} from "../Api/Desktop";
@@ -236,6 +239,25 @@ export const screenSharingLocalStreamStore = derived<Readable<MediaStreamConstra
 
                 currentStream = stream;
 
+                // Capped on the track rather than in the getDisplayMedia constraints: those are only
+                // advisory in some browsers, and the Electron capture path does not go through them.
+                const videoTrack = stream.getVideoTracks()[0];
+                if (videoTrack) {
+                    try {
+                        await videoTrack.applyConstraints(screenShareMaxResolution[get(screenShareQualityStore)]);
+                    } catch (e) {
+                        // Not fatal: we simply keep the native resolution.
+                        console.warn("Could not cap the screen sharing resolution", e);
+                    }
+                }
+
+                if (currentRequestId !== screenSharingRequestId) {
+                    for (const track of stream.getTracks()) {
+                        track.stop();
+                    }
+                    return;
+                }
+
                 // If stream ends (for instance if user clicks the stop screen sharing button in the browser), let's close the view
                 for (const track of currentStream.getTracks()) {
                     track.onended = () => {
@@ -261,13 +283,17 @@ export const screenSharingLocalStreamStore = derived<Readable<MediaStreamConstra
                 }
                 currentStream = undefined;
                 requestedScreenSharingState.disableScreenSharing();
-                console.info("Error. Unable to share screen.", e);
+                const error = asError(e);
+                console.info(`Error. Unable to share screen. ${error.message}`, e);
                 set({
                     type: "error",
-                    error: e instanceof Error ? e : new Error("An unknown error happened"),
+                    error: error,
                 });
             }
-        })().catch((e) => console.error(e));
+        })().catch((e) => {
+            const error = asError(e);
+            console.error(`Error when starting screenshare: ${error.message}`, e);
+        });
     },
 );
 
@@ -288,10 +314,6 @@ const screenSharingLocalMedia = readable<Streamable | undefined>(undefined, func
         localMediaStreamStore,
         ($localMediaStreamStore) => ($localMediaStreamStore?.getAudioTracks().length ?? 0) > 0,
     );
-    const isMediaMuted = derived(
-        localMediaStreamStore,
-        ($localMediaStreamStore) => ($localMediaStreamStore?.getAudioTracks().length ?? 0) === 0,
-    );
 
     const localMedia = {
         uniqueId: "localScreenSharingStream",
@@ -304,9 +326,8 @@ const screenSharingLocalMedia = readable<Streamable | undefined>(undefined, func
             },
         } satisfies WebRtcStreamable,
         spaceUserId: undefined,
-        hasAudio: hasAudio,
         hasVideo: writable(true),
-        isMuted: isMediaMuted,
+        hasAudio,
         name: writable(""),
         showVoiceIndicator: writable(false),
         statusStore: writable("connected"),
@@ -321,6 +342,7 @@ const screenSharingLocalMedia = readable<Streamable | undefined>(undefined, func
         volume: writable(1),
         videoType: "screenSharing",
         webrtcStats: undefined,
+        senderStats: localEncoderStatsStore.screenSharing,
     } satisfies Streamable;
 
     const unsubscribe = screenSharingLocalStreamStore.subscribe((screenSharingLocalStream) => {

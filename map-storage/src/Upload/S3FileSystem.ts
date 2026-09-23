@@ -1,6 +1,6 @@
 import type { IncomingMessage } from "http";
 import path from "path";
-import type { Readable } from "stream";
+import { pipeline, type Readable } from "stream";
 import type { ListObjectsV2CommandInput, ListObjectsV2CommandOutput, S3 } from "@aws-sdk/client-s3";
 import {
     CopyObjectCommand,
@@ -23,6 +23,23 @@ import { FileNotFoundError } from "./FileNotFoundError";
 import type { FileSystemInterface } from "./FileSystemInterface";
 
 /* eslint-disable no-await-in-loop */
+
+/**
+ * Passed as the `AbortController` reason when we cancel an in-flight S3 read because the client
+ * disconnected. The AWS SDK rejects the request with a generic `AbortError` but carries this exact
+ * instance as its `cause`, so we can positively identify *our* abort (via `instanceof` on `.cause`)
+ * instead of string-matching the SDK's error name.
+ */
+export class ClientDisconnectedError extends Error {
+    constructor() {
+        super("The client disconnected before the S3 object finished serving");
+        this.name = "ClientDisconnectedError";
+    }
+}
+
+function isClientDisconnectedAbort(err: unknown): boolean {
+    return err instanceof Error && err.cause instanceof ClientDisconnectedError;
+}
 
 export class S3FileSystem implements FileSystemInterface {
     public constructor(
@@ -242,9 +259,38 @@ export class S3FileSystem implements FileSystemInterface {
     }
 
     serveStaticFile(virtualPath: string, res: Response, next: NextFunction): void {
+        // The client may already be gone; nothing to serve, and nothing to release yet.
+        if (res.destroyed) {
+            return;
+        }
+
+        // When the client disconnects we must release the S3 request's socket back to the pool.
+        // Destroying the (undrained) response body does NOT do that — it leaks the socket, which is
+        // how the connection pool gets permanently wedged (see aws-sdk-js-v3#6691). Aborting the
+        // request via an AbortController does release it. We pass a ClientDisconnectedError as the
+        // abort reason so the resulting rejection is unambiguously ours (see the catch below).
+        const controller = new AbortController();
+        const onClose = () => {
+            if (!res.writableFinished) {
+                controller.abort(new ClientDisconnectedError());
+            }
+        };
+        // `stream.pipeline` below already registers several "close" listeners on the response, and the
+        // Express/Sentry stack adds more, leaving a served file right at Node's default limit of 10.
+        // Our disconnect listener is one more on top, which would trip a (harmless but noisy)
+        // MaxListenersExceededWarning. The set is bounded and removed in `finally`, so account for our
+        // one extra listener instead of masking leaks with an unlimited (0) budget.
+        res.setMaxListeners(res.getMaxListeners() + 1);
+        res.on("close", onClose);
+
         this.s3
-            .getObject({ Bucket: this.bucketName, Key: virtualPath })
+            .getObject({ Bucket: this.bucketName, Key: virtualPath }, { abortSignal: controller.signal })
             .then((result) => {
+                if (res.destroyed) {
+                    controller.abort(new ClientDisconnectedError());
+                    return;
+                }
+
                 // Set the content type and content length headers
                 res.set("Content-Type", result.ContentType);
 
@@ -266,17 +312,37 @@ export class S3FileSystem implements FileSystemInterface {
                     throw new Error("Missing body");
                 }
 
-                // Typescript doc is wrong in AWS: see: https://github.com/aws/aws-sdk-js-v3/issues/1877#issuecomment-755387549
-                //eslint-disable-next-line @typescript-eslint/ban-ts-comment
-                //@ts-ignore
-                (result.Body as IncomingMessage).pipe(res);
+                // Keep this promise pending until the response is fully streamed (or torn down), so
+                // the "close" listener stays attached for the whole download and can abort a
+                // mid-stream disconnect.
+                return new Promise<void>((resolve) => {
+                    // Typescript doc is wrong in AWS: see: https://github.com/aws/aws-sdk-js-v3/issues/1877#issuecomment-755387549
+                    //eslint-disable-next-line @typescript-eslint/ban-ts-comment
+                    //@ts-ignore
+                    pipeline(result.Body as IncomingMessage, res, (error) => {
+                        // On client disconnect the response is destroyed and the abort above releases
+                        // the socket; pipeline surfaces that as an (expected) error we must not forward.
+                        if (error && !res.destroyed) {
+                            next(error);
+                        }
+                        resolve();
+                    });
+                });
             })
             .catch((err) => {
+                if (isClientDisconnectedAbort(err)) {
+                    // The client went away before/while we were fetching; the request was aborted and
+                    // its socket released. Nothing to respond to.
+                    return;
+                }
                 if (err instanceof Error && err.constructor.name === "NoSuchKey") {
                     next();
                 } else {
                     next(err);
                 }
+            })
+            .finally(() => {
+                res.removeListener("close", onClose);
             });
     }
 
@@ -288,7 +354,7 @@ export class S3FileSystem implements FileSystemInterface {
                 throw new Error("Missing body");
             }
 
-            return file.Body.transformToString("utf-8");
+            return await file.Body.transformToString("utf-8");
         } catch (e) {
             if (e instanceof NoSuchKey) {
                 throw new FileNotFoundError(e.message, {
@@ -348,36 +414,96 @@ export class S3FileSystem implements FileSystemInterface {
             if (objects) {
                 for (const file of objects) {
                     const key = file.Key;
-                    const { Body } = await this.s3.send(
-                        new GetObjectCommand({
-                            Bucket: this.bucketName,
-                            Key: key,
-                        }),
-                    );
-                    if (!key || !Body) {
+
+                    if (!key) {
                         throw new Error("Failed to get file from S3");
                     }
-                    if (key.endsWith("/")) {
-                        // a directory. Let's bypass this.
-                        continue;
-                    }
-                    if (key.includes(MapListService.CACHE_NAME)) {
-                        // we do not want cache file to be downloaded
+                    if (key.endsWith("/") || key.includes(MapListService.CACHE_NAME)) {
                         continue;
                     }
 
-                    await new Promise<void>((resolve, reject) => {
-                        archive.entry(Body as Readable, { name: key.substring(virtualPath.length) }, (err) => {
-                            if (err) {
-                                reject(err);
-                                return;
-                            }
-                            resolve();
-                        });
-                    });
+                    // The archive is piped to the HTTP response. When the client disconnects
+                    // the archive is destroyed. Stop here instead of opening another S3
+                    // GetObject stream that would never be consumed, leaking its socket from
+                    // the S3 connection pool.
+                    if (archive.destroyed) {
+                        return;
+                    }
+
+                    // Returns true when the archive was torn down mid-entry, so we stop the loop.
+                    const tornDown = await this.archiveEntry(archive, key, virtualPath);
+                    if (tornDown) {
+                        return;
+                    }
                 }
             }
             continuationToken = listObjectsResponse.NextContinuationToken;
         } while (listObjectsResponse.IsTruncated);
+    }
+
+    /**
+     * Fetches a single S3 object and writes it into the archive. Resolves to `true` when the archive
+     * was torn down (e.g. the client disconnected) so the caller stops the loop, `false` once the
+     * entry has been written, and rejects on a genuine archiving error.
+     *
+     * On the happy path `archive.entry()` fully drains the body, returning its socket to the pool. On
+     * teardown/error the body is NOT drained, so we abort the S3 request via an AbortController —
+     * destroying the undrained body would leak the socket and eventually wedge the pool (see
+     * aws-sdk-js-v3#6691).
+     */
+    private async archiveEntry(archive: ZipStream, key: string, virtualPath: string): Promise<boolean> {
+        const controller = new AbortController();
+        const { Body } = await this.s3.send(
+            new GetObjectCommand({
+                Bucket: this.bucketName,
+                Key: key,
+            }),
+            { abortSignal: controller.signal },
+        );
+        if (!Body) {
+            throw new Error("Failed to get file from S3");
+        }
+        const body = Body as Readable;
+        // Aborting makes the body emit an error; swallow it (zip-stream does not attach an error
+        // handler to the source), so an abort cannot crash the process with an unhandled 'error'.
+        body.on("error", () => {
+            /* released via abort / teardown */
+        });
+
+        // The client may have disconnected while the object was being fetched.
+        if (archive.destroyed) {
+            controller.abort();
+            return true;
+        }
+
+        return new Promise<boolean>((resolve, reject) => {
+            // archive.entry()'s callback may never fire if the archive is torn down
+            // while this entry is being written. Watch the archive so we always settle
+            // and release the S3 body's socket:
+            //  - "close": teardown (archive.destroy(), e.g. the client disconnected) —
+            //    stop cleanly; returning true ends the loop.
+            //  - "error": a real archiving error — propagate it (do not swallow).
+            const onClose = () => {
+                controller.abort();
+                resolve(true);
+            };
+            const onError = (err: Error) => {
+                controller.abort();
+                reject(err);
+            };
+            archive.once("close", onClose);
+            archive.once("error", onError);
+
+            archive.entry(body, { name: key.substring(virtualPath.length) }, (err) => {
+                archive.removeListener("close", onClose);
+                archive.removeListener("error", onError);
+                if (err) {
+                    controller.abort();
+                    reject(err);
+                    return;
+                }
+                resolve(false);
+            });
+        });
     }
 }

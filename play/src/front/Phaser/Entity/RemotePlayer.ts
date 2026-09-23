@@ -1,4 +1,5 @@
 import * as Sentry from "@sentry/svelte";
+import * as Phaser from "phaser";
 import { get } from "svelte/store";
 import type { CancelablePromise } from "cancelable-promise";
 import {
@@ -123,8 +124,8 @@ export class RemotePlayer extends Character implements ActivatableInterface {
         }
     }
 
-    public finishFollowingPath(cancelled = false): void {
-        super.finishFollowingPath(cancelled);
+    public finishFollowingPath(cancelled = false, blocked = false): void {
+        super.finishFollowingPath(cancelled, blocked);
         this.scene.events.off(Phaser.Scenes.Events.UPDATE, this.pathFollowingUpdateCallback);
         this.scene.markDirty();
     }

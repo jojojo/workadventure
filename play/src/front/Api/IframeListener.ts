@@ -47,6 +47,11 @@ import type { SetStatusEvent } from "./Events/SetStatusEvent";
 
 import type { SetSharedPlayerVariableEvent } from "./Events/SetSharedPlayerVariableEvent";
 import type { HasPlayerMovedInterface } from "./Events/HasPlayerMovedInterface";
+import type {
+    JoinMeetingEvent,
+    MeetingIdEvent,
+    StartStreamInMeetingEvent,
+} from "./Events/ProximityMeeting/MeetingEvent";
 import type { AddPlayerEvent } from "./Events/AddPlayerEvent";
 import type { ModalEvent } from "./Events/ModalEvent";
 import type { ReceiveEventEvent } from "./Events/ReceiveEventEvent";
@@ -219,6 +224,12 @@ class IframeListener {
 
     private readonly _stopListeningToStreamInBubbleStream: Subject<void> = new Subject();
     public readonly stopListeningToStreamInBubbleStream = this._stopListeningToStreamInBubbleStream.asObservable();
+
+    private readonly _startListeningToStreamInMeetingStream: Subject<StartStreamInMeetingEvent> = new Subject();
+    public readonly startListeningToStreamInMeetingStream = this._startListeningToStreamInMeetingStream.asObservable();
+
+    private readonly _stopListeningToStreamInMeetingStream: Subject<MeetingIdEvent> = new Subject();
+    public readonly stopListeningToStreamInMeetingStream = this._stopListeningToStreamInMeetingStream.asObservable();
 
     private readonly _addButtonActionBarStream: Subject<AddButtonActionBarEvent> = new Subject();
     public readonly addButtonActionBarStream = this._addButtonActionBarStream.asObservable();
@@ -464,6 +475,10 @@ class IframeListener {
                             this._startListeningToStreamInBubbleStream.next(iframeEvent.data);
                         } else if (iframeEvent.type === "stopListeningToStreamInBubble") {
                             this._stopListeningToStreamInBubbleStream.next();
+                        } else if (iframeEvent.type === "startListeningToStreamInMeeting") {
+                            this._startListeningToStreamInMeetingStream.next(iframeEvent.data);
+                        } else if (iframeEvent.type === "stopListeningToStreamInMeeting") {
+                            this._stopListeningToStreamInMeetingStream.next(iframeEvent.data);
                         } else if (iframeEvent.type === "openChat") {
                             this._openChatStream.next(iframeEvent.data);
                         } else if (iframeEvent.type === "closeChat") {
@@ -694,6 +709,7 @@ class IframeListener {
             iframe.src = scriptUrl;
         } else {
             // We are putting a sandbox on this script because it will run in the same domain as the main website.
+            // Without "allow-same-origin", the sandbox gives the iframe an opaque/unique origin and prevents same-origin access.
             iframe.sandbox.add("allow-scripts");
             iframe.sandbox.add("allow-top-navigation-by-user-activation");
 
@@ -704,6 +720,19 @@ class IframeListener {
             // which provides a secure sandboxed environment
             if (isLocalhost) {
                 // Use the pusher /local-script endpoint
+
+                // Important: the /local-script can no longer have a "null" origin because iframes with a "null" origin
+                // cannot be allowed to access localhost resources anymore
+                // (the browser white-lists domains allowed to access localhost, but "null" is not a domain and is not white-listed).
+                // So for "localhost" scripts, we make an exception and inherit the origin of the main page.
+                // This gives scripts run through Vite local server extra privileges, but there is no other way to make
+                // it work with the new browser security rules.
+                // Note: combined with allow-scripts, a localhost map script with "allow-same-origin" can access
+                // parent/main-origin storage and remove the sandbox entirely. However, the scripts are coming
+                // from localhost and are typically running on the developer's machine, so we assume the developer is
+                // trusted and can run scripts with full privileges in the "play" domain.
+                iframe.sandbox.add("allow-same-origin");
+
                 const encodedScriptUrl = encodeURIComponent(scriptUrl);
                 iframe.src = `/local-script?script=${encodedScriptUrl}`;
             } else {
@@ -859,10 +888,52 @@ class IframeListener {
         });
     }
 
+    sendJoinMeetingEvent(meetingId: string, name: string, kind: JoinMeetingEvent["kind"], users: MessageUserJoined[]) {
+        const formattedUsers: AddPlayerEvent[] = users.map((user) => {
+            return {
+                playerId: user.userId,
+                name: user.name,
+                userUuid: user.userUuid,
+                outlineColor: user.outlineColor,
+                availabilityStatus: availabilityStatusToJSON(user.availabilityStatus),
+                position: user.position,
+                variables: user.variables,
+            };
+        });
+
+        this.postMessage({
+            type: "joinMeetingEvent",
+            data: {
+                meetingId,
+                name,
+                kind,
+                users: formattedUsers,
+            },
+        });
+    }
+
     sendParticipantJoinProximityMeetingEvent(user: MessageUserJoined) {
         this.postMessage({
             type: "participantJoinProximityMeetingEvent",
             data: {
+                user: {
+                    playerId: user.userId,
+                    name: user.name,
+                    userUuid: user.userUuid,
+                    outlineColor: user.outlineColor,
+                    availabilityStatus: availabilityStatusToJSON(user.availabilityStatus),
+                    position: user.position,
+                    variables: user.variables,
+                },
+            },
+        });
+    }
+
+    sendParticipantJoinMeetingEvent(meetingId: string, user: MessageUserJoined) {
+        this.postMessage({
+            type: "participantJoinMeetingEvent",
+            data: {
+                meetingId,
                 user: {
                     playerId: user.userId,
                     name: user.name,
@@ -893,10 +964,37 @@ class IframeListener {
         });
     }
 
+    sendParticipantLeaveMeetingEvent(meetingId: string, user: MessageUserJoined) {
+        this.postMessage({
+            type: "participantLeaveMeetingEvent",
+            data: {
+                meetingId,
+                user: {
+                    playerId: user.userId,
+                    name: user.name,
+                    userUuid: user.userUuid,
+                    outlineColor: user.outlineColor,
+                    availabilityStatus: availabilityStatusToJSON(user.availabilityStatus),
+                    position: user.position,
+                    variables: user.variables,
+                },
+            },
+        });
+    }
+
     sendLeaveProximityMeetingEvent() {
         this.postMessage({
             type: "leaveProximityMeetingEvent",
             data: undefined,
+        });
+    }
+
+    sendLeaveMeetingEvent(meetingId: string) {
+        this.postMessage({
+            type: "leaveMeetingEvent",
+            data: {
+                meetingId,
+            },
         });
     }
 

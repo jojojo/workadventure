@@ -24,7 +24,6 @@ export const PUSHER_ADMIN_WS_MAX_BACKPRESSURE_BYTES = 1024 * 1024;
 export const ALLOWED_CORS_ORIGIN: string | undefined = undefined;
 export const PUSHER_URL = "http://pusher.test";
 export const FRONT_URL = "http://front.test";
-export const VITE_URL = "http://front.test";
 export const PUBLIC_MAP_STORAGE_URL = "";
 export const INTERNAL_MAP_STORAGE_URL: string | undefined = undefined;
 export const REDIS_HOST: string | undefined = undefined;
@@ -183,5 +182,7 @@ export const FRONT_ENVIRONMENT_VARIABLES: FrontConfigurationInterface = {
     BYPASS_PWA,
     PROVIDE_DEFAULT_WOKA_NAME,
     PROVIDE_DEFAULT_WOKA_TEXTURE,
+    EXTERNAL_PRESENCE_ENABLED: false,
+    EXTERNAL_PRESENCE_POLL_INTERVAL: 5000,
     ENABLE_TUTORIAL,
 };

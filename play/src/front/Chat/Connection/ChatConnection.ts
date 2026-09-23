@@ -65,6 +65,37 @@ export enum ChatPermissionLevel {
 }
 
 export type ModerationAction = "ban" | "kick" | "invite" | "redact";
+export type ChatRoomPermissionKey =
+    | "sendMessages"
+    | "sendReactions"
+    | "redactOwnMessages"
+    | "redactOtherMessages"
+    | "kickUsers"
+    | "banUsers"
+    | "inviteUsers"
+    | "changeSettings"
+    | "changeRoomName"
+    | "changeRoomTopic"
+    | "changeHistoryVisibility"
+    | "changeAccess"
+    | "changePermissions";
+export type ChatRoomPermissionsState = Record<ChatRoomPermissionKey, ChatPermissionLevel>;
+export type ChatRoomSettingsAccess = "invite" | "restricted";
+export type ChatRoomSettingsUpdate = {
+    name?: string;
+    topic?: string;
+    access?: ChatRoomSettingsAccess;
+    historyVisibility?: historyVisibility;
+    restrictedRoomId?: string;
+};
+export type ChatRoomSettingsErrorCode = "roomNameEmpty" | "restrictedAccessNeedsParentSpace";
+
+export class ChatRoomSettingsError extends Error {
+    constructor(readonly code: ChatRoomSettingsErrorCode) {
+        super(code);
+        this.name = "ChatRoomSettingsError";
+    }
+}
 
 export interface ChatRoomMember {
     id: string;
@@ -108,6 +139,8 @@ export interface ChatConversation {
     readonly timelineItems: Readable<readonly ChatTimelineItem[]>;
     readonly sendMessage: (message: string) => void;
     readonly sendFiles: (files: FileList) => Promise<void>;
+    readonly canSendMessages?: Readable<boolean>;
+    readonly canSendReactions?: Readable<boolean>;
     readonly setTimelineAsRead: () => void;
     readonly hasPreviousMessage: Readable<boolean>;
     readonly loadMorePreviousMessages: () => Promise<void>;
@@ -126,6 +159,7 @@ export interface ChatRoom extends ChatConversation {
     readonly openThread?: (rootMessageId: string) => Promise<ChatThread | undefined>;
     readonly threads?: Readable<readonly ChatThreadSummary[]>;
     readonly pollItems?: Readable<readonly ChatPollItem[]>;
+    readonly qaItems?: Readable<readonly ChatQuestionItem[]>;
     readonly threadsHydrationState?: Readable<ChatRoomSidePanelHydrationState>;
     readonly pollCatalogueHydrationState?: Readable<ChatRoomSidePanelHydrationState>;
     readonly pollRichHydrationState?: Readable<ChatRoomSidePanelHydrationState>;
@@ -160,6 +194,24 @@ export interface ChatRoomNotificationControl {
     readonly muteNotification: () => Promise<void>;
 }
 
+export type ProximityChatSidePanelParticipant = {
+    readonly spaceUserId: string;
+    readonly name: string | undefined;
+    readonly uuid?: string;
+    readonly pictureStore?: PictureStore;
+    readonly playUri?: string;
+    readonly roomName?: string;
+    readonly tags?: string[];
+};
+
+export interface ProximityChatSidePanelRoom extends ChatRoom, ChatRoomNotificationControl {
+    readonly currentMeetingParticipantsStore: Readable<readonly ProximityChatSidePanelParticipant[]>;
+    readonly qaItems?: Readable<readonly ChatQuestionItem[]>;
+    readonly unreadQuestionCount?: Readable<number>;
+    readonly questionCreation?: ChatQuestionCreationCapability;
+    readonly canModerateQuestions?: Readable<boolean>;
+}
+
 export interface ChatRoomModeration {
     readonly id: string;
     /** True when the current user is room admin (Matrix power level). Used to gate invite / kick / ban / role changes in the UI. */
@@ -173,6 +225,13 @@ export interface ChatRoomModeration {
     readonly changePermissionLevelFor: (member: ChatRoomMember, permissionLevel: ChatPermissionLevel) => Promise<void>;
     readonly getAllowedRolesToAssign: () => ChatPermissionLevel[];
     readonly canModifyRoleOf: (permissionLevel?: ChatPermissionLevel) => boolean;
+}
+
+export interface ChatRoomSettingsManagement {
+    readonly topic: Readable<string>;
+    readonly permissionsState: Readable<ChatRoomPermissionsState>;
+    readonly updateRoomSettings: (settings: ChatRoomSettingsUpdate) => Promise<void>;
+    readonly updateRoomPowerLevels: (permissions: ChatRoomPermissionsState) => Promise<void>;
 }
 
 //Readonly attributes
@@ -190,7 +249,9 @@ export interface ChatMessage {
     edit: (newContent: string) => Promise<void>;
     isDeleted: Readable<boolean>;
     isModified: Readable<boolean>;
+    canEdit: Readable<boolean>;
     addReaction: (reaction: string) => Promise<void>;
+    canReact: Readable<boolean>;
     canDelete: Readable<boolean>;
     threadSummary?: Readable<ChatThreadSummary | null>;
     openThread?: () => Promise<ChatThread | undefined>;
@@ -201,6 +262,7 @@ export interface ChatMessageReaction {
     readonly users: MapStore<string, ChatUser>;
     readonly react: () => void;
     readonly reacted: Readable<boolean>;
+    readonly canReact: Readable<boolean>;
     readonly component: {
         component: WorkAdventureComponent;
         props: WorkAdventureComponentProps;
@@ -247,6 +309,43 @@ export interface ChatPollCreationCapability {
 
 export interface ChatRoomPollCreation {
     readonly pollCreation: ChatPollCreationCapability;
+}
+
+export type ChatQuestionCreateOptions = {
+    body: string;
+};
+
+export interface ChatQuestionCreationCapability {
+    readonly canCreate: Readable<boolean>;
+    readonly maxLength: number;
+    readonly create: (options: ChatQuestionCreateOptions) => Promise<void>;
+}
+
+export type ChatQuestionState = {
+    id: string;
+    body: string;
+    senderId: string;
+    senderName: string | undefined;
+    createdAt: number;
+    isAnswered: boolean;
+    upvoteCount: number;
+    hasUpvoted: boolean;
+    canUpvote: boolean;
+    canDelete: boolean;
+    canMarkAnswered: boolean;
+};
+
+export interface ChatQuestionItem {
+    id: string;
+    sender: AnyKindOfUser | undefined;
+    date: Date | null;
+    state: Readable<ChatQuestionState>;
+    canUpvote: Readable<boolean>;
+    canDelete: Readable<boolean>;
+    canMarkAnswered: Readable<boolean>;
+    toggleUpvote: () => Promise<void>;
+    remove: () => Promise<void>;
+    markAnswered: () => Promise<void>;
 }
 
 export type ChatPollAnswer = {
@@ -315,6 +414,12 @@ export type ChatTimelineItem =
           id: string;
           date: Date | null;
           poll: ChatPollItem;
+      }
+    | {
+          kind: "question";
+          id: string;
+          date: Date | null;
+          question: ChatQuestionItem;
       };
 
 export type ChatMessageType = "proximity" | "text" | "incoming" | "outcoming" | "image" | "file" | "audio" | "video";
@@ -415,7 +520,7 @@ export interface ChatConnectionInterface {
     createFolder: (roomOptions: CreateRoomOptions) => Promise<{ room_id: string }>;
     createDirectRoom(userChatId: string): Promise<(ChatRoom & ChatRoomMembershipManagement) | undefined>;
     roomCreationInProgress: Readable<boolean>;
-    getDirectRoomFor(userChatId: string): (ChatRoom & ChatRoomMembershipManagement) | undefined;
+    getDirectRoomFor(userChatId: string): Promise<(ChatRoom & ChatRoomMembershipManagement) | undefined>;
     searchAccessibleRooms(searchText: string): Promise<
         {
             id: string;
@@ -501,6 +606,33 @@ export function hasChatRoomNotificationControl(
         typeof candidate.areNotificationsMuted?.subscribe === "function" &&
         typeof candidate.muteNotification === "function" &&
         typeof candidate.unmuteNotification === "function"
+    );
+}
+
+export function hasProximityChatSidePanel(
+    conversation: Partial<ChatConversation> | undefined,
+): conversation is ProximityChatSidePanelRoom {
+    const candidate = conversation as (ChatRoom & Partial<ProximityChatSidePanelRoom>) | undefined;
+    return (
+        candidate?.conversationKind === "room" &&
+        typeof candidate.pollItems?.subscribe === "function" &&
+        typeof candidate.currentMeetingParticipantsStore?.subscribe === "function" &&
+        typeof candidate.areNotificationsMuted?.subscribe === "function" &&
+        typeof candidate.muteNotification === "function" &&
+        typeof candidate.unmuteNotification === "function"
+    );
+}
+
+export function hasChatRoomSettingsManagement(
+    conversation: ChatConversation | undefined,
+): conversation is ChatRoom & ChatRoomSettingsManagement {
+    const candidate = conversation as (ChatRoom & Partial<ChatRoomSettingsManagement>) | undefined;
+    return (
+        candidate?.conversationKind === "room" &&
+        typeof candidate.topic?.subscribe === "function" &&
+        typeof candidate.permissionsState?.subscribe === "function" &&
+        typeof candidate.updateRoomSettings === "function" &&
+        typeof candidate.updateRoomPowerLevels === "function"
     );
 }
 

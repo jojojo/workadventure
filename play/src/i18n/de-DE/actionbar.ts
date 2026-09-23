@@ -46,6 +46,12 @@ const actionbar: DeepPartial<Translation["actionbar"]> = {
             "Kein Ton von Ihrem Mikrofon erkannt. Möglicherweise liegt ein Problem vor; versuchen Sie, Ihr Mikrofon in den Einstellungen zu wechseln.",
         noSoundWarningPressEnter:
             "Kein Ton von Ihrem Mikrofon erkannt. Drücken Sie Enter, um die Einstellungen zu öffnen.",
+        advancedNoiseReduction: "Erweiterte Geräuschreduzierung",
+        noiseSuppressionInitializing: "Benutzerdefinierte Geräuschunterdrückung wird initialisiert...",
+        noiseSuppressionUnsupported:
+            "Dieser Browser kann die benutzerdefinierte Geräuschunterdrückung nicht ausführen.",
+        noiseSuppressionError:
+            "Benutzerdefinierte Geräuschunterdrückung fehlgeschlagen. Es wird auf die native Geräuschunterdrückung des Browsers zurückgegriffen.",
         openSettings: "Einstellungen öffnen",
         ignore: "Ignorieren",
     },
@@ -70,6 +76,7 @@ const actionbar: DeepPartial<Translation["actionbar"]> = {
         SPEAKER: "In einer Besprechung",
         LIVEKIT: "In einer Besprechung",
         LISTENER: "In einer Besprechung",
+        SOUND_BLOCKED: "Ton blockiert",
     },
     subtitle: {
         camera: "Kamera",

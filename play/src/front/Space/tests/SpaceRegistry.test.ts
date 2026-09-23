@@ -64,11 +64,10 @@ vi.mock("../../Stores/ScreenSharingStore", () => {
     };
 });
 
-vi.mock("../../Enum/EnvironmentVariable.ts", () => {
-    return {
-        PUSHER_URL: "http://localhost",
-    };
-});
+vi.mock(
+    "../../Enum/EnvironmentVariable.ts",
+    () => import("../../../../tests/front/mocks/frontEnvironmentVariableMock"),
+);
 
 vi.mock("../../Stores/MegaphoneStore", () => {
     return {
@@ -109,35 +108,6 @@ vi.mock("../../Connection/ConnectionManager", () => {
         connectionManager: {
             roomConnectionStream: new Subject(),
         },
-    };
-});
-
-vi.mock("../../Enum/EnvironmentVariable.ts", () => {
-    return {
-        MATRIX_ADMIN_USER: "admin",
-        MATRIX_DOMAIN: "domain",
-        STUN_SERVER: "stun:test.com:19302",
-        TURN_SERVER: "turn:test.com:19302",
-        TURN_USER: "user",
-        TURN_PASSWORD: "password",
-        POSTHOG_API_KEY: "test-api-key",
-        POSTHOG_URL: "https://test.com",
-        MAX_USERNAME_LENGTH: 10,
-        PUSHER_URL: "http://localhost",
-        FALLBACK_LOCALE: "en-US",
-        ENABLE_CHAT: true,
-        KLAXOON_ENABLED: false,
-        KLAXOON_CLIENT_ID: "",
-        YOUTUBE_ENABLED: false,
-        GOOGLE_DRIVE_ENABLED: false,
-        GOOGLE_DOCS_ENABLED: false,
-        GOOGLE_SHEETS_ENABLED: false,
-        GOOGLE_SLIDES_ENABLED: false,
-        ERASER_ENABLED: false,
-        EXCALIDRAW_ENABLED: false,
-        EXCALIDRAW_DOMAINS: [],
-        CARDS_ENABLED: false,
-        TLDRAW_ENABLED: false,
     };
 });
 
@@ -317,6 +287,48 @@ describe("SpaceProviderInterface implementation", () => {
                 expect(spaceRegistry.exist("race-condition-test")).toBeTruthy();
                 expect(roomConnectionMock.emitLeaveSpace).toHaveBeenCalledOnce();
                 expect(roomConnectionMock.emitJoinSpace).toHaveBeenCalledTimes(2);
+            });
+
+            it("should coalesce concurrent joins of the same space instead of throwing SpaceAlreadyExistError", async () => {
+                const roomConnectionMock = new MockRoomConnectionForSpaces();
+                const spaceRegistry: SpaceRegistryInterface = new SpaceRegistry(roomConnectionMock, new Subject());
+
+                // Delay emitJoinSpace so the server round-trip is still in flight when the second
+                // join starts. This is the window where the old "exist() then create" logic would
+                // let both joins pass the existence check.
+                let resolveJoin: (spaceUserId: string) => void;
+                const joinAnswerPromise = new Promise<string>((resolve) => {
+                    resolveJoin = resolve;
+                });
+                roomConnectionMock.emitJoinSpace.mockImplementation(() => joinAnswerPromise);
+
+                const firstJoin = spaceRegistry.joinSpace(
+                    "concurrent-join-test",
+                    FilterType.ALL_USERS,
+                    [],
+                    new AbortController().signal,
+                );
+                const secondJoin = spaceRegistry.joinSpace(
+                    "concurrent-join-test",
+                    FilterType.ALL_USERS,
+                    [],
+                    new AbortController().signal,
+                );
+
+                // Let the in-flight server answer arrive.
+                resolveJoin!("space-user-id");
+
+                const [firstSpace, secondSpace] = await Promise.all([firstJoin, secondJoin]);
+
+                // Both callers get the same instance, no error is thrown, and only one space is
+                // registered (no leak / overwrite).
+                expect(firstSpace).toBe(secondSpace);
+                expect(firstSpace.getName()).toBe("concurrent-join-test");
+                expect(
+                    spaceRegistry.getAll().filter((space) => space.getName() === "concurrent-join-test"),
+                ).toHaveLength(1);
+                // The second join reused the in-flight creation, so the server was only contacted once.
+                expect(roomConnectionMock.emitJoinSpace).toHaveBeenCalledOnce();
             });
         });
     });

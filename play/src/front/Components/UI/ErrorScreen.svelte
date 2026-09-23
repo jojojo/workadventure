@@ -11,6 +11,7 @@
     import logoImg from "../images/logo-min-white.png";
     import LoaderIcon from "../Icons/LoaderIcon.svelte";
     import type { Room } from "../../Connection/Room";
+    import Button from "./Button.svelte";
     import errorGif from "./images/error.gif";
     import { IconRefresh } from "@wa-icons";
 
@@ -50,6 +51,10 @@
 
     let detailsStylized = $derived((details ?? "").replace("{time}", `${timeVar / 1000}`));
 </script>
+
+{#snippet refreshIcon()}
+    <IconRefresh />
+{/snippet}
 
 {#if $errorScreenStore}
     <main
@@ -94,18 +99,21 @@
             </div>
             <div class="flex gap-2">
                 {#if ($errorScreenStore.type === "retry" && $errorScreenStore.canRetryManual) || $errorScreenStore.type === "unauthorized"}
-                    <button
+                    <Button
                         type="button"
-                        class="btn-lg btn btn-light btn-border button flex items-center gap-2"
+                        size="lg"
+                        variant="light"
+                        appearance="border"
+                        class="button"
+                        icon={$errorScreenStore.type === "retry" ? refreshIcon : undefined}
                         onclick={click}
                     >
-                        {#if $errorScreenStore.type === "retry"}<IconRefresh />{/if}
                         {$errorScreenStore.buttonTitle}
-                    </button>
+                    </Button>
                     {#if $userIsConnected}
-                        <button type="button" class="btn-lg btn btn-secondary button" onclick={logout}>
+                        <Button type="button" size="lg" variant="secondary" class="button" onclick={logout}>
                             {$LL.menu.profile.logout()}
-                        </button>
+                        </Button>
                     {/if}
                 {/if}
             </div>
@@ -113,7 +121,7 @@
     </main>
 {/if}
 
-<style lang="scss">
+<style>
     main.errorScreen {
         min-width: 300px;
         z-index: 700;
@@ -130,12 +138,9 @@
         p.code {
             font-size: 12px;
             opacity: 0.6;
+            /* Prefixed too, or WebKit ignores the opt-in and `body` keeps this unselectable. */
+            -webkit-user-select: text;
             user-select: text;
-        }
-        p.details {
-            font-size: 12px;
-            max-width: 80%;
-            margin: 0 auto 35px auto;
         }
         .loading {
             display: inline-block;
@@ -157,26 +162,10 @@
             left: 0;
             top: -19px;
         }
-
-        @keyframes ellipsis {
-            to {
-                width: 1.25em;
-            }
-        }
-
-        @-webkit-keyframes ellipsis {
-            to {
-                width: 1.25em;
-            }
-        }
-
-        .button {
+        /* Global so it reaches the <button> rendered by <Button> (scoped CSS would not). */
+        :global(.button) {
             cursor: pointer;
             font-size: 14px;
-            .reload {
-                margin-top: -4px;
-                width: 22px;
-            }
         }
     }
 
@@ -189,6 +178,18 @@
             .icon {
                 height: 60px;
             }
+        }
+    }
+
+    @keyframes ellipsis {
+        to {
+            width: 1.25em;
+        }
+    }
+
+    @-webkit-keyframes ellipsis {
+        to {
+            width: 1.25em;
         }
     }
 </style>

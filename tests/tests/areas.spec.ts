@@ -3,12 +3,12 @@ import { evaluateScript } from "./utils/scripting";
 import { publicTestMapUrl } from "./utils/urls";
 import Menu from "./utils/menu";
 import { getPage } from "./utils/auth";
-import { isMobile } from "./utils/isMobile";
+import { isMobileViewport } from "./utils/isMobile";
 import Map from "./utils/map";
 
 test.describe("Areas @nomobile", () => {
-    test.beforeEach(async ({ page }) => {
-        test.skip(isMobile(page), "Skip on mobile devices");
+    test.beforeEach(async ({ viewport }) => {
+        test.skip(isMobileViewport(viewport), "Skip on mobile devices");
     });
 
     test("can edit Tiled area from scripting API", async ({ browser }) => {
@@ -76,6 +76,35 @@ test.describe("Areas @nomobile", () => {
             return;
         });
         await Menu.expectButtonState(page, "music-button", "disabled");
+    });
+
+    test("reuses the audio element when leaving and entering an audio area", async ({ browser }) => {
+        await using page = await getPage(browser, "Alice", publicTestMapUrl("tests/E2E/audio.json", "areas"));
+        const audioPlayer = page.locator(".audio-manager-audioplayer");
+
+        await expect(audioPlayer).toHaveCount(1);
+        await expect(audioPlayer).not.toHaveAttribute("src", /.+/);
+
+        await evaluateScript(page, async () => {
+            await WA.onInit();
+            await WA.player.teleport(240, 144);
+            return;
+        });
+        await expect(audioPlayer).toHaveAttribute("src", /.+/);
+
+        await evaluateScript(page, async () => {
+            await WA.player.teleport(176, 144);
+            return;
+        });
+        await expect(audioPlayer).not.toHaveAttribute("src", /.+/);
+        await expect(audioPlayer).toHaveCount(1);
+
+        await evaluateScript(page, async () => {
+            await WA.player.teleport(240, 144);
+            return;
+        });
+        await expect(audioPlayer).toHaveAttribute("src", /.+/);
+        await expect(audioPlayer).toHaveCount(1);
     });
 
     test("display warning on fail to load audio", async ({ browser }) => {

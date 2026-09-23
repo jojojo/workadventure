@@ -14,6 +14,7 @@ vi.mock("@workadventure/messages", () => ({
 }));
 
 import { CLIENT_DISCONNECTION_RETENTION_MS } from "../../src/pusher/enums/EnvironmentVariable";
+import { WS_CLOSE_CODE_SESSION_DESTROYED } from "../../src/common/WebSocketCloseCodes";
 import type { SocketData } from "../../src/pusher/models/Websocket/SocketData";
 import { PusherRoomSocketController } from "../../src/pusher/services/PusherRoomSocketController";
 import { PusherWebSocket, type RawSocket } from "../../src/pusher/services/PusherWebSocket";
@@ -44,19 +45,19 @@ describe("PusherRoomSocketController reconnect retention", () => {
         const socket = createSocket({ tabId: "tab-1" });
         await registeredHandlers?.open(socket);
 
-        expect(getContextMap(controller).has("tab-1")).toBe(true);
+        expect(getContextMap(controller).has("conn-1")).toBe(true);
 
         await registeredHandlers?.close(socket);
         await flushMicrotasks();
 
-        expect(getContextMap(controller).has("tab-1")).toBe(true);
+        expect(getContextMap(controller).has("conn-1")).toBe(true);
 
         vi.advanceTimersByTime(CLIENT_DISCONNECTION_RETENTION_MS - 1);
-        expect(getContextMap(controller).has("tab-1")).toBe(true);
+        expect(getContextMap(controller).has("conn-1")).toBe(true);
 
         vi.advanceTimersByTime(1);
         await flushMicrotasks();
-        expect(getContextMap(controller).has("tab-1")).toBe(false);
+        expect(getContextMap(controller).has("conn-1")).toBe(false);
     });
 
     it("delays logical cleanup so a closed transport can still be replaced", async () => {
@@ -74,23 +75,22 @@ describe("PusherRoomSocketController reconnect retention", () => {
         const initialSocket = createSocket({ tabId: "tab-1" });
         await registeredHandlers?.open(initialSocket);
 
-        const initialContext = getContextMap(controller).get("tab-1");
+        const initialContext = getContextMap(controller).get("conn-1");
         expect(initialContext).toBeDefined();
-        initialContext!.clientLastReceivedNonce = 0;
 
         await registeredHandlers?.close(initialSocket);
         await flushMicrotasks();
 
         expect(close).not.toHaveBeenCalled();
 
-        const reconnectSocket = createSocket({ tabId: "tab-1" });
+        const reconnectSocket = createSocket({ tabId: "tab-1", clientLastReceivedNonce: 0 });
         await registeredHandlers?.open(reconnectSocket);
 
         vi.advanceTimersByTime(CLIENT_DISCONNECTION_RETENTION_MS);
         await flushMicrotasks();
 
         expect(close).not.toHaveBeenCalled();
-        expect(getContextMap(controller).get("tab-1")?.socket).toBe(initialContext?.socket);
+        expect(getContextMap(controller).get("conn-1")).toBe(initialContext);
     });
 
     it("cancels the scheduled cleanup when the same tab reconnects in time", async () => {
@@ -103,19 +103,18 @@ describe("PusherRoomSocketController reconnect retention", () => {
         const initialSocket = createSocket({ tabId: "tab-1" });
         await registeredHandlers?.open(initialSocket);
 
-        const initialContext = getContextMap(controller).get("tab-1");
+        const initialContext = getContextMap(controller).get("conn-1");
         expect(initialContext).toBeDefined();
-        initialContext!.clientLastReceivedNonce = 0;
 
         await registeredHandlers?.close(initialSocket);
         await flushMicrotasks();
 
-        const reconnectSocket = createSocket({ tabId: "tab-1" });
+        const reconnectSocket = createSocket({ tabId: "tab-1", clientLastReceivedNonce: 0 });
         await registeredHandlers?.open(reconnectSocket);
 
         vi.advanceTimersByTime(CLIENT_DISCONNECTION_RETENTION_MS);
 
-        expect(getContextMap(controller).has("tab-1")).toBe(true);
+        expect(getContextMap(controller).has("conn-1")).toBe(true);
     });
 
     it("creates a fresh context after the retention window expires", async () => {
@@ -138,7 +137,7 @@ describe("PusherRoomSocketController reconnect retention", () => {
         await registeredHandlers?.open(reconnectSocket);
 
         expect(open).toHaveBeenCalledTimes(2);
-        expect(getContextMap(controller).get("tab-1")?.socket).toBeDefined();
+        expect(getContextMap(controller).get("conn-1")).toBeDefined();
     });
 
     it("runs logical cleanup when no replacement arrives before retention expires", async () => {
@@ -184,12 +183,37 @@ describe("PusherRoomSocketController reconnect retention", () => {
         await flushMicrotasks();
 
         expect(close).toHaveBeenCalledWith(expect.any(PusherWebSocket), 1000, "Page unloading");
-        expect(getContextMap(controller).has("tab-1")).toBe(false);
+        expect(getContextMap(controller).has("conn-1")).toBe(false);
 
         vi.advanceTimersByTime(CLIENT_DISCONNECTION_RETENTION_MS);
         await flushMicrotasks();
 
         expect(close).toHaveBeenCalledTimes(1);
+    });
+
+    it("does not retain the tab context after the pusher destroyed the session", async () => {
+        vi.useFakeTimers();
+
+        const close = vi.fn();
+        const controller = createController(
+            (handlers) => {
+                registeredHandlers = handlers;
+            },
+            vi.fn(),
+            close,
+        );
+
+        const socket = createSocket({ tabId: "tab-1" });
+        await registeredHandlers?.open(socket);
+        await registeredHandlers?.close(
+            socket,
+            WS_CLOSE_CODE_SESSION_DESTROYED,
+            new TextEncoder().encode("Back lost").buffer,
+        );
+        await flushMicrotasks();
+
+        expect(close).toHaveBeenCalledWith(expect.any(PusherWebSocket), WS_CLOSE_CODE_SESSION_DESTROYED, "Back lost");
+        expect(getContextMap(controller).has("tab-1")).toBe(false);
     });
 
     it("queues outgoing messages while a transport is closed and flushes them after replacement", async () => {
@@ -202,12 +226,11 @@ describe("PusherRoomSocketController reconnect retention", () => {
         const initialSocket = createSocket({ tabId: "tab-1" });
         await registeredHandlers?.open(initialSocket);
 
-        const wrapper = getContextMap(controller).get("tab-1")?.socket as PusherWebSocket;
+        const wrapper = getContextMap(controller).get("conn-1") as PusherWebSocket;
         wrapper.send({ message: undefined });
 
-        const initialContext = getContextMap(controller).get("tab-1");
+        const initialContext = getContextMap(controller).get("conn-1");
         expect(initialContext).toBeDefined();
-        initialContext!.clientLastReceivedNonce = 1;
 
         await registeredHandlers?.close(initialSocket);
         await flushMicrotasks();
@@ -215,7 +238,7 @@ describe("PusherRoomSocketController reconnect retention", () => {
         wrapper.send({ message: undefined });
         expect(getSendMock(initialSocket)).toHaveBeenCalledTimes(1);
 
-        const reconnectSocket = createSocket({ tabId: "tab-1" });
+        const reconnectSocket = createSocket({ tabId: "tab-1", clientLastReceivedNonce: 1 });
         await registeredHandlers?.open(reconnectSocket);
 
         expect(getSendMock(reconnectSocket)).toHaveBeenCalledTimes(1);
@@ -225,13 +248,11 @@ describe("PusherRoomSocketController reconnect retention", () => {
         vi.useFakeTimers();
 
         const open = vi.fn();
-        const controller = createController((handlers) => {
+        createController((handlers) => {
             registeredHandlers = handlers;
         }, open);
 
-        getContextMap(controller).set("tab-1", { clientLastReceivedNonce: 4 });
-
-        const reconnectSocket = createSocket({ tabId: "tab-1" });
+        const reconnectSocket = createSocket({ tabId: "tab-1", clientLastReceivedNonce: 4 });
         await registeredHandlers?.open(reconnectSocket);
 
         expect(open).not.toHaveBeenCalled();
@@ -251,7 +272,7 @@ describe("PusherRoomSocketController reconnect retention", () => {
 
         await registeredHandlers?.open(socket);
 
-        const wrapper = getContextMap(controller).get("tab-1")?.socket as PusherWebSocket;
+        const wrapper = getContextMap(controller).get("conn-1") as PusherWebSocket;
         wrapper.send({ message: undefined });
         wrapper.send({ message: undefined });
 
@@ -259,7 +280,93 @@ describe("PusherRoomSocketController reconnect retention", () => {
 
         await registeredHandlers?.drain(socket);
 
-        expect(getSendMock(socket)).toHaveBeenCalledTimes(3);
+        // The message held behind the backpressured one is flushed; the backpressured one is not sent again.
+        expect(getSendMock(socket)).toHaveBeenCalledTimes(2);
+    });
+});
+
+describe("PusherRoomSocketController transport resume identity", () => {
+    afterEach(() => {
+        vi.clearAllTimers();
+        vi.useRealTimers();
+        vi.restoreAllMocks();
+    });
+
+    const canReplace = (controller: PusherRoomSocketController, query: object, retained?: PusherWebSocket) =>
+        (
+            controller as unknown as {
+                canReplaceTransportWithoutUpgrade: (
+                    query: object,
+                    protocol: string,
+                    retained?: PusherWebSocket,
+                ) => boolean;
+            }
+        ).canReplaceTransportWithoutUpgrade(query, "token", retained);
+
+    it("only resumes onto a retained connection with the same token and room", () => {
+        const controller = createController(() => {});
+        const retained = createPusherWebSocket(createSocket({ token: "token", roomId: "room-id" }));
+
+        expect(canReplace(controller, { roomId: "room-id" }, retained)).toBe(true);
+        expect(canReplace(controller, { roomId: "another-room" }, retained)).toBe(false);
+        expect(canReplace(controller, { roomId: "room-id" }, undefined)).toBe(false);
+    });
+
+    it("refuses a resume from a WorkAdventureWebSocket that never opened a connection here", async () => {
+        let handlers: RegisteredHandlers | undefined;
+        const controller = createController((h) => {
+            handlers = h;
+        });
+
+        const initialSocket = createSocket({ connectionId: "current" });
+        await handlers?.open(initialSocket);
+        const retained = getContextMap(controller).get("current");
+
+        const stale = createSocket({ connectionId: "stale", clientLastReceivedNonce: 7 });
+        await handlers?.open(stale);
+        expect(getEndMock(stale)).toHaveBeenCalledWith(1008, "Cannot replace socket: previous connection not retained");
+        expect(getContextMap(controller).get("current")).toBe(retained);
+
+        const legitimate = createSocket({ connectionId: "current", clientLastReceivedNonce: 0 });
+        await handlers?.open(legitimate);
+        expect(getEndMock(legitimate)).not.toHaveBeenCalled();
+        expect(getEndMock(initialSocket)).toHaveBeenCalledWith(1008, "Replaced by a reconnected socket");
+    });
+
+    it("does not retain a connection from a front that sends no connection id", async () => {
+        vi.useFakeTimers();
+        let handlers: RegisteredHandlers | undefined;
+        const close = vi.fn();
+        const controller = createController(
+            (h) => {
+                handlers = h;
+            },
+            vi.fn(),
+            close,
+        );
+
+        const socket = createSocket({ connectionId: undefined });
+        await handlers?.open(socket);
+        expect(getContextMap(controller).size).toBe(0);
+
+        await handlers?.close(socket, 1006);
+        await flushMicrotasks();
+        expect(close).toHaveBeenCalledTimes(1);
+
+        const resume = createSocket({ connectionId: undefined, clientLastReceivedNonce: 0 });
+        await handlers?.open(resume);
+        expect(getEndMock(resume)).toHaveBeenCalledWith(
+            1008,
+            "Cannot replace socket: previous connection not retained",
+        );
+    });
+
+    it("rejects a replacement socket carrying a different connection id", () => {
+        const previous = createPusherWebSocket(createSocket({ connectionId: "a" }));
+        const replacement = createSocket({ connectionId: "b" });
+
+        expect(previous.replaceSocket(replacement, 0)).toBe(false);
+        expect(getEndMock(replacement)).toHaveBeenCalledWith(1008, "Cannot replace socket: connection id mismatch");
     });
 });
 
@@ -280,24 +387,61 @@ describe("PusherWebSocket backpressure", () => {
 
         wrapper.handleDrain();
 
-        expect(getSendMock(socket)).toHaveBeenCalledTimes(3);
+        // Only the second message is sent on drain: the first one is already buffered by uWS.
+        expect(getSendMock(socket)).toHaveBeenCalledTimes(2);
     });
 
-    it("keeps the drain tracker at the last accepted nonce when drain hits backpressure again", () => {
+    it("never hands a backpressured message to uWS twice, however many drains happen", () => {
         const socket = createSocket();
-        getSendMock(socket).mockReturnValueOnce(0).mockReturnValueOnce(1).mockReturnValueOnce(0).mockReturnValue(1);
+        getSendMock(socket).mockReturnValue(0);
+        const wrapper = createPusherWebSocket(socket);
+
+        wrapper.send({ message: undefined });
+        expect(getSendMock(socket)).toHaveBeenCalledTimes(1);
+
+        wrapper.handleDrain();
+        wrapper.handleDrain();
+
+        // uWS returned 0: it buffered the payload and will deliver it. Sending it again on every drain
+        // delivers it to the client several times (duplicate query answers, ghost users...).
+        expect(getSendMock(socket)).toHaveBeenCalledTimes(1);
+    });
+
+    it("sends a dropped message again on drain", () => {
+        const socket = createSocket();
+        getSendMock(socket).mockReturnValueOnce(2).mockReturnValue(1);
         const wrapper = createPusherWebSocket(socket);
 
         wrapper.send({ message: undefined });
         wrapper.send({ message: undefined });
-        wrapper.handleDrain();
-        wrapper.send({ message: undefined });
+        expect(getSendMock(socket)).toHaveBeenCalledTimes(1);
 
+        wrapper.handleDrain();
+
+        // uWS returned 2: maxBackpressure was reached and the payload was never queued, so both the
+        // dropped message and the one held behind it must be sent.
+        expect(getSendMock(socket)).toHaveBeenCalledTimes(3);
+    });
+
+    it("resumes at the next unsent message when drain hits backpressure again", () => {
+        const socket = createSocket();
+        getSendMock(socket).mockReturnValueOnce(0).mockReturnValueOnce(0).mockReturnValue(1);
+        const wrapper = createPusherWebSocket(socket);
+
+        wrapper.send({ message: undefined });
+        wrapper.send({ message: undefined });
+        wrapper.send({ message: undefined });
+        expect(getSendMock(socket)).toHaveBeenCalledTimes(1);
+
+        // Second message backpressures too, so the third one stays held.
+        wrapper.handleDrain();
+        expect(getSendMock(socket)).toHaveBeenCalledTimes(2);
+
+        wrapper.handleDrain();
         expect(getSendMock(socket)).toHaveBeenCalledTimes(3);
 
-        wrapper.handleDrain();
-
-        expect(getSendMock(socket)).toHaveBeenCalledTimes(5);
+        // Every payload reached uWS exactly once.
+        expect(new Set(getSendMock(socket).mock.calls.map(([payload]) => payload)).size).toBe(3);
     });
 });
 
@@ -326,14 +470,8 @@ function createController(
     return controller;
 }
 
-function getContextMap(
-    controller: PusherRoomSocketController,
-): Map<string, { socket?: unknown; clientLastReceivedNonce?: number }> {
-    return (
-        controller as unknown as {
-            contextByTabKey: Map<string, { socket?: unknown; clientLastReceivedNonce?: number }>;
-        }
-    ).contextByTabKey;
+function getContextMap(controller: PusherRoomSocketController): Map<string, unknown> {
+    return (controller as unknown as { retainedByConnectionId: Map<string, unknown> }).retainedByConnectionId;
 }
 
 function createSocket(overrides: Partial<SocketData> = {}): RawSocket {
@@ -368,6 +506,7 @@ function createSocket(overrides: Partial<SocketData> = {}): RawSocket {
         microphoneState: false,
         cameraState: false,
         tabId: "tab-1",
+        connectionId: "conn-1",
         attendeesState: false,
         queryAbortControllers: new Map(),
         canRecord: false,

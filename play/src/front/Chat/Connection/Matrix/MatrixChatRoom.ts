@@ -26,11 +26,14 @@ import {
     EventTimeline,
 } from "matrix-js-sdk";
 import { KnownMembership } from "matrix-js-sdk/lib/@types/membership";
+import type { HistoryVisibility } from "matrix-js-sdk/lib/@types/partials";
+import { JoinRule, RestrictedAllowType } from "matrix-js-sdk/lib/@types/partials";
 import type { Readable, Writable } from "svelte/store";
 import { derived, get, readable, readonly, writable } from "svelte/store";
 import type { MediaEventContent, MediaEventInfo } from "matrix-js-sdk/lib/@types/media";
 import type { RoomMessageEventContent } from "matrix-js-sdk/lib/@types/events";
 import type { TimelineEvents } from "matrix-js-sdk/lib/@types/event";
+import type { RoomPowerLevelsEventContent } from "matrix-js-sdk/lib/@types/state_events";
 import {
     M_POLL_END,
     M_POLL_KIND_DISCLOSED,
@@ -39,7 +42,7 @@ import {
     M_POLL_START,
 } from "matrix-js-sdk/lib/@types/polls";
 import { PollStartEvent } from "matrix-js-sdk/lib/extensible_events_v1/PollStartEvent";
-import type { Poll } from "matrix-js-sdk/lib/models/poll";
+import { type Poll, PollEvent } from "matrix-js-sdk/lib/models/poll";
 import { Thread, ThreadEvent } from "matrix-js-sdk/lib/models/thread";
 import { MapStore, SearchableArrayStore } from "@workadventure/store-utils";
 import Debug from "debug";
@@ -59,12 +62,15 @@ import type {
     ChatPollCreationCapability,
     ChatPollKind,
     ChatPollContext,
+    ChatRoomPermissionsState,
     ChatRoomPrivacyState,
+    ChatRoomSettingsManagement,
+    ChatRoomSettingsUpdate,
     ChatTimelineItem,
     ChatThreadSummary,
     memberTypingInformation,
 } from "../ChatConnection";
-import { ChatPermissionLevel } from "../ChatConnection";
+import { ChatPermissionLevel, ChatRoomSettingsError } from "../ChatConnection";
 import { isAChatRoomIsVisible, navChat, selectedChatMessageToReply, botsChatIds } from "../../Stores/ChatStore";
 import { selectedRoomStore } from "../../Stores/SelectRoomStore";
 import { gameManager, GameSceneNotFoundError } from "../../../Phaser/Game/GameManager";
@@ -76,6 +82,7 @@ import { chatNotificationStore } from "../../../Stores/ProximityNotificationStor
 import { chatVisibilityStore } from "../../../Stores/ChatStore";
 import type { UserProviderMerger } from "../../UserProviderMerger/UserProviderMerger";
 import { waitForGameSceneStore } from "../../../Stores/GameSceneStore";
+import { ProximityChatRoom } from "../Proximity/ProximityChatRoom";
 import { MatrixChatMessage } from "./MatrixChatMessage";
 import { MatrixChatLightPoll } from "./MatrixChatLightPoll";
 import { MatrixChatPoll } from "./MatrixChatPoll";
@@ -87,6 +94,7 @@ import { resolveChatUserColor } from "./services/WaMatrixProfileService";
 import { MatrixChatRoomMember } from "./MatrixChatRoomMember";
 import { matrixAvatarProfile } from "./services/MatrixAvatarProfile";
 import { getThreadSummary, shouldDisplayEventInRoomTimeline } from "./MatrixThreadUtils";
+import { buildRoomPowerLevelsContent, getRoomPermissionsState } from "./MatrixRoomPowerLevels";
 
 type EventId = string;
 
@@ -100,6 +108,7 @@ export class MatrixChatRoom
         ChatRoomMembershipManagement,
         ChatRoomModeration,
         ChatRoomNotificationControl,
+        ChatRoomSettingsManagement,
         ChatRoomPollCreation
 {
     readonly id: string;
@@ -134,6 +143,10 @@ export class MatrixChatRoom
     inMemoryEventsContent: Map<EventId, IContent>;
     isEncrypted!: Writable<boolean>;
     readonly privacyState: Writable<ChatRoomPrivacyState>;
+    readonly topic: Writable<string>;
+    readonly permissionsState: Writable<ChatRoomPermissionsState>;
+    readonly canSendMessages: Readable<boolean>;
+    readonly canSendReactions: Readable<boolean>;
     typingMembers: Readable<Array<{ id: string; name: string | null; pictureStore: PictureStore }>>;
     isRoomFolder = false;
     areNotificationsMuted = writable(false);
@@ -143,6 +156,7 @@ export class MatrixChatRoom
     shouldRetrySendingEvents = derived(this.notSentEvents, (notSentEvents) => notSentEvents.size > 0);
 
     private handleRoomTimeline = this.onRoomTimeline.bind(this);
+    private handleNewPoll = this.onNewPoll.bind(this);
     private handleRoomName = this.onRoomName.bind(this);
     private handleRoomRedaction = this.onRoomRedaction.bind(this);
     private handleStateEvent = this.onRoomStateEvent.bind(this);
@@ -182,11 +196,6 @@ export class MatrixChatRoom
     constructor(
         private matrixRoom: Room,
         private notifyNewMessage = (message: MatrixChatMessage) => {
-            // Only notify for "live" messages (after initial sync). Avoids notifying for messages loaded on room open (plan: live vs historical).
-            if (!this.matrixRoom.client.isInitialSyncComplete()) {
-                return;
-            }
-
             const canPlaySound = localUserStore.getChatSounds();
             const isRoomIsDisplayed = get(selectedRoomStore)?.id === this.id && get(chatVisibilityStore);
             const isNotificationIsMuted = get(this.areNotificationsMuted);
@@ -228,11 +237,19 @@ export class MatrixChatRoom
         const roomAvatarStore: PictureStore = readable(
             matrixRoom.getAvatarUrl(matrixRoom.client.baseUrl, 24, 24, "scale") ?? undefined,
         );
+        // No disposeCallback here (unlike the thread reply store): this store is append-only and mutated in
+        // place. handleNewMessage / readEventsToAddMessagesAndReactions skip events already present, so an
+        // instance is never swapped out during the room's life. A disposeCallback firing on a same-id
+        // re-render would tear the MatrixEvent listeners (Decrypted / Replaced / RelationsCreated) off the
+        // displayed message — which left encrypted messages stuck on "Failed to decrypt" after a key-backup
+        // restore. Instances are released together in destroy() at room teardown.
         this.messages = new SearchableArrayStore((item: MatrixChatMessage) => item.id);
         this.timelinePolls = new SearchableArrayStore((item: MatrixChatPoll) => item.id);
         this.sidePanelPolls = new SearchableArrayStore((item: ChatPollItem) => item.id);
         this.pollItems = this.sidePanelPolls;
         this.privacyState = writable(this.getMatrixRoomPrivacyState());
+        this.topic = writable(this.getMatrixRoomTopic());
+        this.permissionsState = writable(this.getMatrixRoomPermissionsState());
         this.pollCreation = {
             canCreate: readable(true),
             supportedKinds: ["open", "closed"],
@@ -276,6 +293,8 @@ export class MatrixChatRoom
         this.sendMessage = this.sendMessage.bind(this);
         this.myMembership = writable(matrixRoom.getMyMembership());
         this.setCurrentUserRoomMember(matrixRoom.getMember(matrixRoom.client.getSafeUserId()) ?? undefined);
+        this.canSendMessages = this.createMaySendEventStore(EventType.RoomMessage);
+        this.canSendReactions = this.createMaySendEventStore(EventType.Reaction);
 
         this.members = writable([]);
         this.joinedMemberCount = readonly(this.joinedMemberCountStore);
@@ -424,7 +443,7 @@ export class MatrixChatRoom
 
         this.areNotificationsMuted.set(
             this.matrixRoom.client
-                .getAccountData("m.push_rules")
+                .getAccountData(EventType.PushRules)
                 ?.getContent()
                 .global.override.some((rule: IPushRule) => {
                     if (rule.actions.includes(PushRuleActionName.DontNotify) && rule.rule_id === this.id) {
@@ -475,7 +494,15 @@ export class MatrixChatRoom
         }
 
         this.debugInitialization("members");
-        this.membersInitializationPromise = Promise.resolve()
+        // With lazy loading, /sync only carries the heroes, the senders seen in the timeline and
+        // ourselves, so the full list has to be fetched before it can be shown. This is a no-op when
+        // lazy loading is off, and a failure is not worth an empty panel: fall back on whatever the
+        // sync did carry.
+        this.membersInitializationPromise = this.matrixRoom
+            .loadMembersIfNeeded()
+            .catch((error: unknown) => {
+                console.error("Failed to load the full member list of room", this.id, error);
+            })
             .then(() => {
                 this.initializeMembers();
                 this.startHandlingChatRoomInitializedEvents();
@@ -958,8 +985,18 @@ export class MatrixChatRoom
         return this.matrixRoom;
     }
 
+    private refreshMessageRedactionPermissions(): void {
+        this.messages.forEach((message) => message.refreshCanDelete());
+    }
+
     public createChatMessageFromEvent(event: MatrixEvent, isQuotedMessage?: boolean): MatrixChatMessage {
-        const message = new MatrixChatMessage(event, this.matrixRoom, isQuotedMessage);
+        const message = new MatrixChatMessage(
+            event,
+            this.matrixRoom,
+            isQuotedMessage,
+            this.canSendReactions,
+            this.canSendMessages,
+        );
         this.attachThreadMetadataToMessage(message);
         return message;
     }
@@ -1007,6 +1044,13 @@ export class MatrixChatRoom
             !this.isEventReplacingExistingOne(event) &&
             shouldDisplayEventInRoomTimeline(event)
         ) {
+            // Don't recreate a message the store already holds (e.g. a live event rendered by onRoomTimeline
+            // before the timeline finished loading, or an overlap while paginating). Replacing the live
+            // instance would orphan its MatrixEvent listeners/media; the existing instance updates in place.
+            const eventId = event.getId();
+            if (eventId !== undefined && messages.has(eventId)) {
+                return undefined;
+            }
             this.addEventContentInMemory(event);
             return this.createChatMessageFromEvent(event);
         }
@@ -1019,6 +1063,7 @@ export class MatrixChatRoom
 
     private startHandlingChatRoomShellEvents() {
         this.matrixRoom.on(RoomEvent.Timeline, this.handleRoomTimeline);
+        this.matrixRoom.on(PollEvent.New, this.handleNewPoll);
         this.matrixRoom.on(RoomEvent.Name, this.handleRoomName);
         this.matrixRoom.on(RoomEvent.Redaction, this.handleRoomRedaction);
         this.matrixRoom.on(RoomStateEvent.Events, this.handleStateEvent);
@@ -1270,12 +1315,16 @@ export class MatrixChatRoom
     }
 
     private onRoomNewMember(event: MatrixEvent, state: RoomState, member: RoomMember) {
-        const newWrapper = new MatrixChatRoomMember(member, this.matrixRoom.client.baseUrl, this.matrixRoom.client);
-        const merger = get(this.userProviderMergerStore);
-        if (merger) {
-            newWrapper.setUserProviderMergerContext(merger);
+        // A re-emitted membership event for an already-known member must not append a
+        // duplicate wrapper: stores deriving from this list count members.
+        if (!get(this.members).some((existingMember) => existingMember.id === member.userId)) {
+            const newWrapper = new MatrixChatRoomMember(member, this.matrixRoom.client.baseUrl, this.matrixRoom.client);
+            const merger = get(this.userProviderMergerStore);
+            if (merger) {
+                newWrapper.setUserProviderMergerContext(merger);
+            }
+            this.members.update((members) => [...members, newWrapper]);
         }
-        this.members.update((members) => [...members, newWrapper]);
         this.refreshRoomType();
         this.refreshJoinedMemberCount();
     }
@@ -1311,6 +1360,13 @@ export class MatrixChatRoom
         ) {
             this.privacyState.set(this.getMatrixRoomPrivacyState());
         }
+        if (event.getType() === EventType.RoomTopic) {
+            this.topic.set(this.getMatrixRoomTopic());
+        }
+        if (event.getType() === EventType.RoomPowerLevels) {
+            this.permissionsState.set(this.getMatrixRoomPermissionsState());
+            this.refreshMessageRedactionPermissions();
+        }
         if (get(this.isEncrypted)) return;
         const isEncrypted = !!state.getStateEvents(EventType.RoomEncryption)[0];
         if (isEncrypted) {
@@ -1318,6 +1374,10 @@ export class MatrixChatRoom
             this.privacyState.set(this.getMatrixRoomPrivacyState());
         }
     }
+    // Max consecutive backward pages that yield no displayable message before loadMorePreviousMessages
+    // stops recursing (each page is 8 events).
+    private static readonly MAX_EMPTY_PAGINATION_DEPTH = 10;
+
     /**
      * Strict "newly arrived" rule (see Element Web / matrix-js-sdk): only treat as live when
      * !removed, data.liveEvent === true, and !toStartOfTimeline. Use this for notifications,
@@ -1341,14 +1401,15 @@ export class MatrixChatRoom
         if (removed) {
             return;
         }
-        // Event age when it arrived at the device; defensive guard for delayed sync (source of truth remains data.liveEvent).
-        const ageOfEvent = event.getAge();
-        if (
-            !MatrixChatRoom.isNewLiveTimelineEvent(removed, data, toStartOfTimeline) ||
-            (ageOfEvent !== undefined && ageOfEvent >= 2000)
-        ) {
+        // Only react to events the SDK reports as live (matches Element's TimelinePanel.onRoomTimeline).
+        if (!MatrixChatRoom.isNewLiveTimelineEvent(removed, data, toStartOfTimeline)) {
             return;
         }
+        // A live event delivered late by a delayed sync must STILL be rendered; the age only gates
+        // notifications / auto-open (the original intent of the #4136 guard). Dropping the render here
+        // is what made messages "appear only after a while" under the slower matrix-js-sdk 41 sync timing.
+        const ageOfEvent = event.getAge();
+        const isFreshLiveEvent = ageOfEvent === undefined || ageOfEvent < 2000;
 
         if (room !== undefined) {
             (async () => {
@@ -1379,19 +1440,34 @@ export class MatrixChatRoom
                     if (this.isEventReplacingExistingOne(event)) {
                         this.handleMessageModification(event);
                     } else if (shouldDisplayEventInRoomTimeline(event)) {
-                        this.handleNewMessage(event);
+                        this.handleNewMessage(event, isFreshLiveEvent);
                     }
                 }
                 if (event.getType() === "m.reaction") {
                     this.handleNewMessageReaction(event, this.messages);
                 }
-                if (this.isPollRelatedEvent(event)) {
-                    await this.processPollEvents([event]);
-                    await this.syncTimelinePollItemsFromEvents([event]);
-                    await this.syncSidePanelPollItemsFromEvents([event]);
-                }
+                // Poll events are NOT processed here: matrix-js-sdk auto-processes them during sync
+                // (creating/updating the authoritative Poll in room.polls), and we mirror that via the
+                // PollEvent.New subscription + MatrixChatPoll's own response/end listeners. Re-processing
+                // them here used to create a duplicate Poll that overwrote room.polls and orphaned the
+                // rendered MatrixChatPoll's subscriptions, so incoming polls/votes were lost for joiners.
             })().catch((error) => console.error(error));
         }
+    }
+
+    /**
+     * Mirror a poll created by matrix-js-sdk into the UI stores. The SDK emits {@link PollEvent.New}
+     * on the room whenever it processes an `m.poll.start` event during sync, independently of the
+     * RoomEvent.Timeline path. This is the authoritative source for incoming polls — in particular
+     * for a user who joined the room before the poll was created, whose poll-start event is not
+     * delivered as a fresh live timeline event and would otherwise never be mirrored.
+     */
+    private onNewPoll(poll: Poll): void {
+        const rootEvent = poll.rootEvent;
+        (async () => {
+            await this.syncTimelinePollItemsFromEvents([rootEvent]);
+            await this.syncSidePanelPollItemsFromEvents([rootEvent]);
+        })().catch((error) => console.error("Failed to handle new poll", error));
     }
 
     private onRoomUpdateUnreadNotificationCount(
@@ -1442,7 +1518,17 @@ export class MatrixChatRoom
         this.prunePollStores();
     }
 
-    private handleNewMessage(event: MatrixEvent) {
+    private handleNewMessage(event: MatrixEvent, isFreshLiveEvent = true) {
+        // A live event can reach onRoomTimeline more than once (replayed by a delayed sync now that the age
+        // guard renders late live events, or after the room was already populated by the initial load). The
+        // MatrixChatMessage already displayed for this event keeps itself current through its own MatrixEvent
+        // listeners (Decrypted / Replaced / RelationsCreated), so recreating and replacing it is pointless
+        // churn — and swapping the displayed instance out would strip those listeners, which left encrypted
+        // messages stuck on "Failed to decrypt" after a key-backup restore. Skip the duplicate.
+        const eventId = event.getId();
+        if (eventId !== undefined && this.messages.has(eventId)) {
+            return;
+        }
         const message = this.createChatMessageFromEvent(event);
         this.messages.push(message);
         const senderID = event.getSender();
@@ -1452,8 +1538,13 @@ export class MatrixChatRoom
             }
         }
         if (senderID !== this.matrixRoom.client.getSafeUserId() && !get(this.areNotificationsMuted)) {
-            this.notifyNewMessage(message);
-            if (!isAChatRoomIsVisible() && get(selectedRoomStore)?.id !== "proximity") {
+            // Only notify for "live" messages (after initial sync) that arrived fresh. A live event
+            // delivered late by a delayed sync is still rendered above, but must not notify / auto-open.
+            if (isFreshLiveEvent && this.matrixRoom.client.isInitialSyncComplete()) {
+                this.notifyNewMessage(message);
+            }
+
+            if (isFreshLiveEvent && !isAChatRoomIsVisible() && !(get(selectedRoomStore) instanceof ProximityChatRoom)) {
                 selectedRoomStore.set(this);
                 navChat.switchToChat();
             }
@@ -1477,13 +1568,13 @@ export class MatrixChatRoom
                 }
                 existingMessageWithReactions.reactions.set(
                     reactionKey,
-                    new MatrixChatMessageReaction(this.matrixRoom, event),
+                    new MatrixChatMessageReaction(this.matrixRoom, event, this.canSendReactions),
                 );
                 return;
             }
             //TODO : voir si reaction arrive avant le message
             // const newMessageReactionMap = new MapStore<string, MatrixChatMessageReaction>();
-            // newMessageReactionMap.set(reactionKey, new MatrixChatMessageReaction(this.matrixRoom, event));
+            // newMessageReactionMap.set(reactionKey, new MatrixChatMessageReaction(this.matrixRoom, event, this.canSendReactions));
             // messages.reactions.set(messageId, newMessageReactionMap);
         }
     }
@@ -1498,7 +1589,9 @@ export class MatrixChatRoom
             if (event_id) {
                 const messageToUpdate = this.messages.get(event_id);
                 if (messageToUpdate !== undefined) {
-                    messageToUpdate.modifyContent(event.getOriginalContent()["m.new_content"].body);
+                    // The SDK has already applied the edit to the target event; re-render from it (handles
+                    // media / formatting and can't throw on a missing m.new_content).
+                    messageToUpdate.modifyContent();
                 }
             }
         }
@@ -1574,7 +1667,7 @@ export class MatrixChatRoom
         return eventRelation?.rel_type === "m.replace";
     }
 
-    async loadMorePreviousMessages() {
+    async loadMorePreviousMessages(depth = 0) {
         await this.ensureTimelineInitialized();
         if (get(this.hasPreviousMessage)) {
             const existingEventsBeforePagination = this.timelineWindow.getEvents();
@@ -1593,8 +1686,11 @@ export class MatrixChatRoom
             await this.processPollEvents(paginatedEvents);
             await this.syncTimelinePollItemsFromEvents(paginatedEvents);
             this.hasPreviousMessage.set(this.timelineWindow.canPaginate(Direction.Backward));
-            if (messages.length === 0) {
-                await this.loadMorePreviousMessages();
+            // A page can contain only non-message events (reactions, edits, thread replies), which yield no
+            // displayable messages. Keep paginating so the user sees something, but cap the recursion: a
+            // long run of such events would otherwise recurse deeply. The user can scroll again to continue.
+            if (messages.length === 0 && depth < MatrixChatRoom.MAX_EMPTY_PAGINATION_DEPTH) {
+                await this.loadMorePreviousMessages(depth + 1);
             }
         }
     }
@@ -1849,6 +1945,34 @@ export class MatrixChatRoom
         };
     }
 
+    private getMatrixRoomTopic(): string {
+        const roomState = this.matrixRoom.getLiveTimeline()?.getState(EventTimeline.FORWARDS);
+        const topicEvent = roomState?.getStateEvents(EventType.RoomTopic, "");
+        const topic = topicEvent?.getContent()?.topic;
+        return typeof topic === "string" ? topic : "";
+    }
+
+    private getMatrixRoomPowerLevelsContent(): RoomPowerLevelsEventContent {
+        const roomState = this.matrixRoom.getLiveTimeline()?.getState(EventTimeline.FORWARDS);
+        const powerLevelsEvent = roomState?.getStateEvents(EventType.RoomPowerLevels, "");
+        return powerLevelsEvent?.getContent() ?? {};
+    }
+
+    private getMatrixRoomPermissionsState(): ChatRoomPermissionsState {
+        return getRoomPermissionsState(this.getMatrixRoomPowerLevelsContent());
+    }
+
+    private createMaySendEventStore(eventType: EventType): Readable<boolean> {
+        return derived([this.currentUserPermissionLevel, this.myMembership, this.permissionsState], () => {
+            return (
+                this.matrixRoom
+                    .getLiveTimeline()
+                    .getState(EventTimeline.FORWARDS)
+                    ?.maySendEvent(eventType, this.matrixRoom.client.getSafeUserId()) ?? false
+            );
+        });
+    }
+
     /**
      * Members that still participate or may join (`join` / `invite`). Left and banned users are
      * excluded so DM vs group heuristics match what users see in the conversation.
@@ -1877,7 +2001,13 @@ export class MatrixChatRoom
             return "direct";
         }
 
-        if (members.length > 2) {
+        // Taken from the room summary rather than from `members.length`: under lazy loading the latter
+        // counts the member events that happen to be loaded, not the people in the room, so a large group
+        // would show up with two loaded members and get filed as a direct message. The counts fall back on
+        // counting members when the server sends no summary, which is what happens without lazy loading.
+        const memberCount = this.matrixRoom.getJoinedMemberCount() + this.matrixRoom.getInvitedMemberCount();
+
+        if (memberCount > 2) {
             return "multiple";
         }
 
@@ -1887,7 +2017,7 @@ export class MatrixChatRoom
             (member) => directRoomsPerUsers && directRoomsPerUsers[member.userId]?.includes(this.id),
         );
 
-        if (isDirectBasedOnRoomData || members.length === 2 || this.isRoomCreatedAsDirect()) {
+        if (isDirectBasedOnRoomData || memberCount === 2 || this.isRoomCreatedAsDirect()) {
             return "direct";
         }
 
@@ -2004,6 +2134,7 @@ export class MatrixChatRoom
         this.currentUserRoomMember = undefined;
         this.matrixRoom.currentState.off(RoomStateEvent.Members, this.handleRoomStateMembers);
         this.matrixRoom.off(RoomEvent.Timeline, this.handleRoomTimeline);
+        this.matrixRoom.off(PollEvent.New, this.handleNewPoll);
         this.matrixRoom.off(RoomEvent.Name, this.handleRoomName);
         this.matrixRoom.off(RoomEvent.Redaction, this.handleRoomRedaction);
         this.matrixRoom.off(RoomStateEvent.Events, this.handleStateEvent);
@@ -2089,7 +2220,7 @@ export class MatrixChatRoom
     }
 
     public hasPermissionForRoomStateEvent(eventType: keyof StateEvents): Readable<boolean> {
-        return derived([this.currentUserPermissionLevel, this.myMembership], () => {
+        return derived([this.currentUserPermissionLevel, this.myMembership, this.permissionsState], () => {
             return (
                 this.matrixRoom
                     .getLiveTimeline()
@@ -2099,10 +2230,70 @@ export class MatrixChatRoom
         });
     }
 
+    public async updateRoomSettings(settings: ChatRoomSettingsUpdate): Promise<void> {
+        const updates: Promise<unknown>[] = [];
+
+        if (settings.name !== undefined) {
+            const name = settings.name.trim();
+            if (name.length === 0) {
+                throw new ChatRoomSettingsError("roomNameEmpty");
+            }
+            updates.push(this.matrixRoom.client.setRoomName(this.id, name));
+        }
+
+        if (settings.topic !== undefined) {
+            updates.push(
+                this.matrixRoom.client.sendStateEvent(this.id, EventType.RoomTopic, { topic: settings.topic }),
+            );
+        }
+
+        if (settings.access !== undefined) {
+            if (settings.access === "restricted") {
+                if (!settings.restrictedRoomId) {
+                    throw new ChatRoomSettingsError("restrictedAccessNeedsParentSpace");
+                }
+                updates.push(
+                    this.matrixRoom.client.sendStateEvent(this.id, EventType.RoomJoinRules, {
+                        join_rule: JoinRule.Restricted,
+                        allow: [
+                            {
+                                type: RestrictedAllowType.RoomMembership,
+                                room_id: settings.restrictedRoomId,
+                            },
+                        ],
+                    }),
+                );
+            } else {
+                updates.push(
+                    this.matrixRoom.client.sendStateEvent(this.id, EventType.RoomJoinRules, {
+                        join_rule: JoinRule.Invite,
+                    }),
+                );
+            }
+        }
+
+        if (settings.historyVisibility !== undefined) {
+            updates.push(
+                this.matrixRoom.client.sendStateEvent(this.id, EventType.RoomHistoryVisibility, {
+                    history_visibility: settings.historyVisibility as HistoryVisibility,
+                }),
+            );
+        }
+
+        await Promise.all(updates);
+    }
+
+    public async updateRoomPowerLevels(permissions: ChatRoomPermissionsState): Promise<void> {
+        await this.matrixRoom.refreshLiveTimeline();
+        const nextPowerLevels = buildRoomPowerLevelsContent(this.getMatrixRoomPowerLevelsContent(), permissions);
+        await this.matrixRoom.client.sendStateEvent(this.id, EventType.RoomPowerLevels, nextPowerLevels);
+        this.permissionsState.set(permissions);
+    }
+
     private setCurrentUserRoomMember(member: RoomMember | undefined): void {
         if (this.currentUserRoomMember === member) {
             if (member) {
-                this.currentUserPermissionLevel.set(MatrixChatRoomMember.getPermissionLevel(member.powerLevelNorm));
+                this.currentUserPermissionLevel.set(MatrixChatRoomMember.getPermissionLevel(member.powerLevel));
             }
             return;
         }
@@ -2115,12 +2306,12 @@ export class MatrixChatRoom
             return;
         }
 
-        this.currentUserPermissionLevel.set(MatrixChatRoomMember.getPermissionLevel(member.powerLevelNorm));
+        this.currentUserPermissionLevel.set(MatrixChatRoomMember.getPermissionLevel(member.powerLevel));
         member.on(RoomMemberEvent.PowerLevel, this.handleCurrentUserRoomMemberPowerLevel);
     }
 
     private onCurrentUserRoomMemberPowerLevel(_event: MatrixEvent, member: RoomMember): void {
-        this.currentUserPermissionLevel.set(MatrixChatRoomMember.getPermissionLevel(member.powerLevelNorm));
+        this.currentUserPermissionLevel.set(MatrixChatRoomMember.getPermissionLevel(member.powerLevel));
     }
 
     public async changePermissionLevelFor(member: ChatRoomMember, permissionLevel: ChatPermissionLevel): Promise<void> {

@@ -6,6 +6,7 @@ import LL from "../../i18n/i18n-svelte";
 import { VideoBox } from "../Space/VideoBox";
 import type { Streamable } from "../Space/Streamable";
 import { touchScreenManager } from "../Touch/TouchScreenManager";
+import { localEncoderStatsStore } from "../WebRtc/LocalEncoderStats";
 import { screenSharingLocalVideoBox } from "./ScreenSharingStore";
 
 import { highlightedEmbedScreen } from "./HighlightedEmbedScreenStore";
@@ -70,9 +71,7 @@ export const myCameraPeerStore: Readable<VideoBox> = derived([LL], ([$LL], set) 
                 stream.getVideoTracks().length > 0
             );
         }),
-        // hasAudio = true because the webcam has a microphone attached and could potentially play sound
-        hasAudio: writable(true),
-        isMuted: derived(requestedMicrophoneState, (micState) => !micState),
+        hasAudio: requestedMicrophoneState,
         statusStore: writable("connected" as const),
         name: writable($LL.camera.my.nameTag()),
         showVoiceIndicator: localVoiceIndicatorStore,
@@ -87,6 +86,7 @@ export const myCameraPeerStore: Readable<VideoBox> = derived([LL], ([$LL], set) 
         volume: writable(1),
         videoType: "video",
         webrtcStats: undefined,
+        senderStats: localEncoderStatsStore.video,
     };
     const videoBox = VideoBox.fromLocalStreamable(streamable, -2);
     set(videoBox);
@@ -105,7 +105,6 @@ const listenerBoxStreamable: Streamable = {
     volumeStore: undefined,
     hasVideo: writable(true),
     hasAudio: writable(false),
-    isMuted: writable(true),
     statusStore: writable("connected" as const),
     name: writable("Listener"),
     showVoiceIndicator: writable(false),

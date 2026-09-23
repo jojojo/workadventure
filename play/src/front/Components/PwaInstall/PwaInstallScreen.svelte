@@ -15,6 +15,7 @@
         neverShowPwaPage,
     } from "../../Stores/PwaInstallStore";
     import { detectIos, markPwaPromptNeverShow } from "../../Utils/PwaInstallEligibility";
+    import Button from "../UI/Button.svelte";
     import { IconApps, IconAppWindow, IconHistory } from "@wa-icons";
 
     let logo = $state(logoImg);
@@ -178,38 +179,43 @@
 
                 <div class="flex flex-col gap-4">
                     {#if $pwaInstallUiStore.deferredPrompt && !$pwaInstallUiStore.isIos}
-                        <button
+                        <Button
                             type="button"
-                            class="btn btn-secondary !text-lg"
+                            variant="secondary"
+                            class="!text-lg"
                             onclick={handleInstall}
                             disabled={$pwaInstallUiStore.installing}
-                            data-testid="pwa-install-button"
+                            dataTestId="pwa-install-button"
                         >
-                            <svg class="h-5 w-5 shrink-0 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                <path
-                                    stroke-linecap="round"
-                                    stroke-linejoin="round"
-                                    stroke-width="2"
-                                    d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"
-                                />
-                            </svg>
+                            {#snippet icon()}
+                                <svg class="h-5 w-5 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path
+                                        stroke-linecap="round"
+                                        stroke-linejoin="round"
+                                        stroke-width="2"
+                                        d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"
+                                    />
+                                </svg>
+                            {/snippet}
                             {$pwaInstallUiStore.installing
                                 ? $LL.warning.pwaInstall.installing()
                                 : $LL.warning.pwaInstall.install()}
-                        </button>
+                        </Button>
                     {/if}
 
-                    <button
+                    <!-- No variant: the design system's `.btn-light .btn-label` is dark, but this
+                         translucent button needs the base white label, which no-variant keeps. -->
+                    <Button
                         type="button"
-                        class="btn btn-light !bg-white/10 !text-lg !text-white hover:!bg-white/20"
+                        class="!bg-white/10 !text-lg !text-white hover:!bg-white/20"
                         onclick={() => {
                             analyticsClient.pwaContinueInBrowserClick();
                             handleContinue();
                         }}
-                        data-testid="pwa-install-skip"
+                        dataTestId="pwa-install-skip"
                     >
                         {$LL.warning.pwaInstall.continue()}
-                    </button>
+                    </Button>
 
                     <div class="flex flex-col items-center gap-2">
                         <button

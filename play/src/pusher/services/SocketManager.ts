@@ -17,6 +17,7 @@ import type {
     GetMemberAnswer,
     GetMemberQuery,
     GetRecordingsAnswer,
+    GetRecordingThumbnailsAnswer,
     DeleteRecordingAnswer,
     JoinRoomMessage,
     MemberData,
@@ -39,6 +40,7 @@ import type {
     SetPlayerDetailsMessage,
     IceServersAnswer,
     UpdateSpaceUserMessage,
+    UserMessageReadMessage,
     UserMovesMessage,
     ViewportMessage,
     GetSignedUrlAnswer,
@@ -62,9 +64,10 @@ import { EMBEDDED_DOMAINS_WHITELIST, GRPC_MAX_MESSAGE_SIZE, SECRET_KEY } from ".
 import type { SpaceInterface } from "../models/Space";
 import { Space } from "../models/Space";
 import { SpaceConnection } from "../models/SpaceConnection";
-import { ClientNotPartOfSpaceError } from "../models/SpaceValidationErrors";
+import { ClientNotPartOfSpaceError, SpaceDestroyedError } from "../models/SpaceValidationErrors";
 import type { UpgradeFailedData } from "../controllers/IoSocketController";
 import { eventProcessor } from "../models/eventProcessorInit";
+import { WS_CLOSE_CODE_SESSION_DESTROYED } from "../../common/WebSocketCloseCodes";
 import { clientEventsEmitter } from "./ClientEventsEmitter";
 import { gaugeManager } from "./GaugeManager";
 import { apiClientRepository } from "./ApiClientRepository";
@@ -82,6 +85,8 @@ export type SocketUpgradeFailed = WebSocket<UpgradeFailedData>;
 export class SocketManager implements ZoneEventListener {
     private static readonly RECORDING_QUERY_TIMEOUT_MS = 60_000;
     private rooms: Map<string, PusherRoom> = new Map<string, PusherRoom>();
+    // Rooms whose init() has not resolved yet, so concurrent getOrCreateRoom calls share one instance.
+    private creatingRooms: Map<string, Promise<PusherRoom>> = new Map<string, Promise<PusherRoom>>();
     private spaces: Map<string, SpaceInterface> = new Map<string, SpaceInterface>();
 
     constructor(private _spaceConnection = new SpaceConnection()) {
@@ -287,14 +292,23 @@ export class SocketManager implements ZoneEventListener {
                         if (!client.isDisconnecting()) {
                             const connectionCloseReason =
                                 backConnectionCloseReason ?? "No close reason received from back server.";
-                            console.warn(
-                                `Connection lost to back server '${apiClient.getChannel().getTarget()}' for room '${
-                                    socketData.roomId
-                                }' and user '${socketData.userUuid}'/'${
-                                    socketData.name
-                                }'. Reason: ${connectionCloseReason}`,
+                            const logMessage = `Connection lost to back server '${apiClient
+                                .getChannel()
+                                .getTarget()}' for room '${socketData.roomId}' and user '${socketData.userUuid}'/'${
+                                socketData.name
+                            }'. Reason: ${connectionCloseReason}`;
+                            if (client.isPermanentlyDisconnected()) {
+                                // Expected teardown: the client closed its WebSocket for good, so we ended the
+                                // back connection ourselves. Not a real "connection lost" event.
+                                debug(logMessage);
+                            } else {
+                                console.warn(logMessage);
+                            }
+                            this.closeWebsocketConnection(
+                                client,
+                                WS_CLOSE_CODE_SESSION_DESTROYED,
+                                `Back lost: ${connectionCloseReason}`,
                             );
-                            this.closeWebsocketConnection(client, 1011, `Back lost: ${connectionCloseReason}`);
                         }
                     } catch (e: unknown) {
                         console.error("Error while handling ended connection to back", e);
@@ -314,7 +328,11 @@ export class SocketManager implements ZoneEventListener {
                             err,
                         );
                         if (!client.isDisconnecting()) {
-                            this.closeWebsocketConnection(client, 1011, "Error while connecting to back server");
+                            this.closeWebsocketConnection(
+                                client,
+                                WS_CLOSE_CODE_SESSION_DESTROYED,
+                                "Error while connecting to back server",
+                            );
                         }
                     } catch (e: unknown) {
                         console.error("Error while handling error event in connection to back", e);
@@ -348,7 +366,11 @@ export class SocketManager implements ZoneEventListener {
             }
 
             // Let's close the websocket connection with an error code
-            this.closeWebsocketConnection(client, 1011, "Error while connecting to back server");
+            this.closeWebsocketConnection(
+                client,
+                WS_CLOSE_CODE_SESSION_DESTROYED,
+                "Error while connecting to back server",
+            );
         }
     }
 
@@ -428,7 +450,11 @@ export class SocketManager implements ZoneEventListener {
             }
 
             // Let's close the websocket connection with an error code
-            this.closeWebsocketConnection(client, 1011, "Error while connecting to back server");
+            this.closeWebsocketConnection(
+                client,
+                WS_CLOSE_CODE_SESSION_DESTROYED,
+                "Error while connecting to back server",
+            );
         }
     }
 
@@ -533,7 +559,10 @@ export class SocketManager implements ZoneEventListener {
             }
             space.forwarder.unregisterUser(client).catch((error) => {
                 console.error("Error while unregistering user from space after abort", error);
-                Sentry.captureException(error);
+                // The space being destroyed is an expected lifecycle event: log it but don't report to Sentry.
+                if (!(error instanceof SpaceDestroyedError)) {
+                    Sentry.captureException(error);
+                }
             });
         });
     }
@@ -718,6 +747,28 @@ export class SocketManager implements ZoneEventListener {
         }
     }
 
+    /**
+     * The user acknowledged a message sent by a moderator (typically by clicking "Ok" in the
+     * warning popup): tell the admin so the message is never displayed again.
+     */
+    async handleUserMessageRead(
+        client: PusherWebSocket,
+        userMessageReadMessage: UserMessageReadMessage,
+    ): Promise<void> {
+        const messageId = userMessageReadMessage.id;
+        if (!messageId) {
+            // Messages pushed live by a moderator to an already connected user carry no id.
+            return;
+        }
+        const socketData = client.getUserData();
+        try {
+            await adminService.markUserMessageAsRead(messageId, socketData.userUuid);
+        } catch (e) {
+            Sentry.captureException(`An error occurred on "handleUserMessageRead" ${e}`);
+            console.error(`An error occurred on "handleUserMessageRead" ${e}`);
+        }
+    }
+
     async handleBanPlayerMessage(client: PusherWebSocket, banPlayerMessage: BanPlayerMessage): Promise<void> {
         const socketData = client.getUserData();
         // Ban player only if the user is admin
@@ -756,8 +807,10 @@ export class SocketManager implements ZoneEventListener {
                         room.leave(socket);
                         this.deleteRoomIfEmpty(room);
                     } else {
-                        console.error("Could not find the GameRoom the user is leaving!");
-                        Sentry.captureException("Could not find the GameRoom the user is leaving!");
+                        // The room was already removed from the map. Indeed, there is a race condition
+                        // between the closing if the last user connection to the back and the closing of the room
+                        // connection to the back.
+                        debug("Could not find the GameRoom the user is leaving: %s", socketData.roomId);
                     }
                     //user leave previous room
                     //Client.leave(Client.roomId);
@@ -790,7 +843,10 @@ export class SocketManager implements ZoneEventListener {
                     return { space, spaceName, success: true };
                 } catch (error) {
                     console.error(`Error unregistering user from space ${spaceName}:`, error);
-                    Sentry.captureException(error);
+                    // The space being destroyed is an expected lifecycle event: log it but don't report to Sentry.
+                    if (!(error instanceof SpaceDestroyedError)) {
+                        Sentry.captureException(error);
+                    }
                     return { space, spaceName, success: false };
                 }
             } else {
@@ -827,28 +883,49 @@ export class SocketManager implements ZoneEventListener {
     }
 
     async getOrCreateRoom(roomUrl: string): Promise<PusherRoom> {
-        //check and create new world for a room
-        let room = this.rooms.get(roomUrl);
-        if (room === undefined) {
-            room = new PusherRoom(roomUrl, this);
-            room.backConnectionClosedSignal.addEventListener(
-                "abort",
-                () => {
-                    this.rooms.delete(roomUrl);
-                },
-                { once: true },
-            );
-            await room.init();
-            this.rooms.set(roomUrl, room);
+        const room = this.rooms.get(roomUrl);
+        if (room !== undefined) {
+            return room;
         }
+
+        // Coalesce concurrent creations. init() only awaits microtasks today, but if it ever awaits real I/O,
+        // two callers would otherwise create two rooms for the same URL and leak one listenRoom stream.
+        let creation = this.creatingRooms.get(roomUrl);
+        if (creation === undefined) {
+            creation = this.createRoom(roomUrl).finally(() => this.creatingRooms.delete(roomUrl));
+            this.creatingRooms.set(roomUrl, creation);
+        }
+        return creation;
+    }
+
+    private async createRoom(roomUrl: string): Promise<PusherRoom> {
+        const room = new PusherRoom(roomUrl, this);
+        room.backConnectionClosedSignal.addEventListener(
+            "abort",
+            () => {
+                // Only evict the map entry if it still points to this instance.
+                if (this.rooms.get(roomUrl) === room) {
+                    this.rooms.delete(roomUrl);
+                }
+            },
+            { once: true },
+        );
+        await room.init();
+        this.rooms.set(roomUrl, room);
         return room;
     }
 
-    public getWorlds(): Map<string, PusherRoom> {
+    public getRooms(): Map<string, PusherRoom> {
         return this.rooms;
     }
 
-    public async emitSendUserMessage(userUuid: string, message: string, type: string, roomId: string): Promise<void> {
+    public async emitSendUserMessage(
+        userUuid: string,
+        message: string,
+        type: string,
+        roomId: string,
+        id = "",
+    ): Promise<void> {
         /*const client = this.searchClientByUuid(userUuid);
         if(client) {
             const adminMessage = new SendUserMessage();
@@ -866,6 +943,7 @@ export class SocketManager implements ZoneEventListener {
             roomId,
             recipientUuid: userUuid,
             type,
+            id,
         };
         backConnection.sendAdminMessage(backAdminMessage, (error: unknown) => {
             if (error !== null) {
@@ -1437,6 +1515,16 @@ export class SocketManager implements ZoneEventListener {
         const records = await RecordingService.getRecords(userUuid);
         return {
             recordings: records,
+        };
+    }
+
+    async handleGetRecordingThumbnailsQuery(
+        client: PusherWebSocket,
+        baseFilename: string,
+    ): Promise<GetRecordingThumbnailsAnswer> {
+        const { userUuid } = client.getUserData();
+        return {
+            urls: await RecordingService.getThumbnailUrls(userUuid, baseFilename),
         };
     }
 

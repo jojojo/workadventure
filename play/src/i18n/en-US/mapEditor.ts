@@ -6,6 +6,7 @@ const mapEditor: BaseTranslation = {
         deletePrompt: "This map has been deleted",
         deletePromptSubtitle: "You have been disconnected from this room.",
         deletePromptDetails: "Refreshing will not restore this map because it no longer exists.",
+        editionFailed: "Your change could not be saved and has been undone.",
     },
     sideBar: {
         areaEditor: "Area editor tool",
@@ -74,7 +75,6 @@ const mapEditor: BaseTranslation = {
                 cancel: "Cancel",
                 validate: "Validate",
             },
-            disabled: "Jitsi integration is disabled for this room ❌",
             actionButtonLabel: "Start Jitsi meeting",
         },
         playAudio: {
@@ -120,14 +120,12 @@ const mapEditor: BaseTranslation = {
             description: 'Users on the podium (stage) can speak to all attendees in the matching "Audience" area.',
             nameLabel: "Name",
             namePlaceholder: "MainStage",
-            disabled: "Podium is disabled for this room ❌",
             actionButtonLabel: "Join podium",
         },
         listenerMegaphone: {
             label: "Audience",
             description: "Users in the audience area can hear the speaker on the linked podium.",
             nameLabel: "Podium Name",
-            disabled: "Audience is disabled for this room ❌",
             namePlaceholder: "MySpeakerZone",
             waitingMediaLinkLabel: "Media to display before the live starts",
             waitingMediaLinkPlaceholder: "https://www....",

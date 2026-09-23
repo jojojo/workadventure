@@ -25,8 +25,6 @@
 
     let { user, isMatrixChatEnabled = true }: Props = $props();
 
-    let showRoomCreationInProgress = false;
-
     let { chatId, availabilityStatus, username = "", color, isAdmin, pictureStore } = $derived(user);
 
     /** Tint: local name, Matrix `account_data`, or peer cache — deps keep the row in sync. */
@@ -55,8 +53,6 @@
         }),
     );
 
-    const roomCreationInProgress = gameManager.chatConnection.roomCreationInProgress;
-
     function getNameOfAvailabilityStatus(status: AvailabilityStatus) {
         switch (status) {
             case AvailabilityStatus.ONLINE:
@@ -69,6 +65,8 @@
                 return $LL.chat.status.do_not_disturb();
             case AvailabilityStatus.BACK_IN_A_MOMENT:
                 return $LL.chat.status.back_in_a_moment();
+            case AvailabilityStatus.SOUND_BLOCKED:
+                return $LL.chat.status.sound_blocked();
             case AvailabilityStatus.JITSI:
             case AvailabilityStatus.BBB:
             case AvailabilityStatus.LIVEKIT:
@@ -116,7 +114,7 @@
         <div
             class="wa-chat-item {isAdmin
                 ? 'admin'
-                : 'user'} group/chatItem relative mb-[1px] text-md flex gap-2 flex-row items-center hover:bg-white transition-all hover:bg-opacity-10 hover:rounded hover:!cursor-pointer px-2 py-2 cursor-pointer"
+                : 'user'} group/chatItem relative mb-[1px] text-md flex gap-2 flex-row items-center transition-all hover:bg-white/10 hover:rounded hover:!cursor-pointer px-2 py-2 cursor-pointer"
         >
             <!-- svelte-ignore a11y_click_events_have_key_events -->
             <!-- svelte-ignore a11y_no_static_element_interactions -->
@@ -186,7 +184,7 @@
                         <UserActionButton {user} />
                     {/if}
                 </div>
-                {#if !isMe && !showRoomCreationInProgress && isMatrixChatEnabled}
+                {#if !isMe && isMatrixChatEnabled}
                     <!-- svelte-ignore a11y_no_static_element_interactions -->
                     <div
                         class="relative"
@@ -232,16 +230,12 @@
                             </div>
                         {/if}
                     </div>
-                {:else if $roomCreationInProgress && showRoomCreationInProgress}
-                    <div class="min-h-[30px] text-md flex gap-2 justify-center flex-row items-center p-1">
-                        <IconLoader class="animate-spin" />
-                    </div>
                 {/if}
             </div>
         </div>
     </div>
 
-    <style lang="scss">
+    <style>
         .status {
             background-color: var(--color);
         }

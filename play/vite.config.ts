@@ -4,6 +4,8 @@ import fs from "fs";
 import { defineConfig, loadEnv } from "vite";
 import { svelte, vitePreprocess } from "@sveltejs/vite-plugin-svelte";
 import { sentryVitePlugin } from "@sentry/vite-plugin";
+import { noiseSuppressionAudioWorkletVitePlugin } from "@workadventure/noise-suppression/vite";
+import tailwindcss from "@tailwindcss/vite";
 import Icons from "unplugin-icons/vite";
 import tsconfigPaths from "vite-tsconfig-paths";
 import { nodePolyfills } from "vite-plugin-node-polyfills";
@@ -17,9 +19,14 @@ export default defineConfig(({ mode }) => {
         server: {
             host: "0.0.0.0",
             port: 8080,
-            hmr: {
+            ws: {
                 // workaround for development in docker
                 clientPort: 80,
+                // The dev module graph is served same-origin under the play host (see the
+                // `play-vite` Traefik router in docker-compose.yaml), so pin the HMR websocket to
+                // the Vite host explicitly. Otherwise the client opens the HMR socket against the
+                // play host, which routes to the pusher instead of Vite and HMR fails to connect.
+                host: "front.workadventure.localhost",
             },
             watch: {
                 ignored: ["./src/pusher"],
@@ -31,7 +38,6 @@ export default defineConfig(({ mode }) => {
             rollupOptions: {
                 input: {
                     main: path.resolve(process.cwd(), "index.html"),
-                    pipLayoutTest: path.resolve(process.cwd(), "pip-layout-test.html"),
                 },
                 // external: ["@mediapipe/tasks-vision"],
                 //plugins: [inject({ Buffer: ["buffer/", "Buffer"] })],
@@ -39,7 +45,9 @@ export default defineConfig(({ mode }) => {
             assetsInclude: ["**/*.tflite", "**/*.wasm"],
         },
         plugins: [
+            tailwindcss(),
             mediapipe_workaround(),
+            noiseSuppressionAudioWorkletVitePlugin(),
             nodePolyfills({
                 include: ["events", "buffer"],
                 globals: {
@@ -67,8 +75,9 @@ export default defineConfig(({ mode }) => {
             tsconfigPaths(),
         ],
         resolve: {
+            // Without this, vitest resolves Svelte to its server build and mount() is unavailable.
+            conditions: mode === "test" ? ["browser"] : undefined,
             alias: {
-                phaser: fileURLToPath(new URL("./node_modules/phaser/dist/phaser.esm.js", import.meta.url)),
                 events: "events",
                 "@wa-icons": fileURLToPath(new URL("./src/front/Components/Icons.ts", import.meta.url)),
                 "@wa-modals": fileURLToPath(new URL("./src/front/Components/Modal/modalManager.ts", import.meta.url)),
@@ -85,7 +94,6 @@ export default defineConfig(({ mode }) => {
             },
         },
         optimizeDeps: {
-            include: ["olm"],
             exclude: ["svelte-modals", "@mediapipe/selfie_segmentation"],
             esbuildOptions: {
                 define: {

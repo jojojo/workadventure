@@ -25,7 +25,7 @@ import LL from "../../i18n/i18n-svelte";
 import waLogo from "../Components/images/logo.svg";
 import WebsocketReconnectingToast from "../Components/Toasts/WebsocketReconnectingToast.svelte";
 import { errorScreenStore } from "../Stores/ErrorScreenStore";
-import { toastStore } from "../Stores/ToastStore";
+import { toastStore } from "../Stores/ToastStoreSingleton";
 import { axiosToPusher, axiosWithRetry } from "./AxiosUtils";
 import { Room } from "./Room";
 import { LocalUser } from "./LocalUser";
@@ -42,8 +42,6 @@ const connectionRetryJitterMs = 500;
 const websocketReconnectingToastId = "websocket-reconnecting-toast";
 
 class ConnectionManager {
-    private static readonly TAB_ID_STORAGE_KEY = "workadventure_tab_id";
-
     private localUser!: LocalUser;
 
     private connexionType?: GameConnexionTypes;
@@ -57,8 +55,11 @@ class ConnectionManager {
     private readonly _roomConnectionStream = new Subject<RoomConnection>();
     public readonly roomConnectionStream = this._roomConnectionStream.asObservable();
 
-    // Unique identifier for this browser tab, kept across reloads but remains scoped to the tab context.
-    private readonly _tabId: string = ConnectionManager.getOrCreateTabId();
+    // Unique identifier for this page load, used by the back to kill the stale connection of a previous
+    // RoomConnection from the same tab. Deliberately NOT persisted in sessionStorage: "Duplicate tab" and
+    // "Reopen closed tab" copy sessionStorage, which would give two live pages the same id and make them
+    // kill each other's connection in a loop.
+    private readonly _tabId: string = uuidv4();
 
     get unloading() {
         return this._unloading;
@@ -71,21 +72,6 @@ class ConnectionManager {
             this._unloading = true;
             if (this.reconnectingTimeout) clearTimeout(this.reconnectingTimeout);
         });
-    }
-
-    private static getOrCreateTabId(): string {
-        try {
-            const existingTabId = sessionStorage.getItem(ConnectionManager.TAB_ID_STORAGE_KEY);
-            if (existingTabId) {
-                return existingTabId;
-            }
-
-            const tabId = uuidv4();
-            sessionStorage.setItem(ConnectionManager.TAB_ID_STORAGE_KEY, tabId);
-            return tabId;
-        } catch {
-            return uuidv4();
-        }
     }
 
     /**
@@ -438,6 +424,8 @@ class ConnectionManager {
         lastCommandId?: string,
         retryAttempt = 0,
     ): Promise<OnConnectInterface> {
+        Sentry.setTag("roomId", roomUrl);
+        let pendingConnection: RoomConnection | undefined;
         return new Promise<OnConnectInterface>((resolve, reject) => {
             const connection = new RoomConnection(
                 this.authToken,
@@ -446,6 +434,8 @@ class ConnectionManager {
                 companionTextureId,
                 lastCommandId,
             );
+
+            pendingConnection = connection;
 
             // The websocketErrorStream stream is completed in the RoomConnection. No need to unsubscribe.
             //eslint-disable-next-line rxjs/no-ignored-subscription, svelte/no-ignored-unsubscribe
@@ -516,6 +506,10 @@ class ConnectionManager {
                 });
         }).catch((err) => {
             console.info("connectToRoomSocket => catch => new Promise[OnConnectInterface] => err", err);
+
+            // The failed connection must not outlive this attempt: its WorkAdventureWebSocket would otherwise keep
+            // trying to resume its transport (with the same tab id) next to the fresh connection created by the retry.
+            pendingConnection?.closeConnection();
 
             errorScreenStore.setError(
                 ErrorScreenMessage.fromPartial({

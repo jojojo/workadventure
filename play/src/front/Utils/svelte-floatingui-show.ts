@@ -13,6 +13,7 @@ export const floatingUiComponents = writable(
             props?: WorkAdventureComponentProps;
             action: ContentAction;
             arrowAction: ArrowAction | undefined;
+            zIndex: number;
         }
     >(),
 );
@@ -23,6 +24,7 @@ export const floatingUiComponents = writable(
  * As a result, you don't have to worry about the popup being clipped by the parent element because of "overflow: hidden".
  * @param closeOnClickOutside - when true, the popup closes when the user clicks outside the reference element and the popup content
  * @param onClose - called when the popup is closed (by click outside or by calling the returned close function)
+ * @param zIndex - overrides the default global floating layer when the popup must stay below higher-priority overlays
  */
 export function showFloatingUi(
     referenceNode: Element,
@@ -33,12 +35,20 @@ export function showFloatingUi(
     withArrow = true,
     closeOnClickOutside = false,
     onClose?: () => void,
+    zIndex = 3000,
 ): () => void {
     let arrowNode: HTMLElement | undefined;
     let contentNode: HTMLElement | undefined;
     let cleanup: (() => void) | null = null;
+    let closed = false;
 
     const close = () => {
+        // A single tap fires touchstart then a compatibility mousedown, so the click-outside
+        // handler can call this twice; keep it idempotent so onClose runs at most once.
+        if (closed) {
+            return;
+        }
+        closed = true;
         cleanup?.();
         cleanup = null;
         floatingUiComponents.update((components) => {
@@ -53,22 +63,26 @@ export function showFloatingUi(
         //options = { ...initOptions, ...contentOptions };
         initFloatingUi();
 
-        let clickOutsideHandler: ((e: MouseEvent) => void) | undefined;
+        let clickOutsideHandler: ((e: MouseEvent | TouchEvent) => void) | undefined;
         if (closeOnClickOutside) {
-            clickOutsideHandler = (e: MouseEvent) => {
+            clickOutsideHandler = (e: MouseEvent | TouchEvent) => {
                 const target = e.target as Node;
                 if (referenceNode.contains(target) || (contentNode && contentNode.contains(target))) {
                     return;
                 }
                 close();
             };
+            // Listen to touchstart too: on the game canvas Phaser swallows the compatibility
+            // mousedown, so a mousedown-only listener never fires on touch devices.
             document.addEventListener("mousedown", clickOutsideHandler);
+            document.addEventListener("touchstart", clickOutsideHandler);
         }
 
         return {
             destroy() {
                 if (clickOutsideHandler) {
                     document.removeEventListener("mousedown", clickOutsideHandler);
+                    document.removeEventListener("touchstart", clickOutsideHandler);
                 }
                 deinitFloatingUi();
             },
@@ -92,6 +106,7 @@ export function showFloatingUi(
             props,
             action: contentAction,
             arrowAction: withArrow ? arrowAction : undefined,
+            zIndex,
         });
         return components;
     });

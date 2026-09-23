@@ -84,6 +84,7 @@ import { clientEventsEmitter } from "./ClientEventsEmitter";
 import { getMapStorageClient } from "./MapStorageClient";
 import { emitError, endUserConnectionWithReason } from "./MessageHelpers";
 import { cpuTracker } from "./CpuTracker";
+import { isValidEmote } from "./EmoteValidator";
 
 const debug = Debug("socketmanager");
 
@@ -716,6 +717,7 @@ export class SocketManager {
                 case "leaveSpaceQuery":
                 case "mapStorageJwtQuery":
                 case "getRecordingsQuery":
+                case "getRecordingThumbnailsQuery":
                 case "deleteRecordingQuery":
                 case "getSignedUrlQuery":
                 case "startRecordingQuery":
@@ -967,6 +969,31 @@ export class SocketManager {
         this.cleanupRoomIfEmpty(room);
     }
 
+    /**
+     * Removes many zone listeners at once.
+     *
+     * Compared to calling removeZoneListener in a loop, the room is resolved only once and the room cleanup is
+     * only attempted once. It also lets callers get rid of a Promise.all over an unbounded number of zones
+     * (Promise.all throws a RangeError above 2^21 elements).
+     */
+    async removeZoneListeners(
+        call: RoomSocket,
+        roomId: string,
+        zones: Iterable<{ x: number; y: number }>,
+    ): Promise<void> {
+        const room = await this.roomsPromises.get(roomId);
+        if (!room) {
+            console.warn("In removeZoneListeners, could not find room with id '" + roomId + "'");
+            return;
+        }
+
+        // GameRoom.removeZoneListener is synchronous, so no Promise juggling is needed here.
+        for (const zone of zones) {
+            room.removeZoneListener(call, zone.x, zone.y);
+        }
+        this.cleanupRoomIfEmpty(room);
+    }
+
     async addRoomListener(call: RoomSocket, roomId: string) {
         const room = await this.getOrCreateRoom(roomId);
         if (!room) {
@@ -1050,7 +1077,13 @@ export class SocketManager {
         debug('Room "%s" was forcefully deleted from cache', roomId);
     }
 
-    public async sendAdminMessage(roomId: string, recipientUuid: string, message: string, type: string): Promise<void> {
+    public async sendAdminMessage(
+        roomId: string,
+        recipientUuid: string,
+        message: string,
+        type: string,
+        id = "",
+    ): Promise<void> {
         const room = await this.roomsPromises.get(roomId);
         if (!room) {
             console.error(
@@ -1087,6 +1120,7 @@ export class SocketManager {
                 sendUserMessage: {
                     message,
                     type,
+                    id,
                 },
             });
         }
@@ -1133,6 +1167,8 @@ export class SocketManager {
                 banUserMessage: {
                     message,
                     type: "banned",
+                    // The user is kicked right away, there is nothing to acknowledge.
+                    id: "",
                 },
             });
             endUserConnectionWithReason(recipient.socket, `User was banned: ${message}`);
@@ -1162,6 +1198,8 @@ export class SocketManager {
                 sendUserMessage: {
                     message,
                     type,
+                    // A room-wide message is not stored per user: nothing to acknowledge.
+                    id: "",
                 },
             });
         });
@@ -1211,6 +1249,11 @@ export class SocketManager {
     }
 
     handleEmoteEventMessage(room: GameRoom, user: User, emotePromptMessage: EmotePromptMessage) {
+        // The emote is relayed to every player nearby: refuse anything that is not an emoji.
+        if (!isValidEmote(emotePromptMessage.emote)) {
+            debug("Invalid emote received. Dropping message.");
+            return;
+        }
         room.emitEmoteEvent(user, {
             emote: emotePromptMessage.emote,
             actorUserId: user.id,

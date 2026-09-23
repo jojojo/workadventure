@@ -60,7 +60,7 @@
     }
 
     let {
-        property,
+        property = $bindable(),
         triggerOnActionChoosen = property.trigger === ON_ACTION_TRIGGER_BUTTON,
         triggerOptionActivated = true,
         icon = "resources/icons/icon_link.png",
@@ -840,7 +840,7 @@
     {/snippet}
 </PropertyEditorBase>
 
-<style lang="scss">
+<style>
     .advanced-option {
         display: none;
 

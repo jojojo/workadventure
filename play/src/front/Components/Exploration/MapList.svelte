@@ -1,12 +1,16 @@
 <script lang="ts">
     import { writable } from "svelte/store";
     import { onMount } from "svelte";
+    import { SvelteMap } from "svelte/reactivity";
     import defaultMapImg from "../images/default-map.png";
     import { roomListVisibilityStore } from "../../Stores/ModalStore";
     import { gameManager } from "../../Phaser/Game/GameManager";
     import { scriptUtils } from "../../Api/ScriptUtils";
     import LL from "../../../i18n/i18n-svelte";
     import PopUpContainer from "../PopUp/PopUpContainer.svelte";
+    import Button from "../UI/Button.svelte";
+    import Chip from "../UI/Chip.svelte";
+    import InputSearch from "../Input/InputSearch.svelte";
 
     interface RoomData {
         name: string;
@@ -20,7 +24,7 @@
 
     let search = $state("");
     const currentRoomUrl = gameManager.getCurrentGameScene().room.href;
-    const roomList = new Map<string, RoomData>();
+    const roomList = new SvelteMap<string, RoomData>();
     const roomListFiltered = writable<Map<string, RoomData>>(new Map<string, RoomData>());
     const isFetching = writable<boolean>(false);
     const isMoving = writable<boolean>(false);
@@ -90,13 +94,14 @@
                         <div class="w-full flex flex-col items-start gap-2 px-6">
                             <label for="search" class="text-white pl-2">{$LL.mapEditor.listRoom.searchLabel()}</label>
                             <div class="relative flex grow w-full">
-                                <input
+                                <InputSearch
                                     id="search"
                                     type="text"
+                                    size="lg"
                                     placeholder={$LL.mapEditor.listRoom.searchPlaceholder()}
                                     bind:value={search}
                                     oninput={onUpdateSearch}
-                                    class="grow input-search input-search-lg peer w-full"
+                                    class="grow peer w-full"
                                 />
                                 <svg
                                     class="icon icon-tabler icon-tabler-search stroke-contrast-400 absolute top-0 bottom-0 right-5 m-auto peer-focus:stroke-secondary peer-hover:stroke-secondary-500 transition-all peer-focus:-translate-x-1"
@@ -147,8 +152,10 @@
                                                     src={roomData.thumbnail ?? defaultMapImg}
                                                     alt={roomData.name}
                                                     class="shrink-0 w-80 h-52 shadow-xl bg-white object-cover group-hover:scale-110 transition-all z-0"
-                                                    onerror={() => {
-                                                        this.src = defaultMapImg;
+                                                    onerror={(e) => {
+                                                        const img = e.currentTarget as HTMLImageElement;
+                                                        img.onerror = null;
+                                                        img.src = defaultMapImg;
                                                     }}
                                                 />
                                                 <span
@@ -157,11 +164,12 @@
                                                     {roomData.name}
                                                 </span>
                                                 {#if currentRoomUrl === new URL(roomData.roomUrl, window.location.href).toString()}
-                                                    <span
-                                                        class="chip z-20 chip-sm chip-secondary bg-secondary text-white rounded-[8px] absolute top-3 right-3"
+                                                    <Chip
+                                                        variant="secondary"
+                                                        class="z-20 bg-secondary text-white rounded-[8px] absolute top-3 right-3"
                                                     >
                                                         <div class="px-2">Active</div>
-                                                    </span>
+                                                    </Chip>
                                                 {/if}
                                             </div>
                                             <div class="py-2 text-center">
@@ -187,14 +195,14 @@
             </div>
             {#snippet buttons()}
                 <div class="flex flex-row justify-center w-full">
-                    <button class="btn btn-lg btn-secondary w-1/2 m-auto" onclick={close}>
+                    <Button size="lg" variant="secondary" class="w-1/2 m-auto" onclick={close}>
                         {$LL.mapEditor.listRoom.close()}
-                    </button>
+                    </Button>
                 </div>
             {/snippet}
         </PopUpContainer>
     </div>
 </div>
 
-<style lang="scss">
+<style>
 </style>

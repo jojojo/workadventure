@@ -5,8 +5,12 @@ import {
     type ServerToClientMessage,
 } from "@workadventure/messages";
 import { BehaviorSubject } from "rxjs";
+import * as Sentry from "@sentry/svelte";
+import { v4 as uuidv4 } from "uuid";
 import { NoncedMessageStore } from "../../common/NoncedMessageStore";
+import { WS_CLOSE_CODE_SESSION_DESTROYED } from "../../common/WebSocketCloseCodes";
 import { CLIENT_DISCONNECTION_RETENTION_MS } from "../Enum/EnvironmentVariable";
+import { analyticsClient } from "../Administration/AnalyticsClient";
 
 type WebSocketFactory = (url: string, protocols?: string[]) => WebSocket;
 
@@ -29,6 +33,9 @@ export class WorkAdventureWebSocket {
 
     private readonly url: URL;
     private readonly protocols: string[] | undefined;
+    // Identifies this logical connection to the pusher. Successive RoomConnections of one page share the tab id,
+    // so the pusher needs this to make sure a resumed transport lands on the session it left and not on a newer one.
+    private readonly connectionId = uuidv4();
     private manuallyClosed = false;
     private reconnectAttempted = false;
     private reconnectAttempt = 0;
@@ -36,6 +43,7 @@ export class WorkAdventureWebSocket {
     private reconnectionTimeout: ReturnType<typeof setTimeout> | undefined;
     private nextOutgoingNonce = 1;
     private lastReceivedNonce = 0;
+    private duplicateNonceReported = false;
     private readonly outgoingMessagesStore = new NoncedMessageStore<Uint8Array<ArrayBuffer>>(
         CLIENT_DISCONNECTION_RETENTION_MS,
     );
@@ -104,6 +112,7 @@ export class WorkAdventureWebSocket {
                 this.socket.send(payload);
             }
             this._reconnectingStream.next(false);
+            analyticsClient.socketReconnected();
         }
         const event = new Event("open");
         this.onopen?.call(this, event);
@@ -151,6 +160,20 @@ export class WorkAdventureWebSocket {
             return;
         }
 
+        // The pusher must never send us the same nonce twice: it only replays frames the client reported
+        // as missing. A duplicate means the server-side bookkeeping is broken, and replaying a frame to
+        // the application layer corrupts state (double query answers, ghost users...). Drop it, loudly.
+        if (frame.nonce <= this.lastReceivedNonce) {
+            const message = `Received a duplicate message from the pusher (nonce ${frame.nonce}, last received nonce ${this.lastReceivedNonce}). Ignoring it.`;
+            console.warn(message);
+            if (!this.duplicateNonceReported) {
+                // Duplicates come in bursts (one per drain event), so only report the first one of this connection.
+                this.duplicateNonceReported = true;
+                Sentry.captureMessage(message);
+            }
+            return;
+        }
+
         this.lastReceivedNonce = frame.nonce;
         const messageEvent = new MessageEvent<ServerToClientMessage>("message", {
             data: frame.message,
@@ -165,6 +188,7 @@ export class WorkAdventureWebSocket {
 
     private createSocket(): WebSocket {
         const socketUrl = new URL(this.url.toString());
+        socketUrl.searchParams.set("connectionId", this.connectionId);
         if (this.reconnectAttempted) {
             socketUrl.searchParams.set("lastReceivedNonce", this.lastReceivedNonce.toString());
         }
@@ -179,8 +203,9 @@ export class WorkAdventureWebSocket {
     }
 
     private shouldReconnect(event: CloseEvent): boolean {
-        // Do not reconnect if handshake/auth was refused.
-        if (event.code === 1000 || event.code === 1008) {
+        // Do not reconnect if handshake/auth was refused, or if the pusher destroyed the session: a resume could only
+        // land on a session that is not ours (another connection of the same tab). The caller reconnects from scratch.
+        if (event.code === 1000 || event.code === 1008 || event.code === WS_CLOSE_CODE_SESSION_DESTROYED) {
             return false;
         }
         if (this.reconnectStartedAt !== undefined) {
@@ -220,6 +245,7 @@ export class WorkAdventureWebSocket {
             }
 
             this.socket = this.createSocket();
+            analyticsClient.socketReconnecting();
         }, this.getReconnectDelayMs());
     }
 

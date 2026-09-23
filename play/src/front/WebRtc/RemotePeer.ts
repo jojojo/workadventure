@@ -17,13 +17,22 @@ import { deriveSwitchStore } from "../Stores/InterruptorStore";
 import { volumeProximityDiscussionStore } from "../Stores/PeerStore";
 import { screenShareQualityStore } from "../Stores/ScreenSharingStore";
 import { bandwidthConstrainedPreferenceStore } from "../Stores/BandwidthConstrainedPreferenceStore";
-import type { WebRtcStats } from "../Components/Video/WebRtcStats";
+import type { WebRtcSenderStats, WebRtcStats } from "../Components/Video/WebRtcStats";
 import type { Streamable, StreamCategory, WebRtcStreamable } from "../Space/Streamable";
+import { createMediaStreamTrackPresenceStore } from "../Space/MediaStreamTrackPresenceStore";
 import type { UserSimplePeerInterface } from "./SimplePeer";
 import { isFirefox } from "./DeviceUtils";
 import { P2PMessage, STREAM_STOPPED_MESSAGE_TYPE } from "./P2PMessages/P2PMessage";
-import { subscribeToVideoQualityAnalytics } from "./VideoQualityAnalytics";
-import { createWebRtcStats } from "./WebRtcStatsFactory";
+import { subscribeToOutboundVideoQualityAnalytics, subscribeToVideoQualityAnalytics } from "./VideoQualityAnalytics";
+import { createPeerWebRtcStats } from "./WebRtcStatsFactory";
+import {
+    computeVideoEncoding,
+    DEFAULT_VIEWER_DISPLAY,
+    isViewerDisplayHidden,
+    VIEWER_REPORT_TIMEOUT_MS,
+    type ViewerDisplay,
+} from "./AdaptiveVideoEncoding";
+import { registerLocalEncoderStats } from "./LocalEncoderStats";
 import { selectVideoPreset, type VideoQualitySetting } from "./VideoPresets";
 
 export type PeerStatus = "connecting" | "connected" | "error" | "closed";
@@ -52,11 +61,10 @@ export class RemotePeer extends Peer implements Streamable {
     private closing = false; //this is used to prevent destroy() from being called twice
     private readonly localStreamStoreSubscribe: Unsubscriber;
     private readonly _hasVideo: Readable<boolean>;
-    private readonly _isMuted: Readable<boolean>;
+    private readonly _hasAudio: Readable<boolean>;
     private readonly showVoiceIndicatorStore: ForwardableStore<boolean> = new ForwardableStore(false);
     public readonly flipX = false;
     public readonly muteAudio: Writable<boolean> = writable(false);
-    private readonly _hasAudio: Readable<boolean>;
     public readonly displayMode: "fit" | "cover";
     public readonly usePresentationMode: boolean;
     public readonly displayInPictureInPictureMode = true;
@@ -67,9 +75,21 @@ export class RemotePeer extends Peer implements Streamable {
     public readonly volume: Writable<number>;
     public readonly videoType: StreamCategory;
     public readonly webrtcStats: Readable<WebRtcStats | undefined>;
+    // Health of our own encoder on this connection (what we send to the peer)
+    public readonly senderWebrtcStats: Readable<WebRtcSenderStats | undefined>;
+    private senderAnalyticsUnsubscribe: Unsubscriber | undefined;
+    private unregisterLocalEncoderStats: Unsubscriber | undefined;
     private analyticsStatsUnsubscribe: Unsubscriber | undefined;
     private analyticsRemoteStreamUnsubscribe: (() => void) | undefined;
     private receiverMaxBitrateBps: number | undefined;
+    // Frame rate the remote sender targets for us, as last announced (see EncodingMessage); 0 while it pauses
+    public expectedFps: number | undefined;
+    // What the remote viewer displays of our video, as last reported (see ResolutionMessage)
+    private viewerDisplay: ViewerDisplay = DEFAULT_VIEWER_DISPLAY;
+    private viewerReportedDisplay = false;
+    // Cuts the video if the viewer never tells us how it displays it (see VIEWER_REPORT_TIMEOUT_MS)
+    private viewerReportTimeout: ReturnType<typeof setTimeout> | undefined;
+    private videoEncodingRetryTimeout: ReturnType<typeof setTimeout> | undefined;
     /**
      * Set to true when closeStreamable() is called.
      * When preparingClose is true, we don't stop immediately sending our stream. Instead, we wait for the remote peer to
@@ -147,6 +167,7 @@ export class RemotePeer extends Peer implements Streamable {
         this._statusStore.set("connected");
 
         this._connected = true;
+        this.applyVideoEncoding();
 
         /*const proximityRoomChat = gameManager.getCurrentGameScene().proximityChatRoom;
 
@@ -205,6 +226,10 @@ export class RemotePeer extends Peer implements Streamable {
                     this.updateVideoConstraintsForDisplayDimensions(message.width, message.height, message.maxBitrate);
                     break;
                 }
+                case "encoding": {
+                    this.expectedFps = message.expectedFps;
+                    break;
+                }
                 default: {
                     const _exhaustiveCheck: never = message;
                 }
@@ -228,14 +253,12 @@ export class RemotePeer extends Peer implements Streamable {
 
     private connectTimeout: ReturnType<typeof setTimeout> | undefined;
     private localStream: MediaStream | undefined;
-    private localAudioTrack: MediaStreamTrack | undefined;
-    private localVideoTrack: MediaStreamTrack | undefined;
 
     constructor(
         public user: UserSimplePeerInterface,
         initiator: boolean,
         private space: SpaceInterface,
-        private iceServers: IceServer[],
+        iceServers: IceServer[],
         //private spaceUser: SpaceUserExtended,
         isLocalPeer: boolean,
         private localStreamStore: Readable<LocalStreamStoreValue | undefined>,
@@ -261,14 +284,17 @@ export class RemotePeer extends Peer implements Streamable {
                     rtcpMuxPolicy: "require",
                 }),
             },
-            preferredCodecs: { video: ["video/VP9", "video/VP8"] },
+            preferredCodecs: {
+                // AV1 is deliberately not offered for screen sharing: encoding it in software
+                // pegs the publisher's CPU (see LiveKitRoom.handleScreenShareUpdate).
+                video: ["video/VP9", "video/VP8"],
+            },
             // Firefox works better with trickle ICE enabled
             ...(firefoxBrowser && { trickle: true }),
         };
         super(peerConfig);
 
         this.volume = writable(defaultVolume);
-        this._hasAudio = writable<boolean>(true);
         this.videoType = type;
         this.displayMode = type === "video" ? "cover" : "fit";
         this.usePresentationMode = !(type === "video");
@@ -365,47 +391,9 @@ export class RemotePeer extends Peer implements Streamable {
             undefined,
         );
 
-        this._hasVideo = derived(this._remoteStreamStore, ($remoteStream, set) => {
-            if (!$remoteStream) {
-                set(false);
-                return;
-            }
-            const update = () => set($remoteStream.getVideoTracks().length > 0);
-            update();
-            const onAdd = (e: MediaStreamTrackEvent) => {
-                if (e.track.kind === "video") update();
-            };
-            const onRemove = (e: MediaStreamTrackEvent) => {
-                if (e.track.kind === "video") update();
-            };
-            $remoteStream.addEventListener("addtrack", onAdd);
-            $remoteStream.addEventListener("removetrack", onRemove);
-            return () => {
-                $remoteStream.removeEventListener("addtrack", onAdd);
-                $remoteStream.removeEventListener("removetrack", onRemove);
-            };
-        });
+        this._hasVideo = createMediaStreamTrackPresenceStore(this._remoteStreamStore, "video");
 
-        this._isMuted = derived(this._remoteStreamStore, ($remoteStream, set) => {
-            if (!$remoteStream) {
-                set(true);
-                return;
-            }
-            const update = () => set($remoteStream.getAudioTracks().every((track) => track.enabled === false));
-            update();
-            const onAdd = (e: MediaStreamTrackEvent) => {
-                if (e.track.kind === "audio") update();
-            };
-            const onRemove = (e: MediaStreamTrackEvent) => {
-                if (e.track.kind === "audio") update();
-            };
-            $remoteStream.addEventListener("addtrack", onAdd);
-            $remoteStream.addEventListener("removetrack", onRemove);
-            return () => {
-                $remoteStream.removeEventListener("addtrack", onAdd);
-                $remoteStream.removeEventListener("removetrack", onRemove);
-            };
-        });
+        this._hasAudio = createMediaStreamTrackPresenceStore(this._remoteStreamStore, "audio");
 
         this._isBlocked = derived(this._blockedUsersStore, ($blockedUsersStore) => {
             return $blockedUsersStore.has(this._spaceUserId);
@@ -435,60 +423,100 @@ export class RemotePeer extends Peer implements Streamable {
             this.localStreamStore,
             this.space.isStreamingVideoStore,
         ).subscribe((streamValue) => {
-            if (streamValue === undefined) {
-                if (this.localStream) {
-                    this.removeStream(this.localStream);
+            try {
+                if (streamValue === undefined || streamValue.type !== "success" || !streamValue.stream) {
+                    if (this.localStream) {
+                        this.removeStream(this.localStream);
+                    }
+                    this.localStream = undefined;
+                    return;
                 }
-                this.localStream = undefined;
-                return;
-            }
-            if (streamValue.type === "success") {
+                if (!this.localStream) {
+                    // Because simple-peer wants us to add / remove tracks on one given stream and given the fact
+                    // the localStreamStore serves new streams all the time, we are reconstructing our own
+                    // stable MediaStream inside the RemotePeer where we add / remove tracks on the fly.
+                    this.localStream = new MediaStream();
+                    this.addStream(this.localStream);
+                    console.log("[WebRTC] stream sent successfully", {
+                        userId: this.user.userId,
+                        spaceUserId: this._spaceUserId,
+                        type: this.type,
+                        connectionId: this._connectionId,
+                        audioTracks: streamValue.stream.getAudioTracks().length,
+                        videoTracks: streamValue.stream.getVideoTracks().length,
+                    });
+                }
                 let newVideoTrack: MediaStreamTrack | undefined;
                 let newAudioTrack: MediaStreamTrack | undefined;
+                let oldVideoTrack: MediaStreamTrack | undefined;
+                let oldAudioTrack: MediaStreamTrack | undefined;
                 if (streamValue.stream) {
-                    if (this.localStream) {
-                        newVideoTrack = streamValue.stream.getVideoTracks()[0];
+                    newVideoTrack = RemotePeer.getFirstAndOnly(streamValue.stream.getVideoTracks());
+                    oldVideoTrack = RemotePeer.getFirstAndOnly(this.localStream.getVideoTracks());
 
-                        if (newVideoTrack && this.localVideoTrack && newVideoTrack.id !== this.localVideoTrack.id) {
-                            debug("Replacing video track in P2P connection");
-                            this.replaceTrack(this.localVideoTrack, newVideoTrack, this.localStream);
-                        } else if (newVideoTrack && !this.localVideoTrack) {
-                            debug("Adding video track in P2P connection");
-                            this.addTrack(newVideoTrack, this.localStream);
-                        } else if (this.localVideoTrack && !newVideoTrack) {
-                            debug("Removing video track in P2P connection");
-                            this.removeTrack(this.localVideoTrack, this.localStream);
+                    if (newVideoTrack && oldVideoTrack && newVideoTrack.id !== oldVideoTrack.id) {
+                        debug("Replacing video track in P2P connection");
+                        this.localStream.addTrack(newVideoTrack);
+                        try {
+                            this.replaceTrack(oldVideoTrack, newVideoTrack, this.localStream);
+                        } finally {
+                            this.localStream.removeTrack(oldVideoTrack);
                         }
-
-                        newAudioTrack = streamValue.stream.getAudioTracks()[0];
-
-                        if (newAudioTrack && this.localAudioTrack && newAudioTrack.id !== this.localAudioTrack.id) {
-                            debug("Replacing audio track in P2P connection");
-                            this.replaceTrack(this.localAudioTrack, newAudioTrack, this.localStream);
-                        } else if (newAudioTrack && !this.localAudioTrack) {
-                            debug("Adding audio track in P2P connection");
-                            this.addTrack(newAudioTrack, this.localStream);
-                        } else if (this.localAudioTrack && !newAudioTrack) {
-                            debug("Removing audio track in P2P connection");
-                            this.removeTrack(this.localAudioTrack, this.localStream);
+                        this.applyVideoEncoding();
+                    } else if (newVideoTrack && !oldVideoTrack) {
+                        debug("Adding video track in P2P connection");
+                        this.localStream.addTrack(newVideoTrack);
+                        this.addTrack(newVideoTrack, this.localStream);
+                        // Removing the track unmounted the viewer's tile, which reported 0x0. A re-added track
+                        // reaches the viewer muted and only unmutes on the first frame: keeping the encoder paused
+                        // would stop the viewer from ever mounting a tile and reporting a size again. Start over
+                        // from the default assumption, as on a fresh connection.
+                        this.viewerDisplay = DEFAULT_VIEWER_DISPLAY;
+                        this.viewerReportedDisplay = false;
+                        this.applyVideoEncoding();
+                    } else if (oldVideoTrack && !newVideoTrack) {
+                        debug("Removing video track in P2P connection");
+                        try {
+                            this.removeTrack(oldVideoTrack, this.localStream);
+                        } finally {
+                            this.localStream.removeTrack(oldVideoTrack);
                         }
-
-                        if (!newAudioTrack && !newVideoTrack) {
-                            debug("No tracks left, removing stream in P2P connection");
-                            // No tracks left, remove the stream
-                            this.removeStream(this.localStream);
-                            this.localStream = undefined;
-                        }
-                    } else {
-                        debug("Adding stream in P2P connection");
-                        this.addStream(streamValue.stream);
-                        this.localStream = streamValue.stream;
-                        newAudioTrack = streamValue.stream.getAudioTracks()[0];
-                        newVideoTrack = streamValue.stream.getVideoTracks()[0];
                     }
-                    this.localAudioTrack = newAudioTrack;
-                    this.localVideoTrack = newVideoTrack;
+
+                    newAudioTrack = RemotePeer.getFirstAndOnly(streamValue.stream.getAudioTracks());
+                    oldAudioTrack = RemotePeer.getFirstAndOnly(this.localStream.getAudioTracks());
+
+                    if (newAudioTrack && oldAudioTrack && newAudioTrack.id !== oldAudioTrack.id) {
+                        debug("Replacing audio track in P2P connection");
+                        this.localStream.addTrack(newAudioTrack);
+                        try {
+                            this.replaceTrack(oldAudioTrack, newAudioTrack, this.localStream);
+                        } finally {
+                            this.localStream.removeTrack(oldAudioTrack);
+                        }
+                    } else if (newAudioTrack && !oldAudioTrack) {
+                        debug("Adding audio track in P2P connection");
+                        this.localStream.addTrack(newAudioTrack);
+                        this.addTrack(newAudioTrack, this.localStream);
+                    } else if (oldAudioTrack && !newAudioTrack) {
+                        debug("Removing audio track in P2P connection");
+                        try {
+                            this.removeTrack(oldAudioTrack, this.localStream);
+                        } finally {
+                            this.localStream.removeTrack(oldAudioTrack);
+                        }
+                    }
+
+                    if (!newAudioTrack && !newVideoTrack) {
+                        debug("No tracks left, removing stream in P2P connection");
+                        // No tracks left, remove the stream
+                        this.removeStream(this.localStream);
+                        this.localStream = undefined;
+                    }
                 }
+            } catch (e: unknown) {
+                console.error(e);
+                Sentry.captureException(e);
             }
         });
 
@@ -498,7 +526,25 @@ export class RemotePeer extends Peer implements Streamable {
             this.showVoiceIndicatorStore.forward(showVoiceIndicator);
         }
 
-        this.webrtcStats = createWebRtcStats(this);
+        const stats = createPeerWebRtcStats(this);
+        this.webrtcStats = stats.receiver;
+        this.senderWebrtcStats = stats.sender;
+        // Shown in the local camera / screen share feedback tile
+        this.unregisterLocalEncoderStats = registerLocalEncoderStats(this.type, this.senderWebrtcStats);
+        // Each P2P connection has its own encoder: report it per peer.
+        this.senderAnalyticsUnsubscribe = subscribeToOutboundVideoQualityAnalytics(
+            this.senderWebrtcStats,
+            {
+                streamId: `${this._connectionId}:${this._spaceUserId}:${this.type}:outbound`,
+                streamCategory: this.type,
+                transportType: "P2P",
+                remoteSpaceUserId: this._spaceUserId,
+                remoteUserUuid: this.space.getSpaceUserBySpaceUserId(this._spaceUserId)?.uuid,
+                spaceName: this.space.getName(),
+                connectionId: this._connectionId,
+            },
+            (message) => this.space.emitVideoQualityReport(message),
+        );
     }
 
     private sendBlockMessage(blocking: boolean) {
@@ -549,6 +595,14 @@ export class RemotePeer extends Peer implements Streamable {
      */
     private stream(stream: MediaStream) {
         debug("Receiving stream from peer", this._spaceUserId);
+        console.log("[WebRTC] stream received successfully", {
+            userId: this.user.userId,
+            spaceUserId: this._spaceUserId,
+            type: this.type,
+            connectionId: this._connectionId,
+            audioTracks: stream.getAudioTracks().length,
+            videoTracks: stream.getVideoTracks().length,
+        });
         this._remoteStreamStore.set(stream);
         try {
             this.remoteStream = stream;
@@ -654,8 +708,18 @@ export class RemotePeer extends Peer implements Streamable {
             if (this.closeStreamableTimeout) {
                 clearTimeout(this.closeStreamableTimeout);
             }
+            if (this.videoEncodingRetryTimeout) {
+                clearTimeout(this.videoEncodingRetryTimeout);
+            }
+            if (this.viewerReportTimeout) {
+                clearTimeout(this.viewerReportTimeout);
+            }
 
             this._connected = false;
+            this.senderAnalyticsUnsubscribe?.();
+            this.senderAnalyticsUnsubscribe = undefined;
+            this.unregisterLocalEncoderStats?.();
+            this.unregisterLocalEncoderStats = undefined;
             if (this.closing) {
                 return;
             }
@@ -804,10 +868,6 @@ export class RemotePeer extends Peer implements Streamable {
         return this._hasAudio;
     }
 
-    get isMuted(): Readable<boolean> {
-        return this._isMuted;
-    }
-
     get name(): Readable<string> {
         return this._name;
     }
@@ -870,15 +930,23 @@ export class RemotePeer extends Peer implements Streamable {
      * The logic is throttled to max one call every 250ms.
      */
     private _setDimensions = throttle(250, (width: number, height: number): void => {
+        if (this.destroyed || this.closing) {
+            // The tile of a closing peer unmounts and reports itself hidden: nothing to tell anymore.
+            return;
+        }
         try {
-            const preset = this.getPresetForDimensions(width, height);
+            // 0x0: we do not display the video, the sender stops encoding for us
+            const hidden = width <= 0 || height <= 0;
+            debug(
+                `Adaptive video: reporting our display of ${this._spaceUserId} as ${hidden ? "hidden" : `${width}x${height}`}`,
+            );
             this.write(
                 new Buffer(
                     JSON.stringify({
                         type: "resolution",
-                        width: width,
-                        height: height,
-                        maxBitrate: preset.bitrate,
+                        width: hidden ? 0 : width,
+                        height: hidden ? 0 : height,
+                        maxBitrate: hidden ? 0 : this.getPresetForDimensions(width, height).bitrate,
                     } satisfies P2PMessage),
                 ),
             );
@@ -888,68 +956,139 @@ export class RemotePeer extends Peer implements Streamable {
     });
 
     /**
-     * Updates video constraints based on the preset information from the remote peer.
-     * This adjusts bitrate and resolution to match what's actually displayed.
+     * Called when the remote viewer reports the size it displays our video in (0x0: not displayed).
      */
     private updateVideoConstraintsForDisplayDimensions(width: number, height: number, bandwidthLimit: number): void {
+        this.viewerDisplay = { width, height, maxBitrate: bandwidthLimit };
+        this.viewerReportedDisplay = true;
+        if (this.viewerReportTimeout) {
+            clearTimeout(this.viewerReportTimeout);
+            this.viewerReportTimeout = undefined;
+        }
+        this.applyVideoEncoding();
+    }
+
+    /**
+     * A viewer that displays our video reports its tile size within a second of receiving the stream. Without any
+     * report (hidden tab, offscreen tile, unknown client), stop sending video rather than keep the default stream.
+     */
+    private cutVideoUnlessViewerReports(): void {
+        if (this.viewerReportedDisplay || this.viewerReportTimeout) {
+            return;
+        }
+        this.viewerReportTimeout = setTimeout(() => {
+            this.viewerReportTimeout = undefined;
+            if (this.viewerReportedDisplay) {
+                return;
+            }
+            debug(`Adaptive video: no display report from ${this._spaceUserId} after ${VIEWER_REPORT_TIMEOUT_MS}ms`);
+            this.viewerDisplay = { width: 0, height: 0, maxBitrate: 0 };
+            this.applyVideoEncoding();
+        }, VIEWER_REPORT_TIMEOUT_MS);
+    }
+
+    /**
+     * Encodes for what the viewer displays: scaled down to its tile, and not at all while the tile is hidden.
+     * Called when the connection opens, when our video track changes and when the viewer reports its tile.
+     */
+    private applyVideoEncoding(): void {
         const pc = this._pc as RTCPeerConnection | undefined;
-        if (!pc) {
-            console.warn("Adaptive video: no RTCPeerConnection available");
+        const videoSender = pc?.getSenders().find((s) => s.track?.kind === "video");
+        if (!videoSender?.track) {
             return;
         }
 
-        // Let's find the best presets
-        const preset = this.getPresetForDimensions(width, height);
-
-        const videoSender = pc.getSenders().find((s) => s.track?.kind === "video");
-        if (!videoSender || !videoSender.track) {
-            console.warn("Adaptive video: no video sender found");
-            return;
-        }
-
-        // Calculate scale factor based on current capture resolution vs target preset
-        const settings = videoSender.track.getSettings();
-        const currentWidth = settings.width || 1280;
-        const currentHeight = settings.height || 720;
-        const scaleFactor = Math.max(1, Math.min(currentWidth / width, currentHeight / height));
-
-        // Get current parameters and modify encoding settings
         const parameters = videoSender.getParameters();
         if (!parameters.encodings || parameters.encodings.length === 0) {
-            console.warn("Adaptive video: no encodings found in parameters");
+            this.retryVideoEncodingLater();
             return;
         }
 
-        // Apply new constraints
+        this.cutVideoUnlessViewerReports();
+
+        const settings = videoSender.track.getSettings();
+        const encoding = computeVideoEncoding(
+            this.viewerDisplay,
+            { width: settings.width || 1280, height: settings.height || 720 },
+            (width, height) => this.getPresetForDimensions(width, height),
+        );
+
         if (this.type === "screenSharing") {
             parameters.degradationPreference = get(bandwidthConstrainedPreferenceStore);
+        } else if (isFirefox()) {
+            // WORKAROUND for Firefox bug https://bugzilla.mozilla.org/show_bug.cgi?id=2073405, to remove with
+            // evenScaleFactor once the bug is fixed. The scale above is computed for the capture size so that the
+            // frame stays even-sized. Under congestion or CPU overuse, Firefox would otherwise shrink the frame it
+            // feeds the encoder first, and our scale would then land on an odd size: make it drop frames instead.
+            parameters.degradationPreference = "maintain-resolution";
         }
-        parameters.encodings[0].maxBitrate = Math.min(preset.bitrate, bandwidthLimit);
-        parameters.encodings[0].maxFramerate = preset.fps;
-
-        if (scaleFactor > 1) {
-            parameters.encodings[0].scaleResolutionDownBy = scaleFactor;
-            debug(
-                `Adaptive video: scaling down ${currentWidth}x${currentHeight} by ${scaleFactor.toFixed(
-                    2,
-                )}x to ~${Math.round(currentWidth / scaleFactor)}x${Math.round(currentHeight / scaleFactor)}`,
-            );
-        } else {
-            delete parameters.encodings[0].scaleResolutionDownBy;
-            debug("Adaptive video: no scaling needed, using full resolution");
+        parameters.encodings[0].active = encoding.active;
+        if (encoding.active) {
+            parameters.encodings[0].maxBitrate = encoding.maxBitrate;
+            parameters.encodings[0].maxFramerate = encoding.maxFramerate;
+            if (encoding.scaleResolutionDownBy !== undefined) {
+                parameters.encodings[0].scaleResolutionDownBy = encoding.scaleResolutionDownBy;
+            } else {
+                delete parameters.encodings[0].scaleResolutionDownBy;
+            }
         }
 
         // Apply parameters transactionally
         videoSender
             .setParameters(parameters)
             .then(() => {
+                this.videoEncodingRetries = 0;
+                this.announceExpectedFps(encoding.active ? encoding.maxFramerate : 0, settings.frameRate);
                 debug(
-                    `Adaptive video: successfully applied resolution ${width}x${height} @ ${preset.bitrate}bps, ${preset.fps}fps`,
+                    isViewerDisplayHidden(this.viewerDisplay)
+                        ? "Adaptive video: viewer does not display our video, encoder paused"
+                        : `Adaptive video: applied ${this.viewerDisplay.width}x${this.viewerDisplay.height} @ ${encoding.maxBitrate}bps, ${encoding.maxFramerate}fps, scale ${encoding.scaleResolutionDownBy ?? 1}`,
                 );
             })
-            .catch((err) => {
+            .catch((err: unknown) => {
+                if (err instanceof DOMException && err.name === "InvalidStateError") {
+                    // Chrome rejects setParameters() until the first negotiation of the sender is done.
+                    this.retryVideoEncodingLater();
+                    return;
+                }
                 console.error("Adaptive video: failed to set parameters", err);
             });
+    }
+
+    /**
+     * Tells the viewer the frame rate to expect from us, so that it does not count our deliberate changes
+     * (pause, tile resized) as an unstable connection.
+     */
+    private announceExpectedFps(maxFramerate: number | undefined, captureFrameRate: number | undefined): void {
+        if (this.destroyed || this.closing) {
+            return;
+        }
+        const expectedFps = Math.min(maxFramerate ?? captureFrameRate ?? 0, captureFrameRate ?? Infinity);
+        try {
+            this.write(
+                new Buffer(
+                    JSON.stringify({
+                        type: "encoding",
+                        expectedFps: Number.isFinite(expectedFps) ? expectedFps : 0,
+                    } satisfies P2PMessage),
+                ),
+            );
+        } catch (e) {
+            console.error("Failed to send encoding message to peer", e);
+        }
+    }
+
+    private videoEncodingRetries = 0;
+
+    private retryVideoEncodingLater(): void {
+        if (this.videoEncodingRetryTimeout || this.videoEncodingRetries >= 5) {
+            return;
+        }
+        this.videoEncodingRetries++;
+        this.videoEncodingRetryTimeout = setTimeout(() => {
+            this.videoEncodingRetryTimeout = undefined;
+            this.applyVideoEncoding();
+        }, 1000);
     }
 
     private getLocalQualitySetting(): VideoQualitySetting {
@@ -958,5 +1097,17 @@ export class RemotePeer extends Peer implements Streamable {
 
     private getPresetForDimensions(width: number, height: number): { bitrate: number; fps: number } {
         return selectVideoPreset(height, width, this.type === "screenSharing", this.getLocalQualitySetting());
+    }
+
+    /**
+     * Returns the item [0] from the array passed in parameter.
+     * If the array is empty, returns undefined.
+     * If the array contains more than one item, throw an Error.
+     */
+    private static getFirstAndOnly<T>(array: T[]): T | undefined {
+        if (array.length > 1) {
+            throw new Error("Expected array to contain at most one item, but it contained multiple items.");
+        }
+        return array[0];
     }
 }

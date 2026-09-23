@@ -45,6 +45,11 @@ const actionbar: DeepPartial<Translation["actionbar"]> = {
         noSoundWarning:
             "No se detecta sonido de tu micrófono. Puede haber un problema; prueba a cambiar de micrófono en la configuración.",
         noSoundWarningPressEnter: "No se detecta sonido de tu micrófono. Pulsa Enter para abrir la configuración.",
+        advancedNoiseReduction: "Reducción de ruido avanzada",
+        noiseSuppressionInitializing: "Inicializando la supresión de ruido personalizada...",
+        noiseSuppressionUnsupported: "Este navegador no puede ejecutar la supresión de ruido personalizada.",
+        noiseSuppressionError:
+            "La supresión de ruido personalizada falló. Volviendo a la supresión de ruido nativa del navegador.",
         openSettings: "Abrir configuración",
         ignore: "Ignorar",
     },
@@ -69,6 +74,7 @@ const actionbar: DeepPartial<Translation["actionbar"]> = {
         SPEAKER: "En una reunión",
         LIVEKIT: "En una reunión",
         LISTENER: "En una reunión",
+        SOUND_BLOCKED: "Sonido bloqueado",
     },
     subtitle: {
         camera: "Cámara",

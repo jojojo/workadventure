@@ -1,3 +1,4 @@
+import * as Phaser from "phaser";
 import type { AreaData, AtLeast, LockableAreaPropertyData } from "@workadventure/map-editor";
 import { deepmergeIntoCustom, type DeepMergeLeafURI } from "deepmerge-ts";
 import { get } from "svelte/store";
@@ -9,12 +10,16 @@ import type { AreasManager } from "../Game/GameMap/AreasManager";
 import { setAreaPropertyVariable } from "../../Stores/AreaPropertyVariablesStore";
 import { touchScreenManager } from "../../Touch/TouchScreenManager";
 
+import Rectangle = Phaser.GameObjects.Rectangle;
+import Collider = Phaser.Physics.Arcade.Collider;
+import StaticBody = Phaser.Physics.Arcade.StaticBody;
+
 const mergeInto = deepmergeIntoCustom<unknown, { DeepMergeArraysURI: DeepMergeLeafURI }>({
     mergeArrays: false,
 });
 
-export class Area extends Phaser.GameObjects.Rectangle {
-    private areaCollider: Phaser.Physics.Arcade.Collider | undefined = undefined;
+export class Area extends Rectangle {
+    private areaCollider: Collider | undefined = undefined;
     private userHasCollideWithArea = false;
     private highlightTimeOut: undefined | NodeJS.Timeout = undefined;
     private collideTimeOut: undefined | NodeJS.Timeout = undefined;
@@ -53,7 +58,7 @@ export class Area extends Phaser.GameObjects.Rectangle {
         this.setSize(this.areaData.width, this.areaData.height + 1);
         this.updateDisplayOrigin();
         this.update();
-        const areaStaticBody = this.body as Phaser.Physics.Arcade.StaticBody;
+        const areaStaticBody = this.body as StaticBody;
         areaStaticBody.updateFromGameObject();
     }
 
@@ -152,7 +157,7 @@ export class Area extends Phaser.GameObjects.Rectangle {
         });
     }
 
-    private displayWarningMessageOnCollide() {
+    public displayBlockedWarningMessage() {
         // Get the reason why the area is blocked
         let message: string = get(LL).area.noAccess(); // Default message
         const messageId = `area-blocked-${this.areaData.id}`;
@@ -231,14 +236,14 @@ export class Area extends Phaser.GameObjects.Rectangle {
                     this.highLightArea();
                 }
 
-                this.displayWarningMessageOnCollide();
+                this.displayBlockedWarningMessage();
                 this.collideTimeOut = setTimeout(() => (this.userHasCollideWithArea = false), 3000);
             }
         } else if (!this.userHasCollideWithArea) {
             // Fallback if areasManager is not available
             this.userHasCollideWithArea = true;
             this.highLightArea();
-            this.displayWarningMessageOnCollide();
+            this.displayBlockedWarningMessage();
             this.collideTimeOut = setTimeout(() => (this.userHasCollideWithArea = false), 3000);
         }
     }

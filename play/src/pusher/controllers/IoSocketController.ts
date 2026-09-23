@@ -24,7 +24,11 @@ import { isAdminMessageInterface } from "../models/Websocket/Admin/AdminMessages
 import { adminService } from "../services/AdminService";
 import type { ConnectingSocketData, SpaceName } from "../models/Websocket/SocketData";
 import { ClientAbortError } from "../models/ClientAbortError";
-import { ClientNotPartOfSpaceError, UserAlreadyAddedInSpaceError } from "../models/SpaceValidationErrors";
+import {
+    ClientNotPartOfSpaceError,
+    SpaceDestroyedError,
+    UserAlreadyAddedInSpaceError,
+} from "../models/SpaceValidationErrors";
 import { videoQualityAnalyticsQueue } from "../services/VideoQualityAnalyticsQueue";
 import { PusherRoomSocketController } from "../services/PusherRoomSocketController";
 import { AdminWebSocketBackpressureWriter } from "../services/AdminWebSocketBackpressureWriter";
@@ -222,6 +226,7 @@ export class IoSocketController {
                                         messageToEmit.message,
                                         messageToEmit.type,
                                         roomId,
+                                        messageToEmit.id !== undefined ? String(messageToEmit.id) : "",
                                     )
                                     .catch((error) => {
                                         Sentry.captureException(error);
@@ -270,6 +275,7 @@ export class IoSocketController {
                 cameraState: z.string().transform((val) => val === "true"),
                 microphoneState: z.string().transform((val) => val === "true"),
                 tabId: z.string(),
+                connectionId: z.string().optional(),
             }),
             upgrade: async ({ query, request, isAborted, upgrade, reject }) => {
                 debug(
@@ -461,6 +467,7 @@ export class IoSocketController {
                         microphoneState,
                         cameraState,
                         tabId: query.tabId,
+                        connectionId: query.connectionId,
                         attendeesState: false,
                         queryAbortControllers: new Map<number, AbortController>(),
                         canRecord: userData.canRecord ?? false,
@@ -513,7 +520,13 @@ export class IoSocketController {
                     socket.send({
                         message: {
                             $case: "sendUserMessage",
-                            sendUserMessage: loginMessage,
+                            sendUserMessage: {
+                                type: loginMessage.type,
+                                message: loginMessage.message,
+                                // The admin identifies its messages with an integer: normalize it,
+                                // the client sends it back as-is to acknowledge the message.
+                                id: loginMessage.id !== undefined ? String(loginMessage.id) : "",
+                            },
                         },
                     });
                 }
@@ -583,15 +596,16 @@ export class IoSocketController {
             },
             reconnect: (socket) => {
                 const userData = socket.getUserData();
-                const worlds = socketManager.getWorlds();
+                const rooms = socketManager.getRooms();
 
-                if (!worlds.has(userData.roomId)) {
+                if (!rooms.has(userData.roomId)) {
                     Sentry.captureException(
-                        `World ${userData.roomId} not found for socket ${userData.userUuid} (${userData.name}) while reconnecting, closing the connection`,
+                        `Room ${userData.roomId} not found for socket ${userData.userUuid} (${userData.name}) while reconnecting, closing the connection`,
                     );
                     console.error(
-                        `World ${userData.roomId} not found for socket ${userData.userUuid} (${userData.name}) while reconnecting, closing the connection`,
+                        `Room ${userData.roomId} not found for socket ${userData.userUuid} (${userData.name}) while reconnecting, closing the connection`,
                     );
+                    socketManager.cleanupSocket(socket);
                     socket.end(1008, "Room no longer exists");
                 }
             },
@@ -809,6 +823,20 @@ export class IoSocketController {
                                             this.sendAnswerMessage(socket, answerMessage);
                                             break;
                                         }
+                                        case "getRecordingThumbnailsQuery": {
+                                            const getRecordingThumbnailsAnswer =
+                                                await socketManager.handleGetRecordingThumbnailsQuery(
+                                                    socket,
+                                                    message.message.queryMessage.query.getRecordingThumbnailsQuery
+                                                        .baseFilename,
+                                                );
+                                            answerMessage.answer = {
+                                                $case: "getRecordingThumbnailsAnswer",
+                                                getRecordingThumbnailsAnswer,
+                                            };
+                                            this.sendAnswerMessage(socket, answerMessage);
+                                            break;
+                                        }
                                         case "deleteRecordingQuery": {
                                             const deleteRecordingAnswer =
                                                 await socketManager.handleDeleteRecordingQuery(
@@ -997,8 +1025,12 @@ export class IoSocketController {
                                             error,
                                         );
 
-                                        // Expected join-space validation error: do not send to Sentry.
-                                        if (!(err instanceof UserAlreadyAddedInSpaceError)) {
+                                        // Expected join-space validation errors and space-destroyed cancellations:
+                                        // do not send to Sentry (already logged above).
+                                        if (
+                                            !(err instanceof UserAlreadyAddedInSpaceError) &&
+                                            !(err instanceof SpaceDestroyedError)
+                                        ) {
                                             Sentry.captureException(err, {
                                                 extra: {
                                                     queryType,
@@ -1085,6 +1117,13 @@ export class IoSocketController {
                                 }`;
 
                                 await socketManager.handleBackEvent(socket, message.message.backEvent);
+                                break;
+                            }
+                            case "userMessageReadMessage": {
+                                await socketManager.handleUserMessageRead(
+                                    socket,
+                                    message.message.userMessageReadMessage,
+                                );
                                 break;
                             }
                             case "videoQualityReportMessage": {

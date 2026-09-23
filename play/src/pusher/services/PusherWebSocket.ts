@@ -20,6 +20,7 @@ export class PusherWebSocket {
 
     private socket: RawSocket;
     private _isDisconnecting = false;
+    private _isPermanentlyDisconnected = false;
     private keepAliveInterval: NodeJS.Timeout | undefined;
     private batchTimeout: NodeJS.Timeout | undefined;
     private pingBackpressured = false;
@@ -29,6 +30,7 @@ export class PusherWebSocket {
     };
     private nextOutgoingNonce = 1;
     private lastSentNonce = 0;
+    private waitingForDrain = false;
     private lastReceivedNonce = 0;
     private transportAvailable = true;
     private readonly outgoingMessagesStore = new NoncedMessageStore<Uint8Array<ArrayBuffer>>(
@@ -53,7 +55,7 @@ export class PusherWebSocket {
         this.nextOutgoingNonce += 1;
         this.outgoingMessagesStore.add(nonce, payloadWithNonce);
 
-        if (!this.transportAvailable || nonce > this.lastSentNonce + 1) {
+        if (!this.transportAvailable || this.waitingForDrain || nonce > this.lastSentNonce + 1) {
             return 0;
         }
 
@@ -64,6 +66,7 @@ export class PusherWebSocket {
         if (!this.transportAvailable) {
             return;
         }
+        this.waitingForDrain = false;
         for (const { nonce, payload } of this.outgoingMessagesStore.getAfter(this.lastSentNonce)) {
             if (this.sendStoredPayload(nonce, payload) !== 1) {
                 return;
@@ -142,6 +145,22 @@ export class PusherWebSocket {
         return this._isDisconnecting;
     }
 
+    /**
+     * Marks this logical connection as gone for good: the transport closed and no reconnect retry
+     * will replace it (either a normal client close, or the reconnection retention window expired).
+     */
+    public markPermanentlyDisconnected(): void {
+        this._isPermanentlyDisconnected = true;
+    }
+
+    /**
+     * Returns true once the connection can no longer be revived by a reconnecting transport
+     * (see replaceSocket). Useful to tell an expected teardown apart from an unexpected drop.
+     */
+    public isPermanentlyDisconnected(): boolean {
+        return this._isPermanentlyDisconnected;
+    }
+
     public startDisconnecting(): boolean {
         if (this._isDisconnecting) {
             return false;
@@ -211,6 +230,14 @@ export class PusherWebSocket {
                 },
             );
             newSocket.end(1008, "Cannot replace socket: user UUID mismatch");
+            return false;
+        }
+
+        if (previousSocketData.connectionId !== newSocketData.connectionId) {
+            console.warn(
+                `Cannot replace WebSocket transport for user ${socketData.userUuid} on tab ${socketData.tabId}: connection id mismatch (previous=${previousSocketData.connectionId}, new=${newSocketData.connectionId})`,
+            );
+            newSocket.end(1008, "Cannot replace socket: connection id mismatch");
             return false;
         }
 
@@ -284,8 +311,15 @@ export class PusherWebSocket {
         }
 
         const sendStatus = this.socket.send(payload, true);
-        if (sendStatus === 1) {
+        // uWS send: 1 = written, 0 = buffered as backpressure (uWS still delivers it, in order), 2 = dropped
+        // because maxBackpressure was reached. Only a dropped message may be sent again on drain: resending
+        // a buffered one delivers it twice to the client.
+        if (sendStatus !== 2) {
             this.lastSentNonce = nonce;
+        }
+        if (sendStatus !== 1) {
+            // Stop feeding uWS until it drains, otherwise we pile up past maxBackpressure and get dropped.
+            this.waitingForDrain = true;
         }
         return sendStatus;
     }

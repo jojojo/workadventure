@@ -24,7 +24,7 @@
         class={`absolute bottom-0 right-0 p-2 text-[0.6rem] @[20rem]/videomediabox:text-[0.75rem] rounded-br-md rounded-tl-md select-text ${statsColorClass}`}
     >
         <table class="m-0 p-0 border-hidden">
-            <tbody>
+            <tbody class="m-0 p-0 border-hidden">
                 <tr>
                     <td>Jitter:</td><td>{Math.round(webRtcStats.jitter * 1000)} ms</td>
                 </tr>
@@ -32,14 +32,23 @@
                     <td>Bandwidth:</td><td>{Math.round((webRtcStats.bandwidth / 1000) * 8)} kbps</td>
                 </tr>
                 <tr>
-                    <td>FPS:</td><td>{Math.round(webRtcStats.fps)}</td>
+                    <td>FPS:</td><td
+                        >{webRtcStats.expectedFps === 0 ? "paused by sender" : Math.round(webRtcStats.fps)}</td
+                    >
                 </tr>
+                {#if webRtcStats.expectedFps}
+                    <tr>
+                        <td>Expected FPS:</td><td>{Math.round(webRtcStats.expectedFps)}</td>
+                    </tr>
+                {/if}
                 <tr>
                     <td>FPS Variability:</td>
                     <td>{fpsStdDevDisplay}</td>
                 </tr>
                 <tr>
-                    <td>Resolution:</td><td>{webRtcStats.frameWidth}x{webRtcStats.frameHeight}</td>
+                    <td>Resolution:</td><td data-testid="resolution"
+                        >{webRtcStats.frameWidth}x{webRtcStats.frameHeight}</td
+                    >
                 </tr>
                 <tr>
                     <td>Codec:</td><td>{webRtcStats.mimeType}</td>
@@ -51,3 +60,9 @@
         </table>
     </div>
 {/if}
+
+<style>
+    td {
+        padding: 0;
+    }
+</style>

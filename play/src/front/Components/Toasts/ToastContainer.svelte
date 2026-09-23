@@ -2,7 +2,7 @@
     import type { Snippet } from "svelte";
     import { fly } from "svelte/transition";
     import { onDestroy, onMount } from "svelte";
-    import { toastStore } from "../../Stores/ToastStore";
+    import { toastStore } from "../../Stores/ToastStoreSingleton";
 
     interface Props {
         extraClasses: string;
@@ -81,7 +81,7 @@
     </div>
 </div>
 
-<style lang="scss">
+<style>
     .progress-bar-container {
         position: absolute;
         top: 0;

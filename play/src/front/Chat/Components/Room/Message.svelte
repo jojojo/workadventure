@@ -9,6 +9,7 @@
     } from "../../Connection/ChatConnection";
     import type { WorkAdventureComponent } from "../../../../types/component";
     import LL, { locale } from "../../../../i18n/i18n-svelte";
+    import AvatarBox from "../../../Components/UI/Avatar.svelte";
     import Avatar from "../Avatar.svelte";
 
     import { resolveChatUserColor } from "../../Connection/Matrix/services/WaMatrixProfileService";
@@ -39,7 +40,6 @@
         membersForMessageAvatars?: Readable<readonly ChatRoomMember[]>;
         /** Root message reply preview; hide inside an open thread timeline (main room only). */
         showThreadSummary?: boolean;
-        updateMessageBody?: (event: { id: string }) => void;
     }
 
     let {
@@ -48,7 +48,6 @@
         showHeader = true,
         membersForMessageAvatars = undefined,
         showThreadSummary = true,
-        updateMessageBody = () => {},
     }: Props = $props();
 
     let messageRef: HTMLDivElement | undefined = $state();
@@ -66,12 +65,6 @@
         isModified,
         reactions,
     } = $derived(message);
-
-    const handleUpdateMessageBody = () => {
-        updateMessageBody({
-            id: message.id,
-        });
-    };
 
     let messageFromSystem = $derived(type === "incoming" || type === "outcoming");
 
@@ -151,14 +144,14 @@
             : 'justify-start pl-3'}"
     >
         {#if (!isMyMessage || isQuotedMessage) && sender !== undefined && replyDepth === 0 && showHeader}
-            <div class="avatar overflow-hidden mt-4 shrink-0">
+            <AvatarBox class="overflow-hidden mt-4 shrink-0">
                 <Avatar
                     compact
                     pictureStore={messageAvatarPictureStore}
                     fallbackName={sender?.username}
                     color={messageSenderAvatarColor}
                 />
-            </div>
+            </AvatarBox>
         {/if}
 
         <div class="flex flex-col justify-end max-w-full {replyDepth === 0 && !showHeader ? 'ml-12' : ''}">
@@ -213,7 +206,7 @@
                     {/if}
 
                     {@const MessageComponent = messageType[type]}
-                    <MessageComponent updateMessageBody={handleUpdateMessageBody} {content} />
+                    <MessageComponent {content} />
 
                     {#if $reactionsWithUsers.length > 0}
                         <MessageReactions

@@ -7,6 +7,7 @@ const mapEditor: DeepPartial<Translation["mapEditor"]> = {
         deletePrompt: "Questa mappa è stata eliminata",
         deletePromptSubtitle: "Sei stato disconnesso da questa stanza.",
         deletePromptDetails: "L'aggiornamento non ripristinerà questa mappa perché non esiste più.",
+        editionFailed: "Non è stato possibile salvare la tua modifica ed è stata annullata.",
     },
     sideBar: {
         areaEditor: "Strumento di modifica dell'area",
@@ -50,7 +51,6 @@ const mapEditor: DeepPartial<Translation["mapEditor"]> = {
             durationLabel: "Durata transizione (ms)",
         },
         jitsiRoomProperty: {
-            disabled: "Jitsi integration is disabled for this room ❌",
             label: "Stanza Jitsi",
             description: "Avvia una riunione Jitsi all'ingresso.",
             roomNameLabel: "Nome Stanza",
@@ -124,14 +124,12 @@ const mapEditor: DeepPartial<Translation["mapEditor"]> = {
                 'Gli utenti sul podio (palco) possono parlare a tutti i partecipanti nell\'area "Pubblico" corrispondente.',
             nameLabel: "Nome",
             namePlaceholder: "PalcoPrincipale",
-            disabled: "Il podio è disabilitato per questa stanza ❌",
             actionButtonLabel: "Unisciti al podio",
         },
         listenerMegaphone: {
             label: "Pubblico",
             description: "Gli utenti nell'area del pubblico possono sentire l'oratore sul podio collegato.",
             nameLabel: "Nome del Podio",
-            disabled: "Il pubblico è disabilitato per questa stanza ❌",
             namePlaceholder: "MiaZonaAltoparlante",
             waitingMediaLinkLabel: "Contenuto da mostrare prima dell’inizio della diretta",
             waitingMediaLinkPlaceholder: "https://www… (inserisci l’URL del contenuto)",

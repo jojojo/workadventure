@@ -1,6 +1,7 @@
 <script lang="ts">
-    //STYLE: Classes factorizing tailwind's ones are defined in video-ui.scss
+    //STYLE: Classes factorizing tailwind's ones are defined in video-ui.css
     import { getContext, onDestroy, onMount } from "svelte";
+    import * as Sentry from "@sentry/svelte";
     import type { Subscription } from "rxjs";
     import SoundMeterWidget from "../SoundMeterWidget.svelte";
     import { highlightedEmbedScreen } from "../../Stores/HighlightedEmbedScreenStore";
@@ -16,11 +17,13 @@
     import { requestedScreenSharingState } from "../../Stores/ScreenSharingStore";
     import { blackListManager } from "../../WebRtc/BlackListManager";
     import { activePictureInPictureStore } from "../../Stores/PeerStore";
+    import { blocker } from "../../Utils/screenBlocker";
     import ActionMediaBox from "./ActionMediaBox.svelte";
     import UserName from "./UserName.svelte";
     import UpDownChevron from "./UpDownChevron.svelte";
     import CenteredVideo from "./CenteredVideo.svelte";
     import WebRtcStats from "./WebRtcStatsBox.svelte";
+    import EncoderStatsBox from "./EncoderStatsBox.svelte";
     import { IconArrowsMinimize, IconArrowsMaximize, IconMicrophoneOff } from "@wa-icons";
 
     interface Props {
@@ -46,6 +49,7 @@
 
     let extendedSpaceUser = $derived(videoBox.spaceUser);
     let megaphoneState = $derived(extendedSpaceUser?.reactiveUser.megaphoneState);
+    let microphoneStateStore = $derived(extendedSpaceUser?.reactiveUser.microphoneState);
 
     let pictureStore = $derived(extendedSpaceUser?.pictureStore);
 
@@ -55,14 +59,20 @@
 
     let hasVideoStore = $derived(streamable?.hasVideo);
     let hasAudioStore = $derived(streamable?.hasAudio);
-    let isMutedStore = $derived(streamable?.isMuted);
     let volumeMeterStore = $derived(streamable?.volumeStore);
     let showVoiceIndicatorStore = $derived(streamable?.showVoiceIndicator);
     let isBlockedStore = $derived(streamable?.media?.isBlocked);
+    let mediaStreamStore = $derived(
+        streamable?.media.type === "webrtc" || streamable?.media.type === "livekit"
+            ? streamable.media.streamStore
+            : undefined,
+    );
     let volumeStore = $derived(streamable?.volume);
     let volumeMeter = $derived($volumeMeterStore);
     let webRtcStatsStore = $derived($displayVideoQualityStore ? streamable?.webrtcStats : undefined);
     let webRtcStats = $derived($webRtcStatsStore);
+    let encoderStatsStore = $derived($displayVideoQualityStore ? streamable?.senderStats : undefined);
+    let encoderStats = $derived($encoderStatsStore);
 
     // Check if user is currently reconnecting (WebRTC retry in progress)
     let isReconnecting = $derived(effectiveStatus === "reconnecting");
@@ -77,6 +87,75 @@
 
     // Check if this is the local user's video box
     let isLocalUser = $derived(videoBox.uniqueId === "-1" || extendedSpaceUser?.spaceUserId === "local");
+    // Debugging aid for the rare case where the space says the remote microphone is enabled but this receiver has no audio.
+    let audioStateMismatch = $derived(
+        effectiveStatus === "connected" &&
+            streamable?.videoType === "video" &&
+            !isLocalUser &&
+            $isBlockedStore !== true &&
+            $microphoneStateStore === true &&
+            $hasAudioStore === false,
+    );
+    // Like audioStateMismatch, but with a 3 seconds delay.
+    let showAudioStateMismatch = $state(false);
+    let loggedAudioMismatchKey: string | undefined = undefined;
+
+    $effect(() => {
+        if (!audioStateMismatch) {
+            return;
+        }
+
+        const audioMismatchKey = `${streamable?.uniqueId ?? "unknown"}:${extendedSpaceUser?.spaceUserId ?? "unknown"}:${streamable?.media.type ?? "unknown"}`;
+        if (loggedAudioMismatchKey === audioMismatchKey) {
+            return;
+        }
+
+        const timeout = setTimeout(() => {
+            const audioTracks =
+                $mediaStreamStore?.getAudioTracks().map((track) => ({
+                    id: track.id,
+                    enabled: track.enabled,
+                    muted: track.muted,
+                    readyState: track.readyState,
+                })) ?? [];
+            const details = {
+                streamableUniqueId: streamable?.uniqueId,
+                streamableType: streamable?.media.type,
+                videoType: streamable?.videoType,
+                spaceUserId: extendedSpaceUser?.spaceUserId,
+                status: effectiveStatus,
+                hasAudio: $hasAudioStore,
+                microphoneState: $microphoneStateStore,
+                audioTrackCount: audioTracks.length,
+                audioTracks,
+            };
+
+            console.warn(
+                "Audio state mismatch: remote microphone is enabled in the space but no receiver audio track is present",
+                details,
+            );
+            Sentry.captureMessage(
+                "Audio state mismatch: remote microphone is enabled in the space but no receiver audio track is present",
+                {
+                    level: "warning",
+                    tags: {
+                        component: "VideoMediaBox",
+                        streamableType: streamable?.media.type ?? "unknown",
+                        videoType: streamable?.videoType ?? "unknown",
+                    },
+                    extra: details,
+                },
+            );
+
+            loggedAudioMismatchKey = audioMismatchKey;
+            showAudioStateMismatch = true;
+        }, 3000);
+
+        return () => {
+            clearTimeout(timeout);
+            showAudioStateMismatch = false;
+        };
+    });
 
     // Check if the local user is streaming with megaphone
     // requestedMegaphoneStore is true when user has requested megaphone
@@ -216,7 +295,8 @@
 </script>
 
 <div
-    class="group/screenshare relative flex justify-center mx-auto h-full w-full @container/videomediabox screen-blocker z-20 select-none"
+    {@attach blocker}
+    class="group/screenshare relative flex justify-center mx-auto h-full w-full @container/videomediabox z-20 select-none"
 >
     <div
         class={"w-full transition-all bg-center bg-no-repeat " +
@@ -329,7 +409,7 @@
                                 {/if}
                             </UserName>
 
-                            {#if effectiveStatus === "connected" && $hasAudioStore && !$isBlockedStore}
+                            {#if effectiveStatus === "connected" && !$isBlockedStore}
                                 <div
                                     class="z-[251] absolute p-2 right-1 white"
                                     class:top-1={videoEnabled}
@@ -337,7 +417,7 @@
                                     class:text-white={$activePictureInPictureStore}
                                     class:opacity-20={$activePictureInPictureStore}
                                 >
-                                    {#if !$isMutedStore}
+                                    {#if $hasAudioStore && !audioStateMismatch}
                                         <SoundMeterWidget
                                             volume={volumeMeter}
                                             cssClass="voice-meter-cam-off relative mr-0 ml-auto translate-x-0 transition-transform"
@@ -347,13 +427,18 @@
                                         <IconMicrophoneOff
                                             aria-label={$LL.video.user_is_muted({ name: name ?? "unknown" })}
                                             data-testid={$LL.video.user_is_muted({ name: name ?? "unknown" })}
-                                            class="[filter:drop-shadow(0_0_3px_rgb(0,0,0))_drop-shadow(0_0_6px_rgb(0,0,0))_drop-shadow(0_0_9px_rgb(0,0,0))]"
+                                            class="{showAudioStateMismatch
+                                                ? 'text-red-500 '
+                                                : ''}[filter:drop-shadow(0_0_3px_rgb(0,0,0))_drop-shadow(0_0_6px_rgb(0,0,0))_drop-shadow(0_0_9px_rgb(0,0,0))]"
                                         />
                                     {/if}
                                 </div>
                             {/if}
                             {#if webRtcStats}
                                 <WebRtcStats {webRtcStats} />
+                            {/if}
+                            {#if encoderStats}
+                                <EncoderStatsBox {encoderStats} />
                             {/if}
 
                             <!-- The menu to go fullscreen -->
@@ -441,8 +526,8 @@
         height: 100%;
         aspect-ratio: 1 / 1;
         border-radius: 50%;
-        border: 6px solid theme("colors.light-blue");
-        border-color: theme("colors.light-blue") transparent theme("colors.light-blue") transparent;
+        border: 6px solid var(--color-light-blue);
+        border-color: var(--color-light-blue) transparent var(--color-light-blue) transparent;
         animation: connecting-spinner 1.2s linear infinite;
     }
 

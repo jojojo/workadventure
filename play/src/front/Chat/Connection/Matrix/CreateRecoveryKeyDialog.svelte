@@ -1,7 +1,7 @@
 <script lang="ts">
-    import type { CryptoApi } from "matrix-js-sdk";
-    import type { GeneratedSecretStorageKey } from "matrix-js-sdk/lib/crypto-api";
+    import type { CryptoApi, GeneratedSecretStorageKey } from "matrix-js-sdk/lib/crypto-api";
     import Popup from "../../../Components/Modal/Popup.svelte";
+    import Button from "../../../Components/UI/Button.svelte";
     import LL from "../../../../i18n/i18n-svelte";
     import { chatInputFocusStore } from "../../../Stores/ChatStore";
     import { IconFileDownload } from "@wa-icons";
@@ -86,7 +86,9 @@
             {#if generatedSecretStorageKey?.encodedPrivateKey}
                 <p>{$LL.chat.e2ee.createRecoveryKey.privateKeyDescription()}</p>
                 <div class="flex justify-between">
-                    <p class="text-green-500 m-0 content-center">{generatedSecretStorageKey.encodedPrivateKey}</p>
+                    <p class="text-green-500 m-0 content-center select-text">
+                        {generatedSecretStorageKey.encodedPrivateKey}
+                    </p>
                     <button data-testid="downloadRecoveryKeyButton" onclick={downloadPrivateKeyFile}>
                         <IconFileDownload />
                     </button>
@@ -102,19 +104,21 @@
             {$LL.chat.e2ee.createRecoveryKey.buttons.cancel()}
         </button>
         {#if generatedSecretStorageKey === undefined}
-            <button
+            <Button
+                variant="secondary"
                 disabled={passphraseInput === undefined || passphraseInput?.trim().length === 0}
-                class="btn btn-secondary disabled:text-gray-400 disabled:bg-gray-500 bg-secondary flex-1 justify-center"
+                class="disabled:text-gray-400 disabled:bg-gray-500 bg-secondary flex-1"
                 onclick={() => generateRecoveryKey(passphraseInput)}
                 >{$LL.chat.e2ee.createRecoveryKey.buttons.generate()}
-            </button>
+            </Button>
         {:else}
-            <button
+            <Button
+                variant="secondary"
                 disabled={!isPrivateKeyDownloaded}
-                class="btn btn-secondary disabled:text-gray-400 disabled:bg-gray-500 bg-secondary flex-1 justify-center"
+                class="disabled:text-gray-400 disabled:bg-gray-500 bg-secondary flex-1"
                 onclick={closeModalAndContinueToWorkAdventure}
                 >{$LL.chat.e2ee.createRecoveryKey.buttons.continue()}
-            </button>
+            </Button>
         {/if}
     {/snippet}
 </Popup>

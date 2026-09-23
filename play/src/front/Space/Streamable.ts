@@ -3,6 +3,7 @@ import type { RemoteVideoTrack } from "livekit-client";
 import type { WorkAdventureComponent } from "../../types/component";
 import type { PeerStatus } from "../WebRtc/RemotePeer";
 import type { WebRtcStats } from "../Components/Video/WebRtcStats";
+import type { LocalEncoderStats } from "../WebRtc/LocalEncoderStats";
 import type { VideoConfig } from "../Api/Events/Ui/PlayVideoEvent";
 
 export interface LivekitStreamable {
@@ -44,9 +45,16 @@ export interface Streamable {
     readonly uniqueId: string;
     readonly media: LivekitStreamable | WebRtcStreamable | ScriptingVideoStreamable | ComponentStreamable;
     readonly volumeStore: Readable<number[] | undefined> | undefined;
+    /**
+     * True when this streamable currently has a video stream that should be displayed.
+     * Note: this value is tied to the real transport (WebRTC, Livekit, ...), not to the spaceUser cameraState
+     */
     readonly hasVideo: Readable<boolean>;
+    /**
+     * True when this streamable currently has audio, symmetrically to hasVideo.
+     * Note: this value is tied to the real transport (WebRTC, Livekit, ...), not to the spaceUser microphoneState
+     */
     readonly hasAudio: Readable<boolean>;
-    readonly isMuted: Readable<boolean>;
     readonly statusStore: Readable<PeerStatus>;
     readonly name: Readable<string>;
     readonly showVoiceIndicator: Readable<boolean>;
@@ -70,4 +78,8 @@ export interface Streamable {
     readonly volume: Writable<number>;
     readonly videoType: StreamCategory;
     readonly webrtcStats: Readable<WebRtcStats | undefined> | undefined;
+    /**
+     * Health of our own encoder(s), set on the local camera / screen share feedback tiles only.
+     */
+    readonly senderStats?: Readable<LocalEncoderStats | undefined>;
 }

@@ -43,6 +43,8 @@ export class MatrixChatThread implements ChatThread {
     readonly avatarFallbackColor: Readable<string | undefined>;
     readonly membersForMessageAvatars: Readable<readonly ChatRoomMember[]> | undefined;
     readonly peerWaDisplayNameIfDifferent: Readable<string | undefined> | undefined;
+    readonly canSendMessages: Readable<boolean>;
+    readonly canSendReactions: Readable<boolean>;
     readonly isEncrypted: Readable<boolean>;
     readonly typingMembers: Readable<memberTypingInformation[]>;
     readonly isRoomFolder = false;
@@ -73,7 +75,13 @@ export class MatrixChatThread implements ChatThread {
 
     private initializationPromise: Promise<void> | undefined;
 
-    private readonly replyMessages = new SearchableArrayStore((item: MatrixChatMessage) => item.id);
+    private readonly replyMessages = new SearchableArrayStore(
+        (item: MatrixChatMessage) => item.id,
+        (item: MatrixChatMessage) => {
+            item.relations?.destroy();
+            item.destroy();
+        },
+    );
     private readonly missingRootMessage = writable<ChatMessage | undefined>(undefined);
     private readonly inMemoryEventsContent = new Map<string, IContent>();
     private readonly handleRoomTimeline = this.onRoomTimeline.bind(this);
@@ -94,6 +102,8 @@ export class MatrixChatThread implements ChatThread {
         this.avatarFallbackColor = parentRoom.avatarFallbackColor;
         this.membersForMessageAvatars = parentRoom.membersForMessageAvatars;
         this.peerWaDisplayNameIfDifferent = parentRoom.peerWaDisplayNameIfDifferent;
+        this.canSendMessages = parentRoom.canSendMessages;
+        this.canSendReactions = parentRoom.canSendReactions;
         this.isEncrypted = parentRoom.isEncrypted;
         this.typingMembers = parentRoom.typingMembers;
         this.rootMessage = writable(undefined);
@@ -268,10 +278,9 @@ export class MatrixChatThread implements ChatThread {
             return;
         }
 
-        const ageOfEvent = event.getAge();
-        if (ageOfEvent !== undefined && ageOfEvent >= 2000) {
-            return;
-        }
+        // No age guard here (unlike the old room-timeline handler): a live thread reply delivered late by
+        // the matrix-js-sdk 41 sync timing must still render. This handler has no notification side effect,
+        // so there is nothing that a freshness check needs to gate.
 
         (async () => {
             if (event.isEncrypted()) {
@@ -366,7 +375,10 @@ export class MatrixChatThread implements ChatThread {
             return;
         }
 
-        message.reactions.set(reactionKey, new MatrixChatMessageReaction(this.parentRoom.getMatrixRoom(), event));
+        message.reactions.set(
+            reactionKey,
+            new MatrixChatMessageReaction(this.parentRoom.getMatrixRoom(), event, this.canSendReactions),
+        );
     }
 
     private handleMessageModification(event: MatrixEvent) {
@@ -377,7 +389,9 @@ export class MatrixChatThread implements ChatThread {
 
         const messageToUpdate = this.getMessageFromThread(eventRelation.event_id);
         if (messageToUpdate !== undefined) {
-            messageToUpdate.modifyContent(event.getOriginalContent()["m.new_content"].body);
+            // The SDK has already applied the edit to the target event; re-render from it (handles media /
+            // formatting and can't throw on a missing m.new_content, unlike reading .body off it directly).
+            messageToUpdate.modifyContent();
             this.parentRoom.refreshThreadSummary(this.id);
         }
     }
@@ -486,6 +500,9 @@ export class MatrixChatThread implements ChatThread {
     }
 
     sendMessage(message: string) {
+        if (!get(this.canSendMessages)) {
+            return;
+        }
         this.parentRoom
             .getMatrixRoom()
             .client.sendMessage(this.parentRoom.id, this.id, this.getMessageContent(message))
@@ -498,6 +515,9 @@ export class MatrixChatThread implements ChatThread {
     }
 
     async sendFiles(files: FileList) {
+        if (!get(this.canSendMessages)) {
+            return;
+        }
         try {
             await Promise.allSettled(Array.from(files).map((file) => this.sendFile(file)));
         } catch (error) {
@@ -506,6 +526,9 @@ export class MatrixChatThread implements ChatThread {
     }
 
     private async sendFile(file: File) {
+        if (!get(this.canSendMessages)) {
+            return undefined;
+        }
         try {
             const uploadResponse = await this.parentRoom.getMatrixRoom().client.uploadContent(file);
             const content = {
@@ -613,7 +636,9 @@ export class MatrixChatThread implements ChatThread {
             edit: () => Promise.resolve(),
             isDeleted: readable(false),
             isModified: readable(false),
+            canEdit: readable(false),
             addReaction: () => Promise.resolve(),
+            canReact: readable(false),
             canDelete: readable(false),
             threadSummary: readable(null),
             openThread: undefined,

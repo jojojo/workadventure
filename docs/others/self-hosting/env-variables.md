@@ -24,7 +24,6 @@ Environment variables for the Play service (frontend and pusher).
 | `SOCKET_IDLE_TIMER` | No | maximum time (in second) without activity before a socket is closed. Should be greater than 60 seconds in order to cope for Chrome intensive throttling (https://developer.chrome.com/blog/timer-throttling-in-chrome-88/#intensive-throttling) |
 | `CLIENT_DISCONNECTION_RETENTION_MS` | No | Maximum time, in milliseconds, the client keeps sent websocket messages for replay after a short disconnection. Defaults to 30000. |
 | `PUSHER_ADMIN_WS_MAX_BACKPRESSURE_BYTES` | No | Maximum uWebSockets backpressure bytes accepted on admin websocket connections. Defaults to 1048576. |
-| `VITE_URL` | No | URL of the Vite development server (development only) |
 | `ALLOWED_CORS_ORIGIN` | No | Allowed CORS origin for API requests. Use '*' to allow any domain |
 | `PUSHER_URL` | No | Public URL of the pusher service |
 | `FRONT_URL` | No | Public URL of the frontend application |
@@ -34,6 +33,7 @@ Environment variables for the Play service (frontend and pusher).
 | `REDIS_PASSWORD` | No | Redis authentication password |
 | `PUBLIC_MAP_STORAGE_URL` | No | The public URL to the map-storage server (for instance: "https://map-storage.example.com") |
 | `INTERNAL_MAP_STORAGE_URL` | No | The internal URL to the map-storage server (for instance: "https://map-storage:3000") |
+| `OPENID_DISPLAY_NAME_CLAIM` | No | OpenID claim to use for display name |
 | `OPENID_CLIENT_ID` | No | OAuth2 client ID for OpenID Connect authentication |
 | `OPENID_CLIENT_SECRET` | No | OAuth2 client secret for OpenID Connect authentication |
 | `OPENID_CLIENT_ISSUER` | No | OpenID Connect issuer URL (identity provider) |
@@ -44,8 +44,18 @@ Environment variables for the Play service (frontend and pusher).
 | `OPENID_PROMPT` | No | OpenID Connect prompt parameter (e.g., 'login', 'consent') |
 | `OPENID_USERNAME_CLAIM` | No | JWT claim to use as the username. Defaults to 'preferred_username' |
 | `OPENID_LOCALE_CLAIM` | No | JWT claim to use for user locale. Defaults to 'locale' |
-| `OPENID_WOKA_NAME_POLICY` | No | Policy for avatar naming: 'user_input' or 'openid_nickname' |
+| `OPENID_WOKA_NAME_POLICY` | No | Policy for avatar naming: 'user_input', 'allow_override_opid', or 'force_opid' |
 | `OPENID_TAGS_CLAIM` | No | JWT claim containing user tags/roles |
+| `EXTERNAL_PRESENCE_URL` | No | Optional HTTP endpoint returning external presence state for the current user |
+| `EXTERNAL_PRESENCE_AUTH_TOKEN` | No | Optional bearer token sent to the external presence endpoint |
+| `EXTERNAL_PRESENCE_MATCH_FIELD` | No | User field forwarded to the external presence endpoint. Defaults to 'identifier' |
+| `EXTERNAL_PRESENCE_POLL_INTERVAL` | No | Polling interval in milliseconds for external presence sync. Defaults to 5000 |
+| `THREE_CX_BASE_URL` | No | Optional 3CX base URL used for direct phone presence sync |
+| `THREE_CX_CLIENT_ID` | No | 3CX API client id used for direct phone presence sync |
+| `THREE_CX_CLIENT_SECRET` | No | 3CX API client secret used for direct phone presence sync |
+| `THREE_CX_MATCH_FIELD` | No | User field matched against 3CX users. Defaults to 'identifier' |
+| `THREE_CX_USER_FILTER_FIELD` | No | 3CX Users field used in the OData filter. Defaults to 'EmailAddress' |
+| `THREE_CX_ACTIVE_CALLS_PATH` | No | 3CX endpoint path returning active call state. Defaults to '/xapi/v1/ActiveCalls' |
 | `DISABLE_ANONYMOUS` | No | If true, anonymous users cannot access the platform. Defaults to false |
 | `PROMETHEUS_AUTHORIZATION_TOKEN` | No | The token to access the Prometheus metrics. |
 | `PROMETHEUS_PORT` | No | The port to access the Prometheus metrics. If not set, the default port is used AND an authorization token is required. |
@@ -97,6 +107,7 @@ Environment variables for the Play service (frontend and pusher).
 | `SENTRY_RELEASE` | No | Sentry release version identifier for error tracking |
 | `SENTRY_ENVIRONMENT` | No | Sentry environment name (e.g., 'production', 'staging', 'development') |
 | `SENTRY_TRACES_SAMPLE_RATE` | No | The sampling rate for Sentry traces. Only used if SENTRY_DSN is configured. Defaults to 0.1 |
+| `ROOM_API_BIND_HOST` | No | Bind host for the Room API gRPC server. Defaults to `[::]`. |
 | `ROOM_API_PORT` | No | Port for the Room API gRPC server. Defaults to 50051 |
 | `ROOM_API_SECRET_KEY` | No | Secret key for Room API authentication |
 | `ENABLE_MAP_EDITOR` | No | Enable the built-in map editor. Defaults to false |
@@ -127,6 +138,7 @@ Environment variables for the Play service (frontend and pusher).
 | `MATRIX_ADMIN_USER` | No | Matrix administrator username |
 | `MATRIX_ADMIN_PASSWORD` | No | Matrix administrator password |
 | `MATRIX_DOMAIN` | No | Matrix server domain |
+| `MATRIX_AUTO_SYNC` | No | Enable automatic synchronization of WOKA avatar and display name to Matrix profile (default: true) |
 | `EMBEDLY_KEY` | No | Embedly API key for rich link previews |
 | `GRPC_MAX_MESSAGE_SIZE` | Yes | The maximum size of a gRPC message. Defaults to 20 MB. |
 | `LIVEKIT_RECORDING_S3_ENDPOINT` | No | The S3 endpoint for Livekit recording. |
@@ -249,6 +261,7 @@ The following variables are deprecated and will be removed in a future version. 
 | `OPID_SCOPE` | No | - |
 | `OPID_PROMPT` | No | - |
 | `OPID_USERNAME_CLAIM` | No | - |
+| `OPID_DISPLAY_NAME_CLAIM` | No | Legacy alias for OPENID_DISPLAY_NAME_CLAIM |
 | `OPID_LOCALE_CLAIM` | No | - |
 | `OPID_WOKA_NAME_POLICY` | No | - |
 | `OPID_TAGS_CLAIM` | No | - |

@@ -45,6 +45,11 @@ const actionbar: DeepPartial<Translation["actionbar"]> = {
         noSoundWarning:
             "Žadyn zwuk z wašeho mikrofona namakany. Móže problem być; spytajće mikrofon w nastajenjach změnić.",
         noSoundWarningPressEnter: "Žadyn zwuk z wašeho mikrofona namakany. Tłóčće Enter, zo byšte nastajenja wočinili.",
+        advancedNoiseReduction: "Rozšěrjene potłóčowanje šuma",
+        noiseSuppressionInitializing: "Swójske potłóčowanje šuma so inicializuje...",
+        noiseSuppressionUnsupported: "Tutón wobhladowak njemóže swójske potłóčowanje šuma wuwjesć.",
+        noiseSuppressionError:
+            "Swójske potłóčowanje šuma njeje so poradźiło. Wužije so natiwne potłóčowanje šuma wobhladowaka.",
         openSettings: "Nastajenja wočinić",
         ignore: "Ignorować",
     },
@@ -69,6 +74,7 @@ const actionbar: DeepPartial<Translation["actionbar"]> = {
         SPEAKER: "W zetkanju",
         LIVEKIT: "W zetkanju",
         LISTENER: "W zetkanju",
+        SOUND_BLOCKED: "Zwuk zablokowany",
     },
     subtitle: {
         camera: "Kamera",

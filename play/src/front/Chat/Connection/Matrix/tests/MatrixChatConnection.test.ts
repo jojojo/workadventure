@@ -1,4 +1,4 @@
-import type { MatrixClient } from "matrix-js-sdk";
+import type { MatrixClient, Room } from "matrix-js-sdk";
 import { ClientEvent, EventType, PendingEventOrdering, RoomEvent, SyncState } from "matrix-js-sdk";
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { KnownMembership } from "matrix-js-sdk/lib/types";
@@ -9,6 +9,8 @@ import { MatrixChatConnection } from "../MatrixChatConnection";
 import { MatrixRoomFolder } from "../MatrixRoomFolder";
 import type { CreateRoomOptions } from "../../ChatConnection";
 import type { MatrixChatRoom } from "../MatrixChatRoom";
+import { MatrixChatRoom as MatrixChatRoomClass } from "../MatrixChatRoom";
+import { selectedRoomStore } from "../../../Stores/SelectRoomStore";
 import type { MatrixSecurity } from "../MatrixSecurity";
 import type { RequestedStatus } from "../../../../Rules/StatusRules/statusRules";
 
@@ -30,13 +32,10 @@ vi.mock("../../../../Phaser/Entity/CharacterLayerManager", () => {
     };
 });
 
-vi.mock("../../../../Enum/EnvironmentVariable.ts", async (importOriginal) => {
-    const actual = await importOriginal();
-    return Object.assign({}, actual, {
-        MATRIX_ADMIN_USER: "admin",
-        MATRIX_DOMAIN: "domain",
-    });
-});
+vi.mock(
+    "../../../../Enum/EnvironmentVariable.ts",
+    () => import("../../../../../../tests/front/mocks/frontEnvironmentVariableMock"),
+);
 
 vi.mock("../../../Stores/ChatStore.ts", () => {
     return {
@@ -352,6 +351,7 @@ describe("MatrixChatConnection", () => {
             expect(mockStartClient).toHaveBeenCalledWith({
                 threadSupport: true,
                 pendingEventOrdering: PendingEventOrdering.Detached,
+                lazyLoadMembers: true,
             });
         });
     });
@@ -564,7 +564,7 @@ describe("MatrixChatConnection", () => {
 
             const spyGetDirectRoomFor = vi.spyOn(matrixChatConnection, "getDirectRoomFor");
 
-            spyGetDirectRoomFor.mockImplementation(() => oldDirectRoom);
+            spyGetDirectRoomFor.mockResolvedValue(oldDirectRoom);
             matrixChatConnection["addDMRoomInAccountData"] = vi.fn();
 
             expect(await matrixChatConnection.createDirectRoom(userId)).toEqual(oldDirectRoom);
@@ -604,7 +604,7 @@ describe("MatrixChatConnection", () => {
             const userId = "AliceID";
 
             const spyGetDirectRoomFor = vi.spyOn(matrixChatConnection, "getDirectRoomFor");
-            spyGetDirectRoomFor.mockImplementation(() => undefined);
+            spyGetDirectRoomFor.mockResolvedValue(undefined);
 
             matrixChatConnection["createRoom"] = vi.fn().mockResolvedValue({
                 room_id: "newRoomId",
@@ -618,6 +618,178 @@ describe("MatrixChatConnection", () => {
             expect(matrixChatConnection["addDMRoomInAccountData"]).toHaveBeenCalledOnce();
             //eslint-disable-next-line @typescript-eslint/unbound-method
             expect(mockMatrixClient.getRoom).toHaveBeenCalledOnce();
+        });
+        it("should deduplicate concurrent creations for the same user", async () => {
+            const mockMatrixClient = {
+                isGuest: vi.fn(),
+                off: vi.fn(),
+                on: vi.fn().mockImplementation((_, funcToResolve) => {
+                    funcToResolve(SyncState.Syncing);
+                }),
+                once: vi.fn().mockImplementation((_, funcToResolve) => {
+                    funcToResolve(SyncState.Syncing);
+                }),
+                store: {
+                    startup: vi.fn(),
+                },
+                initRustCrypto: vi.fn(),
+                startClient: vi.fn(),
+                createRoom: vi.fn().mockResolvedValue({ room_id: "1" }),
+                getRoom: vi.fn(),
+            } as unknown as MatrixClient;
+
+            const matrixChatConnection = await getMatrixConnection(Promise.resolve(mockMatrixClient));
+
+            const spyGetDirectRoomFor = vi.spyOn(matrixChatConnection, "getDirectRoomFor");
+            spyGetDirectRoomFor.mockResolvedValue(undefined);
+            matrixChatConnection["addDMRoomInAccountData"] = vi.fn();
+
+            // A double click issues two concurrent calls: only one room must be created.
+            await Promise.all([
+                matrixChatConnection.createDirectRoom("AliceID"),
+                matrixChatConnection.createDirectRoom("AliceID"),
+            ]);
+            //eslint-disable-next-line @typescript-eslint/unbound-method
+            expect(mockMatrixClient.createRoom).toHaveBeenCalledOnce();
+
+            // Once settled, a later call goes through the whole flow again.
+            await matrixChatConnection.createDirectRoom("AliceID");
+            //eslint-disable-next-line @typescript-eslint/unbound-method
+            expect(mockMatrixClient.createRoom).toHaveBeenCalledTimes(2);
+        });
+    });
+    describe("getDirectRoomFor", () => {
+        const createSdkRoomStub = (
+            roomId: string,
+            memberships: [string, string][],
+            {
+                myMembership = KnownMembership.Join,
+                lastActiveTimestamp = 0,
+                isSpace = false,
+            }: { myMembership?: string; lastActiveTimestamp?: number; isSpace?: boolean } = {},
+        ) =>
+            ({
+                roomId,
+                isSpaceRoom: () => isSpace,
+                getMyMembership: () => myMembership,
+                getMembers: () => memberships.map(([userId, membership]) => ({ userId, membership })),
+                getLastActiveTimestamp: () => lastActiveTimestamp,
+            }) as unknown as Room;
+
+        // The lookup must read the SDK client directly: roomList is filled asynchronously
+        // and can miss a DM the client already knows about (cold start, reconciliation).
+        const getConnectionWithSdkRooms = async (sdkRooms: Room[]) => {
+            const mockMatrixClient = {
+                getRooms: () => sdkRooms,
+            } as unknown as MatrixClient;
+            const matrixChatConnection = await getMatrixConnection(Promise.resolve(mockMatrixClient));
+            const createAndAddNewRootRoom = vi.fn(
+                (room: Room) => ({ id: room.roomId, createdFrom: room }) as unknown as MatrixChatRoom,
+            );
+            matrixChatConnection["createAndAddNewRootRoom"] = createAndAddNewRootRoom;
+            return { matrixChatConnection, createAndAddNewRootRoom };
+        };
+
+        const directMemberships: [string, string][] = [
+            ["@me:matrix.org", KnownMembership.Join],
+            ["@alice:matrix.org", KnownMembership.Join],
+        ];
+
+        it("should find an existing direct room from the SDK client even when roomList is empty", async () => {
+            const directRoom = createSdkRoomStub("dm", directMemberships);
+            const { matrixChatConnection, createAndAddNewRootRoom } = await getConnectionWithSdkRooms([directRoom]);
+
+            const foundRoom = await matrixChatConnection.getDirectRoomFor("@alice:matrix.org");
+
+            expect(createAndAddNewRootRoom).toHaveBeenCalledWith(directRoom);
+            expect(foundRoom?.id).toBe("dm");
+        });
+
+        it("should return the already-registered wrapper instead of creating a new one", async () => {
+            const directRoom = createSdkRoomStub("dm", directMemberships);
+            const { matrixChatConnection, createAndAddNewRootRoom } = await getConnectionWithSdkRooms([directRoom]);
+            const existingWrapper = Object.create(MatrixChatRoomClass.prototype) as MatrixChatRoom;
+            matrixChatConnection["roomList"].set("dm", existingWrapper);
+
+            const foundRoom = await matrixChatConnection.getDirectRoomFor("@alice:matrix.org");
+
+            expect(foundRoom).toBe(existingWrapper);
+            expect(createAndAddNewRootRoom).not.toHaveBeenCalled();
+        });
+
+        it("should find a direct room where the other user is still invited", async () => {
+            const directRoom = createSdkRoomStub("dm", [
+                ["@me:matrix.org", KnownMembership.Join],
+                ["@alice:matrix.org", KnownMembership.Invite],
+            ]);
+            const { matrixChatConnection } = await getConnectionWithSdkRooms([directRoom]);
+
+            expect(await matrixChatConnection.getDirectRoomFor("@alice:matrix.org")).toBeDefined();
+        });
+
+        it("should find a direct room I am still invited to", async () => {
+            const directRoom = createSdkRoomStub(
+                "dm",
+                [
+                    ["@me:matrix.org", KnownMembership.Invite],
+                    ["@alice:matrix.org", KnownMembership.Join],
+                ],
+                { myMembership: KnownMembership.Invite },
+            );
+            const { matrixChatConnection } = await getConnectionWithSdkRooms([directRoom]);
+
+            expect(await matrixChatConnection.getDirectRoomFor("@alice:matrix.org")).toBeDefined();
+        });
+
+        it("should ignore rooms with more than two active members", async () => {
+            const crowdedRoom = createSdkRoomStub("crowded", [
+                ["@me:matrix.org", KnownMembership.Join],
+                ["@alice:matrix.org", KnownMembership.Join],
+                ["@bob:matrix.org", KnownMembership.Join],
+            ]);
+            const { matrixChatConnection } = await getConnectionWithSdkRooms([crowdedRoom]);
+
+            expect(await matrixChatConnection.getDirectRoomFor("@alice:matrix.org")).toBeUndefined();
+        });
+
+        it("should ignore rooms the other user has left", async () => {
+            const abandonedRoom = createSdkRoomStub("abandoned", [
+                ["@me:matrix.org", KnownMembership.Join],
+                ["@alice:matrix.org", KnownMembership.Leave],
+            ]);
+            const { matrixChatConnection } = await getConnectionWithSdkRooms([abandonedRoom]);
+
+            expect(await matrixChatConnection.getDirectRoomFor("@alice:matrix.org")).toBeUndefined();
+        });
+
+        it("should ignore rooms I have left", async () => {
+            const leftRoom = createSdkRoomStub("left", directMemberships, {
+                myMembership: KnownMembership.Leave,
+            });
+            const { matrixChatConnection } = await getConnectionWithSdkRooms([leftRoom]);
+
+            expect(await matrixChatConnection.getDirectRoomFor("@alice:matrix.org")).toBeUndefined();
+        });
+
+        it("should ignore space rooms", async () => {
+            const spaceRoom = createSdkRoomStub("space", directMemberships, { isSpace: true });
+            const { matrixChatConnection } = await getConnectionWithSdkRooms([spaceRoom]);
+
+            expect(await matrixChatConnection.getDirectRoomFor("@alice:matrix.org")).toBeUndefined();
+        });
+
+        it("should pick the most recently active room when duplicates exist", async () => {
+            const staleRoom = createSdkRoomStub("stale", directMemberships, { lastActiveTimestamp: 100 });
+            const activeRoom = createSdkRoomStub("active", directMemberships, { lastActiveTimestamp: 200 });
+            const { matrixChatConnection, createAndAddNewRootRoom } = await getConnectionWithSdkRooms([
+                staleRoom,
+                activeRoom,
+            ]);
+
+            const foundRoom = await matrixChatConnection.getDirectRoomFor("@alice:matrix.org");
+
+            expect(createAndAddNewRootRoom).toHaveBeenCalledWith(activeRoom);
+            expect(foundRoom?.id).toBe("active");
         });
     });
     describe("searchAccessibleRooms", () => {
@@ -819,7 +991,12 @@ describe("MatrixChatConnection", () => {
             expect(matrixChatConnection["addDMRoomInAccountData"]).toHaveBeenCalledOnce();
         });
 
-        it("Room not present after synchronization", async () => {
+        it("should fall back to the room returned by joinRoom when it is not yet in the client store", async () => {
+            // Newer matrix-js-sdk sync timing can leave a freshly-joined room momentarily absent
+            // from the client store (getRoom returns null) even though client.joinRoom() already
+            // resolved with the Room. joinRoom must use that returned room instead of failing.
+            const roomID = "room-id";
+            const mockGetDMInviter = vi.fn().mockReturnValue(undefined);
             const expected = {
                 room_id: "1",
             };
@@ -840,7 +1017,7 @@ describe("MatrixChatConnection", () => {
                 startClient: mockStartClient,
                 createRoom: vi.fn().mockResolvedValue(expected),
                 getRoom: vi.fn().mockReturnValue(null),
-                joinRoom: vi.fn().mockResolvedValue(""),
+                joinRoom: vi.fn().mockResolvedValue({ roomId: roomID, getDMInviter: mockGetDMInviter }),
             } as unknown as MatrixClient;
 
             const clientPromise = Promise.resolve(mockMatrixClient);
@@ -853,13 +1030,13 @@ describe("MatrixChatConnection", () => {
 
             await clientPromise;
 
-            const roomID = "room-id";
-
             matrixChatConnection["addDMRoomInAccountData"] = vi.fn();
 
-            await expect(matrixChatConnection.joinRoom(roomID)).rejects.toThrow(
-                "Room not present after synchronization",
-            );
+            await expect(matrixChatConnection.joinRoom(roomID)).resolves.toBeDefined();
+            //eslint-disable-next-line @typescript-eslint/unbound-method
+            expect(mockMatrixClient.joinRoom).toHaveBeenCalledOnce();
+            // getDMInviter is read from the fallback room returned by joinRoom.
+            expect(mockGetDMInviter).toHaveBeenCalledOnce();
         });
     });
     describe("addDMRoomInAccountData", () => {
@@ -958,6 +1135,38 @@ describe("MatrixChatConnection", () => {
             expect(mockSetAccountData.mock.calls[0][1][userId]).toContain(roomId);
             expect(mockSetAccountData.mock.calls[0][1][userId]).toContain(roomId2);
         });
+        it("should not rewrite account data when the room is already recorded for this user", async () => {
+            const userId = "AliceId";
+            const roomId = "roomTest";
+
+            const mockGetContent = vi.fn().mockReturnValue({ [userId]: [roomId] });
+            const mockSetAccountData = vi.fn();
+            const mockMatrixClient = {
+                isGuest: vi.fn(),
+                on: vi.fn(),
+                once: vi.fn().mockImplementation((_, funcToResolve) => {
+                    funcToResolve(SyncState.Syncing);
+                }),
+                store: {
+                    startup: vi.fn(),
+                },
+                initRustCrypto: vi.fn(),
+                startClient: vi.fn(),
+                createRoom: vi.fn(),
+                getRoom: vi.fn().mockReturnValue(null),
+                joinRoom: vi.fn().mockResolvedValue(""),
+                getAccountData: vi.fn().mockReturnValue({
+                    getContent: mockGetContent,
+                }),
+                setAccountData: mockSetAccountData,
+            } as unknown as MatrixClient;
+
+            const matrixChatConnection = await getMatrixConnection(Promise.resolve(mockMatrixClient));
+
+            await matrixChatConnection["addDMRoomInAccountData"](userId, roomId);
+
+            expect(mockSetAccountData).not.toHaveBeenCalled();
+        });
     });
 
     describe("space topology handling", () => {
@@ -993,6 +1202,65 @@ describe("MatrixChatConnection", () => {
 
             expect(folder.roomList.has(roomId)).toBeFalsy();
             expect(staleRoom.destroy).toHaveBeenCalledOnce();
+        });
+
+        it("should repoint selectedRoomStore to the rebuilt wrapper when folder getChildren re-adds the open room", () => {
+            // Reproduces the invite-accept regression: the open room's previous wrapper was destroyed when the
+            // room was detached from its old placement, leaving selectedRoomStore on a dead wrapper. getChildren
+            // rebuilds the wrapper for the same room id and must re-point selectedRoomStore at the live one,
+            // otherwise messages sent right after joining never render until the room is re-opened.
+            const roomId = "!child:server";
+            const childRoom = {
+                roomId,
+                getMyMembership: vi.fn().mockReturnValue(KnownMembership.Join),
+                isSpaceRoom: vi.fn().mockReturnValue(false),
+            };
+            const parentRoom = {
+                client: {
+                    getRoomUpgradeHistory: vi.fn().mockReturnValue([childRoom]),
+                },
+                getLiveTimeline: vi.fn().mockReturnValue({
+                    getState: vi.fn().mockReturnValue({
+                        getStateEvents: vi.fn().mockReturnValue([
+                            {
+                                getStateKey: vi.fn().mockReturnValue(roomId),
+                                getContent: vi.fn().mockReturnValue({ via: ["server"] }),
+                            },
+                        ]),
+                    }),
+                }),
+            };
+
+            vi.mocked(MatrixChatRoomClass).mockImplementation(function (this: unknown, room: { roomId: string }) {
+                return {
+                    id: room.roomId,
+                    conversationKind: "room",
+                    isEncrypted: writable(false),
+                    destroy: vi.fn(),
+                } as unknown as MatrixChatRoom;
+            });
+
+            const destroyedWrapper = {
+                id: roomId,
+                conversationKind: "room",
+                isEncrypted: writable(false),
+                destroy: vi.fn(),
+            } as unknown as MatrixChatRoom;
+            selectedRoomStore.set(destroyedWrapper);
+
+            const folder = Object.create(MatrixRoomFolder.prototype) as MatrixRoomFolder;
+            folder["room"] = parentRoom as never;
+            folder.roomList = new Map() as never;
+            folder.folderList = new Map() as never;
+
+            folder.getChildren();
+
+            const rebuiltWrapper = folder.roomList.get(roomId);
+            expect(rebuiltWrapper).toBeDefined();
+            expect(get(selectedRoomStore)).toBe(rebuiltWrapper);
+            expect(get(selectedRoomStore)).not.toBe(destroyedWrapper);
+
+            selectedRoomStore.set(undefined);
         });
 
         it("should ignore a parent relation when the parent has no matching m.space.child", () => {

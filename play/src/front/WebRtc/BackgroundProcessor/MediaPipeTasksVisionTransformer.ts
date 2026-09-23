@@ -2,20 +2,68 @@ import type { MPMask } from "@mediapipe/tasks-vision";
 import { ImageSegmenter, FilesetResolver, DrawingUtils } from "@mediapipe/tasks-vision";
 import { AbortError } from "@workadventure/shared-utils/src/Abort/AbortError";
 import { raceAbort } from "@workadventure/shared-utils/src/Abort/raceAbort";
-import type { BackgroundConfig, BackgroundTransformer } from "./createBackgroundTransformer";
+import { isFirefox, isIOS } from "../DeviceUtils";
+import { CanvasBlurRenderer, type BlurBackend } from "./CanvasBlurRenderer";
+import { logOnce } from "./logOnce";
+import { TasksVisionBlurCompositor } from "./TasksVisionBlurCompositor";
+import type {
+    BackgroundConfig,
+    BackgroundTransformer,
+    BackgroundTransformerFailureHandler,
+} from "./createBackgroundTransformer";
+
+const DEFAULT_FRAME_RATE = 30;
+const MAX_CONSECUTIVE_RECOVERY_ATTEMPTS = 2;
+const SUCCESSFUL_FRAMES_BEFORE_RECOVERY_RESET = 30;
+
+type CaptureBackend = "webgl-capture" | "2d-copy-capture";
+
+function logCaptureBackend(backend: CaptureBackend): void {
+    logOnce(`tasks-vision-capture:${backend}`, () =>
+        console.info(
+            backend === "webgl-capture"
+                ? "[MediaPipe Tasks Vision] Using WebGL canvas capture backend."
+                : "[MediaPipe Tasks Vision] Using 2D copy canvas capture backend.",
+        ),
+    );
+}
+
+function logWebGlCaptureFailure(error: unknown): void {
+    logOnce("tasks-vision-capture:webgl-failure", () =>
+        console.warn("[MediaPipe Tasks Vision] WebGL canvas capture failed; falling back to 2D copy capture.", error),
+    );
+}
+
+/**
+ * captureStream() from a WebGL canvas produces frozen frames on WebKit (Safari and
+ * every iOS browser), so the direct WebGL capture path is restricted to engines
+ * known to capture WebGL canvases correctly. Engines we cannot positively identify
+ * fall back to the always-working 2D-copy path rather than risking a frozen feed.
+ */
+function supportsWebGlCanvasCapture(): boolean {
+    if (isIOS()) {
+        return false;
+    }
+
+    // Chromium-based engines report "Chrome" in their UA (Safari does not); iOS
+    // Chrome/Firefox use "CriOS"/"FxiOS" and are already excluded by isIOS().
+    const isChromium = navigator.userAgent.includes("Chrome");
+    return isChromium || isFirefox();
+}
 
 /**
  * MediaPipe Tasks Vision-based background transformer for video streams
- * Uses the modern @mediapipe/tasks-vision API with ImageSegmenter and DrawingUtils
+ * Uses the modern @mediapipe/tasks-vision API with ImageSegmenter
  * All compositing is done in WebGL for optimal performance
  */
 export class MediaPipeTasksVisionTransformer implements BackgroundTransformer {
-    // WebGL canvas shared between ImageSegmenter and DrawingUtils
+    // WebGL canvas shared between ImageSegmenter, DrawingUtils and the blur compositor.
     private glCanvas: HTMLCanvasElement;
     private gl: WebGL2RenderingContext | null = null;
     private drawingUtils: DrawingUtils | null = null;
+    private blurCompositor: TasksVisionBlurCompositor | null = null;
 
-    // Output canvas for stream capture (we copy from glCanvas to this)
+    // Output canvas used when direct WebGL capture is unavailable or disabled.
     private outputCanvas: HTMLCanvasElement;
     private outputCtx: CanvasRenderingContext2D;
 
@@ -30,27 +78,33 @@ export class MediaPipeTasksVisionTransformer implements BackgroundTransformer {
     private frameCount = 0;
     private startTime = performance.now();
     private initPromise: Promise<void>;
-    private frameRate = 33;
-    // Use a global timestamp that never resets to ensure monotonic timestamps for MediaPipe
-    private globalStartTime = performance.now();
-    // Track the last timestamp to guarantee strict monotonic increase
-    private lastTimestampMicroseconds = 0;
-
-    // Canvas for blurred background (used as texture source for DrawingUtils)
-    private blurredCanvas: HTMLCanvasElement | null = null;
-    private blurredCtx: CanvasRenderingContext2D | null = null;
+    private frameRate = DEFAULT_FRAME_RATE;
+    private frameIntervalMs = 1000 / DEFAULT_FRAME_RATE;
+    private lastTimestampMs = -1;
+    private recoveryPromise: Promise<void> | null = null;
+    private consecutiveRecoveryAttempts = 0;
+    private successfulFramesSinceRecovery = 0;
 
     // Canvas for background image (pre-rendered to avoid GPU re-upload each frame)
     private backgroundCanvas: HTMLCanvasElement | null = null;
     private backgroundCanvasCtx: CanvasRenderingContext2D | null = null;
 
-    // Canvas for foreground video (updated each frame, but HTMLCanvasElement is faster than HTMLVideoElement)
+    // Fallback canvases used only when the dedicated blur compositor is unavailable.
+    private fallbackBlurredCanvas: HTMLCanvasElement | null = null;
+    private fallbackBlurredCtx: CanvasRenderingContext2D | null = null;
     private foregroundCanvas: HTMLCanvasElement | null = null;
     private foregroundCtx: CanvasRenderingContext2D | null = null;
+    private blurRenderer = new CanvasBlurRenderer();
+    private blurBackend: BlurBackend = "none";
+    private captureBackend: CaptureBackend = "2d-copy-capture";
+    private directWebGlCaptureUnavailable = false;
 
-    constructor(private config: BackgroundConfig) {
+    constructor(
+        private config: BackgroundConfig,
+        private readonly onTerminalFailure?: BackgroundTransformerFailureHandler,
+    ) {
         // Create WebGL canvas for MediaPipe (shared with ImageSegmenter and DrawingUtils)
-        this.glCanvas = document.createElement("canvas");
+        this.glCanvas = this.createGlCanvas();
 
         // Create output canvas for stream capture (2D context for captureStream compatibility)
         this.outputCanvas = document.createElement("canvas");
@@ -72,9 +126,6 @@ export class MediaPipeTasksVisionTransformer implements BackgroundTransformer {
         try {
             await this.initializeMediaPipe();
             await this.loadBackgroundResources();
-            // Initialize canvases for optimized rendering
-            this.initializeBlurredCanvas();
-            this.initializeForegroundCanvas();
         } catch (error) {
             console.error("[MediaPipe Tasks Vision] Initialization failed:", error);
             throw error;
@@ -133,11 +184,16 @@ export class MediaPipeTasksVisionTransformer implements BackgroundTransformer {
 
         // Create DrawingUtils with the same WebGL context
         this.drawingUtils = new DrawingUtils(this.gl);
+        this.blurCompositor = new TasksVisionBlurCompositor(this.gl, this.glCanvas);
     }
 
-    private initializeBlurredCanvas(): void {
-        this.blurredCanvas = document.createElement("canvas");
-        this.blurredCtx = this.blurredCanvas.getContext("2d")!;
+    private createGlCanvas(): HTMLCanvasElement {
+        return document.createElement("canvas");
+    }
+
+    private initializeFallbackBlurredCanvas(): void {
+        this.fallbackBlurredCanvas = document.createElement("canvas");
+        this.fallbackBlurredCtx = this.fallbackBlurredCanvas.getContext("2d")!;
     }
 
     private initializeForegroundCanvas(): void {
@@ -185,10 +241,7 @@ export class MediaPipeTasksVisionTransformer implements BackgroundTransformer {
 
         // Skip processing if canvas has invalid dimensions
         if (!width || !height || width === 0 || height === 0) {
-            if (this.timeoutId) {
-                clearTimeout(this.timeoutId);
-            }
-            this.timeoutId = setTimeout(() => this.processFrame(), this.frameRate);
+            this.scheduleNextFrame();
             return;
         }
 
@@ -197,59 +250,149 @@ export class MediaPipeTasksVisionTransformer implements BackgroundTransformer {
         const videoHeight = this.inputVideo.videoHeight;
 
         if (!videoWidth || !videoHeight || videoWidth === 0 || videoHeight === 0) {
-            if (this.timeoutId) {
-                clearTimeout(this.timeoutId);
-            }
-            this.timeoutId = setTimeout(() => this.processFrame(), this.frameRate);
+            this.scheduleNextFrame();
             return;
         }
 
         if (this.inputVideo.readyState < 2) {
             // Video not ready yet, retry
-            if (this.timeoutId) {
-                clearTimeout(this.timeoutId);
-            }
-            this.timeoutId = setTimeout(() => this.processFrame(), this.frameRate);
+            this.scheduleNextFrame();
             return;
         }
 
         try {
-            // Calculate timestamp in microseconds (MediaPipe requires microseconds)
-            // Use a global timestamp that never resets to ensure strict monotonic increase
-            // This is critical: MediaPipe requires timestamps to be STRICTLY increasing
-            const currentTime = performance.now();
-            let timestampMicroseconds = Math.floor((currentTime - this.globalStartTime) * 1000);
-
-            // Ensure timestamp is strictly greater than the last one
-            // performance.now() can return the same value on rapid calls, causing MediaPipe errors
-            if (timestampMicroseconds <= this.lastTimestampMicroseconds) {
-                timestampMicroseconds = this.lastTimestampMicroseconds + 1;
-            }
-            this.lastTimestampMicroseconds = timestampMicroseconds;
+            // The Tasks Vision API expects milliseconds and requires monotonically increasing values.
+            const timestampMs = Math.max(performance.now(), this.lastTimestampMs + 1);
+            this.lastTimestampMs = timestampMs;
 
             // Segment the current video frame
-            const result = this.imageSegmenter.segmentForVideo(this.inputVideo, timestampMicroseconds);
-
-            if (result.confidenceMasks && result.confidenceMasks.length > 0) {
-                this.processResults(result.confidenceMasks[0]);
+            const result = this.imageSegmenter.segmentForVideo(this.inputVideo, timestampMs);
+            try {
+                if (result.confidenceMasks && result.confidenceMasks.length > 0) {
+                    this.processResults(result.confidenceMasks[0]);
+                }
+                // Silently skip if no mask - this can happen occasionally and is not critical
+            } finally {
+                result.close();
             }
-            // Silently skip if no mask - this can happen occasionally and is not critical
 
-            // Schedule next frame
-            if (this.timeoutId) {
-                clearTimeout(this.timeoutId);
-            }
-            this.timeoutId = setTimeout(() => this.processFrame(), this.frameRate);
+            this.markSuccessfulFrame();
+            this.scheduleNextFrame();
         } catch (error) {
-            console.error("[MediaPipe Tasks Vision] : ", error);
-            this.timeoutId = setTimeout(() => this.processFrame(), this.frameRate);
+            this.startRecovery(error);
+        }
+    }
+
+    private scheduleNextFrame(): void {
+        this.cancelScheduledFrame();
+        if (this.closed || !this.outputStream || this.config.mode === "none") {
             return;
         }
+        this.timeoutId = setTimeout(() => this.processFrame(), this.frameIntervalMs);
+    }
+
+    private cancelScheduledFrame(): void {
+        if (this.timeoutId) {
+            clearTimeout(this.timeoutId);
+            this.timeoutId = null;
+        }
+    }
+
+    private markSuccessfulFrame(): void {
+        if (this.consecutiveRecoveryAttempts === 0) {
+            return;
+        }
+
+        this.successfulFramesSinceRecovery++;
+        if (this.successfulFramesSinceRecovery >= SUCCESSFUL_FRAMES_BEFORE_RECOVERY_RESET) {
+            this.consecutiveRecoveryAttempts = 0;
+            this.successfulFramesSinceRecovery = 0;
+        }
+    }
+
+    private startRecovery(error: unknown): void {
+        if (this.closed || this.recoveryPromise) {
+            return;
+        }
+
+        this.cancelScheduledFrame();
+        const errorMessage = error instanceof Error ? `${error.name}: ${error.message}` : String(error);
+        const inputTrack =
+            this.inputVideo.srcObject instanceof MediaStream
+                ? this.inputVideo.srcObject.getVideoTracks()[0]
+                : undefined;
+        console.error(
+            `[MediaPipe Tasks Vision] Frame processing failed: ${errorMessage}; ` +
+                `timestampMs=${this.lastTimestampMs}; videoTime=${this.inputVideo.currentTime}; ` +
+                `readyState=${this.inputVideo.readyState}; trackState=${inputTrack?.readyState ?? "unavailable"}; ` +
+                `visibility=${document.visibilityState}; webGlContextLost=${this.gl?.isContextLost() ?? true}`,
+        );
+
+        this.recoveryPromise = this.recoverMediaPipe()
+            .catch((recoveryError: unknown) => {
+                const recoveryErrorMessage =
+                    recoveryError instanceof Error
+                        ? `${recoveryError.name}: ${recoveryError.message}`
+                        : String(recoveryError);
+                console.error(`[MediaPipe Tasks Vision] Recovery failed: ${recoveryErrorMessage}`);
+
+                const terminalError = new Error("MediaPipe Tasks Vision recovery failed", {
+                    cause: recoveryError,
+                });
+                this.close();
+                try {
+                    this.onTerminalFailure?.(terminalError);
+                } catch (callbackError) {
+                    console.error("[MediaPipe Tasks Vision] Terminal failure handler failed:", callbackError);
+                }
+            })
+            .finally(() => {
+                this.recoveryPromise = null;
+            });
+    }
+
+    private async recoverMediaPipe(): Promise<void> {
+        if (this.closed || this.consecutiveRecoveryAttempts >= MAX_CONSECUTIVE_RECOVERY_ATTEMPTS) {
+            throw new Error("MediaPipe recovery attempts exhausted");
+        }
+
+        if (this.captureBackend === "webgl-capture") {
+            throw new Error("Cannot replace a WebGL canvas while its video track is being captured");
+        }
+
+        this.consecutiveRecoveryAttempts++;
+        this.successfulFramesSinceRecovery = 0;
+
+        this.disposeMediaPipeResources();
+        this.glCanvas = this.createGlCanvas();
+        this.glCanvas.width = this.outputCanvas.width;
+        this.glCanvas.height = this.outputCanvas.height;
+
+        try {
+            await this.initializeMediaPipe();
+        } catch (error) {
+            if (this.consecutiveRecoveryAttempts >= MAX_CONSECUTIVE_RECOVERY_ATTEMPTS) {
+                throw error;
+            }
+            return this.recoverMediaPipe();
+        }
+
+        if (this.closed) {
+            this.disposeMediaPipeResources();
+            return;
+        }
+        if (!this.outputStream || this.config.mode === "none") {
+            return;
+        }
+
+        console.info(
+            `[MediaPipe Tasks Vision] Recovered after attempt ${this.consecutiveRecoveryAttempts}/${MAX_CONSECUTIVE_RECOVERY_ATTEMPTS}`,
+        );
+        this.scheduleNextFrame();
     }
 
     private processResults(mask: MPMask): void {
         if (this.closed) {
-            mask.close();
             return;
         }
 
@@ -257,7 +400,6 @@ export class MediaPipeTasksVisionTransformer implements BackgroundTransformer {
 
         // Skip processing if canvas has invalid dimensions
         if (!width || !height || width === 0 || height === 0) {
-            mask.close();
             console.warn(
                 `[MediaPipe Tasks Vision] Skipping frame processing: canvas dimensions are ${width}x${height}`,
             );
@@ -269,19 +411,15 @@ export class MediaPipeTasksVisionTransformer implements BackgroundTransformer {
         } else if (this.config.mode === "image" || this.config.mode === "video") {
             this.processReplaceMode(mask);
         } else {
-            mask.close();
             throw new Error(`[MediaPipe Tasks Vision] Unknown mode: ${this.config.mode}`);
         }
 
-        // Clean up mask resources
-        mask.close();
-
-        // Copy from WebGL canvas to output canvas for stream capture
-        this.outputCtx.drawImage(this.glCanvas, 0, 0, width, height);
-
-        // Ensure WebGL operations are flushed for captureStream
+        // Submit WebGL operations before copying to the stable capture canvas.
         if (this.gl) {
             this.gl.flush();
+        }
+        if (this.captureBackend === "2d-copy-capture") {
+            this.outputCtx.drawImage(this.glCanvas, 0, 0, width, height);
         }
 
         this.frameCount++;
@@ -291,33 +429,44 @@ export class MediaPipeTasksVisionTransformer implements BackgroundTransformer {
         const { width, height } = this.outputCanvas;
 
         // Skip processing if canvas has invalid dimensions
-        if (!width || !height || width === 0 || height === 0 || !this.drawingUtils) {
+        if (!width || !height || width === 0 || height === 0) {
             return;
         }
 
-        // For blur mode, we create a blurred version of the input on a 2D canvas
-        // then use DrawingUtils to composite: blurred background + sharp person
-        if (!this.blurredCanvas || !this.blurredCtx) {
-            this.initializeBlurredCanvas();
+        if (this.blurCompositor?.draw(this.inputVideo, mask, width, height, this.config.blurAmount || 15)) {
+            this.blurBackend = "webgl-blur";
+            return;
+        }
+
+        if (!this.drawingUtils) {
+            this.blurBackend = "none";
+            return;
+        }
+
+        if (!this.fallbackBlurredCanvas || !this.fallbackBlurredCtx) {
+            this.initializeFallbackBlurredCanvas();
         }
         if (!this.foregroundCanvas || !this.foregroundCtx) {
             this.initializeForegroundCanvas();
         }
 
         // Ensure canvas dimensions match
-        if (this.blurredCanvas!.width !== width || this.blurredCanvas!.height !== height) {
-            this.blurredCanvas!.width = width;
-            this.blurredCanvas!.height = height;
+        if (this.fallbackBlurredCanvas!.width !== width || this.fallbackBlurredCanvas!.height !== height) {
+            this.fallbackBlurredCanvas!.width = width;
+            this.fallbackBlurredCanvas!.height = height;
         }
         if (this.foregroundCanvas!.width !== width || this.foregroundCanvas!.height !== height) {
             this.foregroundCanvas!.width = width;
             this.foregroundCanvas!.height = height;
         }
 
-        // Draw blurred background onto the blurred canvas (using CSS filter)
-        this.blurredCtx!.filter = `blur(${this.config.blurAmount || 15}px)`;
-        this.blurredCtx!.drawImage(this.inputVideo, 0, 0, width, height);
-        this.blurredCtx!.filter = "none";
+        this.blurBackend = this.blurRenderer.drawBlurredImage(
+            this.fallbackBlurredCtx!,
+            this.inputVideo,
+            width,
+            height,
+            this.config.blurAmount || 15,
+        );
 
         // Draw current video frame to foreground canvas (HTMLCanvasElement is faster than HTMLVideoElement)
         this.foregroundCtx!.drawImage(this.inputVideo, 0, 0, width, height);
@@ -325,11 +474,10 @@ export class MediaPipeTasksVisionTransformer implements BackgroundTransformer {
         // Use DrawingUtils to composite:
         // - defaultTexture (low confidence = background) = blurred canvas
         // - overlayTexture (high confidence = person) = foreground canvas
-        // Using HTMLCanvasElement instead of HTMLVideoElement avoids GPU texture re-upload
         this.drawingUtils.drawConfidenceMask(
             mask,
-            this.blurredCanvas!, // Background: blurred video
-            this.foregroundCanvas!, // Foreground: sharp person (canvas for better perf)
+            this.fallbackBlurredCanvas!, // Background: blurred video
+            this.foregroundCanvas!, // Foreground: sharp person
         );
     }
 
@@ -413,36 +561,6 @@ export class MediaPipeTasksVisionTransformer implements BackgroundTransformer {
         return null;
     }
 
-    private drawBackground(): void {
-        const { width, height } = this.outputCanvas;
-
-        switch (this.config.mode) {
-            case "image":
-                if (this.backgroundImage) {
-                    // Scale image to fit canvas while maintaining aspect ratio
-                    const scale = Math.max(width / this.backgroundImage.width, height / this.backgroundImage.height);
-                    const scaledWidth = this.backgroundImage.width * scale;
-                    const scaledHeight = this.backgroundImage.height * scale;
-                    const x = (width - scaledWidth) / 2;
-                    const y = (height - scaledHeight) / 2;
-
-                    this.outputCtx.drawImage(this.backgroundImage, x, y, scaledWidth, scaledHeight);
-                }
-                break;
-
-            case "video":
-                if (this.backgroundVideo) {
-                    this.outputCtx.drawImage(this.backgroundVideo, 0, 0, width, height);
-                }
-                break;
-
-            default:
-                // Solid color fallback
-                this.outputCtx.fillStyle = "#000000";
-                this.outputCtx.fillRect(0, 0, width, height);
-        }
-    }
-
     public async waitForInitialization(): Promise<void> {
         await this.initPromise;
     }
@@ -466,25 +584,19 @@ export class MediaPipeTasksVisionTransformer implements BackgroundTransformer {
             frameCount: this.frameCount,
             elapsed: Math.round(elapsed),
             closed: this.closed,
+            blurBackend: this.config.mode === "blur" ? this.blurBackend : "none",
+            captureBackend: this.captureBackend,
         };
     }
 
     public stop(): void {
-        // Stop timeout
-        if (this.timeoutId) {
-            clearTimeout(this.timeoutId);
-            this.timeoutId = null;
-        }
+        this.cancelScheduledFrame();
     }
 
     public close(): void {
         this.closed = true;
 
-        // Stop timeout
-        if (this.timeoutId) {
-            clearTimeout(this.timeoutId);
-            this.timeoutId = null;
-        }
+        this.cancelScheduledFrame();
 
         // Stop output stream
         if (this.outputStream) {
@@ -492,27 +604,7 @@ export class MediaPipeTasksVisionTransformer implements BackgroundTransformer {
             this.outputStream = null;
         }
 
-        // Close DrawingUtils (frees WebGL resources)
-        if (this.drawingUtils) {
-            try {
-                this.drawingUtils.close();
-            } catch (error) {
-                console.warn("[MediaPipe Tasks Vision] Error closing DrawingUtils:", error);
-            }
-            this.drawingUtils = null;
-        }
-
-        // Close MediaPipe
-        if (this.imageSegmenter) {
-            try {
-                this.imageSegmenter.close();
-            } catch (error) {
-                console.warn("[MediaPipe Tasks Vision] Error closing segmenter:", error);
-            }
-            this.imageSegmenter = null;
-        }
-
-        this.gl = null;
+        this.disposeMediaPipeResources();
 
         // Clean up resources
         if (this.backgroundVideo) {
@@ -522,9 +614,9 @@ export class MediaPipeTasksVisionTransformer implements BackgroundTransformer {
         }
         this.backgroundImage = null;
 
-        // Clean up blurred canvas
-        this.blurredCanvas = null;
-        this.blurredCtx = null;
+        // Clean up fallback canvases
+        this.fallbackBlurredCanvas = null;
+        this.fallbackBlurredCtx = null;
 
         // Clean up background canvas
         this.backgroundCanvas = null;
@@ -533,11 +625,48 @@ export class MediaPipeTasksVisionTransformer implements BackgroundTransformer {
         // Clean up foreground canvas
         this.foregroundCanvas = null;
         this.foregroundCtx = null;
+
+        this.blurRenderer.close();
+        this.inputVideo.pause();
+        this.inputVideo.srcObject = null;
+    }
+
+    private disposeMediaPipeResources(): void {
+        this.blurCompositor?.close();
+        this.blurCompositor = null;
+
+        if (this.drawingUtils) {
+            try {
+                this.drawingUtils.close();
+            } catch (error) {
+                console.warn("[MediaPipe Tasks Vision] Error closing DrawingUtils:", error);
+            }
+            this.drawingUtils = null;
+        }
+
+        if (this.imageSegmenter) {
+            try {
+                this.imageSegmenter.close();
+            } catch (error) {
+                console.warn("[MediaPipe Tasks Vision] Error closing segmenter:", error);
+            }
+            this.imageSegmenter = null;
+        }
+
+        if (this.gl) {
+            // This extension only releases the transformer's context; Phaser uses a different canvas/context.
+            this.gl.getExtension("WEBGL_lose_context")?.loseContext();
+        }
+        this.gl = null;
     }
 
     public async transform(inputStream: MediaStream, signal?: AbortSignal): Promise<MediaStream> {
-        this.frameRate = inputStream.getVideoTracks()[0]?.getSettings().frameRate || 33;
+        this.frameRate = inputStream.getVideoTracks()[0]?.getSettings().frameRate || DEFAULT_FRAME_RATE;
+        this.frameIntervalMs = 1000 / this.frameRate;
         await this.initPromise;
+        if (this.recoveryPromise) {
+            await raceAbort(this.recoveryPromise, signal);
+        }
         if (signal?.aborted) {
             throw signal.reason ?? new AbortError("Transform aborted after initialization");
         }
@@ -593,28 +722,51 @@ export class MediaPipeTasksVisionTransformer implements BackgroundTransformer {
             }
         }
 
-        // Create output stream from the 2D output canvas
-        this.outputStream = this.outputCanvas.captureStream(this.frameRate);
+        this.outputStream = this.createOutputStream();
 
         // Copy audio tracks from the original stream
         for (const audioTrack of inputStream.getAudioTracks()) {
             this.outputStream.addTrack(audioTrack);
         }
 
-        // Don't reset timestamp - keep it monotonic across stream changes
-        // MediaPipe requires strictly increasing timestamps, so we use a global timestamp
-        // that never resets
-
         // Stop any existing processing loop before starting a new one
         // This prevents race conditions when transform() is called multiple times
-        if (this.timeoutId) {
-            clearTimeout(this.timeoutId);
-            this.timeoutId = null;
-        }
+        this.cancelScheduledFrame();
 
         // Start processing loop
         this.processFrame();
 
         return this.outputStream;
+    }
+
+    private createOutputStream(): MediaStream {
+        if (this.canAttemptWebGlCapture()) {
+            try {
+                const stream = this.glCanvas.captureStream(this.frameRate);
+                if (stream.getVideoTracks().length > 0) {
+                    this.captureBackend = "webgl-capture";
+                    logCaptureBackend(this.captureBackend);
+                    return stream;
+                }
+
+                this.directWebGlCaptureUnavailable = true;
+                logWebGlCaptureFailure(new Error("WebGL canvas capture returned no video track"));
+            } catch (error) {
+                this.directWebGlCaptureUnavailable = true;
+                logWebGlCaptureFailure(error);
+            }
+        }
+
+        this.captureBackend = "2d-copy-capture";
+        logCaptureBackend(this.captureBackend);
+        return this.outputCanvas.captureStream(this.frameRate);
+    }
+
+    private canAttemptWebGlCapture(): boolean {
+        if (this.directWebGlCaptureUnavailable || typeof this.glCanvas.captureStream !== "function") {
+            return false;
+        }
+
+        return supportsWebGlCanvasCapture();
     }
 }

@@ -44,6 +44,10 @@ const actionbar: DeepPartial<Translation["actionbar"]> = {
         noDevices: "未找到麦克风设备",
         noSoundWarning: "未检测到麦克风声音。可能存在问题 — 请尝试在设置中更换麦克风。",
         noSoundWarningPressEnter: "未检测到麦克风声音。按 Enter 打开设置。",
+        advancedNoiseReduction: "高级降噪",
+        noiseSuppressionInitializing: "正在初始化自定义噪声抑制...",
+        noiseSuppressionUnsupported: "此浏览器无法运行自定义噪声抑制。",
+        noiseSuppressionError: "自定义噪声抑制失败。正在回退到浏览器原生噪声抑制。",
         openSettings: "打开设置",
         ignore: "忽略",
     },
@@ -68,6 +72,7 @@ const actionbar: DeepPartial<Translation["actionbar"]> = {
         SPEAKER: "会议中",
         LIVEKIT: "会议中",
         LISTENER: "会议中",
+        SOUND_BLOCKED: "声音被阻止",
     },
     subtitle: {
         camera: "摄像头",

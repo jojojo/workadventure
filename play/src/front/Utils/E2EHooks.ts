@@ -1,4 +1,8 @@
+import * as Phaser from "phaser";
+import type { ForceFirstPeerUnilateralDestroyResult } from "../Space/SpacePeerManager/SpacePeerManager";
 import { gameManager } from "../Phaser/Game/GameManager";
+
+import Camera = Phaser.Cameras.Scene2D.Camera;
 
 let webRtcConnectionsCount = 0;
 let livekitConnectionsCount = 0;
@@ -17,10 +21,6 @@ interface E2ECoordinateOptions {
 
 interface CameraEffectWithIsRunning {
     isRunning?: boolean;
-}
-
-interface CameraWithTransform extends Phaser.Cameras.Scene2D.Camera {
-    matrix: Phaser.GameObjects.Components.TransformMatrix;
 }
 
 const DEFAULT_COORDINATE_STABILITY_TIMEOUT_MS = 10_000;
@@ -45,7 +45,7 @@ function isEffectRunning(effect: CameraEffectWithIsRunning | undefined): boolean
     return effect?.isRunning === true;
 }
 
-function hasRunningCameraEffect(camera: Phaser.Cameras.Scene2D.Camera): boolean {
+function hasRunningCameraEffect(camera: Camera): boolean {
     return (
         isEffectRunning(camera.fadeEffect) ||
         isEffectRunning(camera.flashEffect) ||
@@ -73,11 +73,9 @@ function getGameCanvas(): HTMLCanvasElement {
 function getGameToBrowserCoordinatesSnapshot(gameCoordinates: Coordinates): Coordinates {
     const scene = gameManager.getCurrentGameScene();
     const camera = scene.getCameraManager().getCamera();
-    const cameraWithTransform = camera as CameraWithTransform;
 
-    // camera.preRender() must be called before accessing worldView or the camera matrix to ensure it is up to date.
+    // camera.preRender() must be called before accessing worldView or camera matrices to ensure they are up to date.
     // See the same pattern in GameScene.connect().
-    // @ts-ignore preRender is protected, but Phaser documents it as the way to refresh worldView.
     camera.preRender();
 
     const canvas = getGameCanvas();
@@ -86,11 +84,7 @@ function getGameToBrowserCoordinatesSnapshot(gameCoordinates: Coordinates): Coor
     const canvasInternalHeight = canvas.height || camera.height;
     const scaleX = canvasRect.width / canvasInternalWidth;
     const scaleY = canvasRect.height / canvasInternalHeight;
-    const canvasPoint = cameraWithTransform.matrix.transformPoint(
-        gameCoordinates.x - camera.scrollX,
-        gameCoordinates.y - camera.scrollY,
-        { x: 0, y: 0 },
-    );
+    const canvasPoint = camera.matrixCombined.transformPoint(gameCoordinates.x, gameCoordinates.y, { x: 0, y: 0 });
     const x = canvasRect.left + canvasPoint.x * scaleX;
     const y = canvasRect.top + canvasPoint.y * scaleY;
     const roundTrip = camera.getWorldPoint(canvasPoint.x, canvasPoint.y);
@@ -199,6 +193,49 @@ function testWebRtcRetry(): { spaceName: string; userId: string; triggered: bool
 }
 
 /**
+ * [DEBUG] Unilaterally destroys a WebRTC peer to test the retry mechanism.
+ * This simulates an unexpected local peer destruction without asking the remote peer to close.
+ * @returns Information about the triggered failure, or null if no peers found
+ */
+async function testWebRtcUnilateralDestroyRetry(): Promise<
+    (ForceFirstPeerUnilateralDestroyResult & { spaceName: string }) | null
+> {
+    try {
+        const spaceRegistry = gameManager.getCurrentGameScene().spaceRegistry;
+        const spaces = spaceRegistry.getAll();
+
+        const triggerForSpace = async (
+            spaceIndex: number,
+        ): Promise<(ForceFirstPeerUnilateralDestroyResult & { spaceName: string }) | null> => {
+            const space = spaces[spaceIndex];
+            if (!space) {
+                console.warn("[DEBUG] No active video peers found in any space to test unilateral destroy retry");
+                return null;
+            }
+
+            const simplePeer = space.simplePeer;
+            if (simplePeer) {
+                const result = await simplePeer.forceFirstPeerUnilateralDestroy();
+                if (result) {
+                    console.info("[DEBUG] WebRTC unilateral destroy retry test triggered", {
+                        spaceName: space.getName(),
+                        ...result,
+                    });
+                    return { spaceName: space.getName(), ...result };
+                }
+            }
+
+            return triggerForSpace(spaceIndex + 1);
+        };
+
+        return await triggerForSpace(0);
+    } catch (error) {
+        console.error("[DEBUG] Error while triggering WebRTC unilateral destroy retry test:", error);
+        return null;
+    }
+}
+
+/**
  * [DEBUG] Forces a server disconnected event to test the reconnection flow (connection issue toast, wait for pusher, reload scene).
  * Emits on the current RoomConnection's serverDisconnected subject so the same handlers as a real disconnect run.
  * @returns { triggered: true } if the event was emitted, or null if not in a game scene or no connection
@@ -293,6 +330,10 @@ export const e2eHooks = {
      * [DEBUG] Forces a WebRTC peer failure to test the retry mechanism.
      */
     testWebRtcRetry,
+    /**
+     * [DEBUG] Unilaterally destroys a WebRTC peer to test the retry mechanism.
+     */
+    testWebRtcUnilateralDestroyRetry,
     /**
      * [DEBUG] Forces a LiveKit WebSocket close to test the reconnection mechanism.
      */

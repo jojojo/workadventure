@@ -7,6 +7,7 @@ const mapEditor: DeepPartial<Translation["mapEditor"]> = {
         deletePrompt: "Este mapa foi excluído",
         deletePromptSubtitle: "Você foi desconectado desta sala.",
         deletePromptDetails: "Atualizar não restaurará este mapa porque ele não existe mais.",
+        editionFailed: "Não foi possível salvar sua alteração e ela foi desfeita.",
     },
     sideBar: {
         areaEditor: "Ferramenta de editor de área",
@@ -75,7 +76,6 @@ const mapEditor: DeepPartial<Translation["mapEditor"]> = {
                 cancel: "Cancelar",
                 validate: "Validar",
             },
-            disabled: "Integração Jitsi está desabilitada para esta sala ❌",
             actionButtonLabel: "Iniciar reunião Jitsi",
         },
         playAudio: {
@@ -123,14 +123,12 @@ const mapEditor: DeepPartial<Translation["mapEditor"]> = {
                 'Os usuários no pódio (palco) podem falar com todos os participantes na área "Audiência" correspondente.',
             nameLabel: "Nome",
             namePlaceholder: "PalcoPrincipal",
-            disabled: "O pódio está desabilitado para esta sala ❌",
             actionButtonLabel: "Entrar no pódio",
         },
         listenerMegaphone: {
             label: "Audiência",
             description: "Os usuários na área da audiência podem ouvir o palestrante no pódio vinculado.",
             nameLabel: "Nome do Pódio",
-            disabled: "A audiência está desabilitada para esta sala ❌",
             namePlaceholder: "MinhaZonaPalestrante",
             waitingMediaLinkLabel: "Mídia exibida antes do início da transmissão",
             waitingMediaLinkPlaceholder: "https://www… (insira a URL da mídia)",

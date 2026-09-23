@@ -7,6 +7,7 @@ const mapEditor: DeepPartial<Translation["mapEditor"]> = {
         deletePrompt: "此地图已被删除",
         deletePromptSubtitle: "你已与此房间断开连接。",
         deletePromptDetails: "刷新不会恢复此地图，因为它已经不存在了。",
+        editionFailed: "您的更改无法保存，已被撤销。",
     },
     sideBar: {
         areaEditor: "区域编辑器工具",
@@ -75,7 +76,6 @@ const mapEditor: DeepPartial<Translation["mapEditor"]> = {
                 cancel: "取消",
                 validate: "验证",
             },
-            disabled: "此房间的 Jitsi 集成已禁用 ❌",
             actionButtonLabel: "开始 Jitsi 会议",
         },
         playAudio: {
@@ -121,14 +121,12 @@ const mapEditor: DeepPartial<Translation["mapEditor"]> = {
             description: '讲台（舞台）上的用户可以向匹配的"观众"区域中的所有与会者讲话。',
             nameLabel: "名称",
             namePlaceholder: "主舞台",
-            disabled: "此房间的讲台已禁用 ❌",
             actionButtonLabel: "加入讲台",
         },
         listenerMegaphone: {
             label: "观众",
             description: "观众区域的用户可以听到链接讲台上的演讲者。",
             nameLabel: "讲台名称",
-            disabled: "此房间的观众已禁用 ❌",
             namePlaceholder: "我的演讲者区域",
             waitingMediaLinkLabel: "直播开始前显示的媒体",
             waitingMediaLinkPlaceholder: "https://www....",

@@ -52,6 +52,12 @@ export type EventSocket = ServerWritableStream<EventRequest, EventResponse>;
 const PONG_TIMEOUT = 70000; // PONG_TIMEOUT is > 1 minute because of Chrome heavy throttling. See: https://docs.google.com/document/d/11FhKHRcABGS4SWPFGwoL6g0ALMqrFKapCk5ZTKKupEk/edit#
 const PING_INTERVAL = 80000;
 
+// Maximum number of zones a single pusher connection (i.e. a single listenRoom stream) may subscribe to for a room.
+// The pusher already bounds the size of a viewport, this is a safety net so that a buggy or hostile pusher cannot
+// make the back accumulate an unbounded number of zone listeners. The bound is very generous: it corresponds to a
+// map of about 70 000 x 70 000 pixels (roughly 2200 x 2200 tiles) entirely covered by players.
+const MAX_SUBSCRIBED_ZONES_PER_ROOM_SOCKET = 50_000;
+
 const roomManager = {
     connectToRoom: (call: UserSocket): void => {
         let room: GameRoom | null = null;
@@ -87,10 +93,12 @@ const roomManager = {
                         }
                     } else if (message.message.$case === "joinRoomMessage") {
                         if (room === null) {
-                            console.error("joinRoomMessage received before connectToRoomMessage");
-                            Sentry.captureMessage("joinRoomMessage received before connectToRoomMessage");
-                            emitError(call, new Error("joinRoomMessage received before connectToRoomMessage"));
-                            call.end();
+                            const reason = "joinRoomMessage received before connectToRoomMessage";
+                            console.error(reason);
+                            Sentry.captureMessage(reason);
+                            emitError(call, new Error(reason));
+                            // closeConnection() also clears the ping interval, which a bare call.end() would leak.
+                            closeConnection(reason);
                             return;
                         }
                         const myUser = await socketManager.handleJoinRoom(call, room, message.message.joinRoomMessage);
@@ -180,7 +188,7 @@ const roomManager = {
                             break;
                         }
                         case "pingMessage": {
-                            // Do nothing
+                            // Do nothing (we are already removing the "pong timeout" when any message is received)
                             break;
                         }
                         case "askPositionMessage": {
@@ -336,6 +344,8 @@ const roomManager = {
         debug("listenRoom called");
         let roomId: string | null = null;
         const subscribedZones = new Map<string, { x: number; y: number }>();
+        let zoneLimitReported = false;
+        let zonesCleanedUp = false;
         // We use this promise to serialize the processing of incoming messages. Only one message is processed at a time.
         let messageProcessingPromise = Promise.resolve();
 
@@ -367,6 +377,19 @@ const roomManager = {
                                     console.warn(
                                         `WARNING: Double subscription to zone (${subscribeMessage.x},${subscribeMessage.y}) in room ${roomId}. This indicates a bug in the pusher.`,
                                     );
+                                    return;
+                                }
+
+                                if (subscribedZones.size >= MAX_SUBSCRIBED_ZONES_PER_ROOM_SOCKET) {
+                                    // The pusher will keep sending subscriptions, so we only report the first
+                                    // refusal (the error is logged, sent to Sentry and pushed back on the socket)
+                                    // and stay silent afterwards.
+                                    if (!zoneLimitReported) {
+                                        zoneLimitReported = true;
+                                        throw new Error(
+                                            `Too many subscribed zones (${subscribedZones.size}) for room ${roomId}. Refusing subscription to zone (${subscribeMessage.x},${subscribeMessage.y}). This indicates a bug in the pusher or an oversized viewport sent by a client.`,
+                                        );
+                                    }
                                     return;
                                 }
 
@@ -419,17 +442,24 @@ const roomManager = {
         });
 
         const cleanupAllZones = async () => {
-            if (roomId !== null) {
-                try {
-                    await socketManager.removeRoomListener(call, roomId);
-                } finally {
-                    const theRoomId = roomId;
-                    await Promise.all(
-                        Array.from(subscribedZones.values()).map((zone) =>
-                            socketManager.removeZoneListener(call, theRoomId, zone.x, zone.y),
-                        ),
-                    );
-                }
+            // This function is called from the "cancelled", "close" and "error" handlers, which may all fire for a
+            // single disconnection. Only the first call does anything: replaying it would call removeRoomListener
+            // again, which throws once the room has been deleted by cleanupRoomIfEmpty (pure Sentry noise during
+            // disconnect storms).
+            if (roomId === null || zonesCleanedUp) {
+                return;
+            }
+            zonesCleanedUp = true;
+            const theRoomId = roomId;
+            try {
+                await socketManager.removeRoomListener(call, theRoomId);
+            } finally {
+                // No Promise.all here: the removals are synchronous once the room is resolved, and the number of
+                // subscribed zones is not bounded by anything we control on this side (Promise.all throws a
+                // RangeError above 2^21 elements).
+                const zones = Array.from(subscribedZones.values());
+                subscribedZones.clear();
+                await socketManager.removeZoneListeners(call, theRoomId, zones);
             }
         };
 
@@ -515,7 +545,13 @@ const roomManager = {
     sendAdminMessage(call: ServerUnaryCall<AdminMessage, Empty>, callback: sendUnaryData<Empty>): void {
         const adminMessage = call.request;
         socketManager
-            .sendAdminMessage(adminMessage.roomId, adminMessage.recipientUuid, adminMessage.message, adminMessage.type)
+            .sendAdminMessage(
+                adminMessage.roomId,
+                adminMessage.recipientUuid,
+                adminMessage.message,
+                adminMessage.type,
+                adminMessage.id,
+            )
             .catch((e) => {
                 console.error(e);
                 Sentry.captureException(e);

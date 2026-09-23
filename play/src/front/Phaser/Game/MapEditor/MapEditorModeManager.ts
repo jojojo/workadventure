@@ -19,6 +19,7 @@ import { localUserStore } from "../../../Connection/LocalUserStore";
 import LL from "../../../../i18n/i18n-svelte";
 import { gameManager } from "../GameManager";
 import { isInsidePersonalAreaStore, personalAreaDataStore } from "../../../Stores/PersonalDeskStore";
+import { warningMessageStore } from "../../../Stores/ErrorStore";
 import { AreaEditorTool } from "./Tools/AreaEditorTool";
 import type { MapEditorTool } from "./Tools/MapEditorTool";
 import { FloorEditorTool } from "./Tools/FloorEditorTool";
@@ -333,16 +334,20 @@ export class MapEditorModeManager {
         connection.editMapCommandMessageStream.subscribe((editMapCommandMessage) => {
             limit(async () => {
                 if (editMapCommandMessage.editMapMessage?.message?.$case === "errorCommandMessage") {
-                    logger(
-                        "ErrorCommandMessage received",
-                        editMapCommandMessage.editMapMessage?.message.errorCommandMessage,
-                    );
+                    const reason = editMapCommandMessage.editMapMessage.message.errorCommandMessage.reason;
+                    logger("ErrorCommandMessage received", reason);
                     const command = this.pendingCommands.find(
                         (command) => command.commandId === editMapCommandMessage.id,
                     );
                     if (command) {
-                        logger("removing command of pendingList : ", editMapCommandMessage.id);
-                        this.pendingCommands.splice(this.pendingCommands.indexOf(command), 1);
+                        // The server refused the command, so the optimistic local state is now wrong.
+                        // Roll back every pending command: the ones the server did accept come back
+                        // through this same stream and are re-applied as remote commands.
+                        // Nothing is reported here: map-storage already logged the cause with its
+                        // original stack, and a refusal is also the expected answer to a command the
+                        // user was not allowed to run.
+                        await this.revertPendingCommands();
+                        warningMessageStore.addWarningMessage(get(LL).mapEditor.map.editionFailed());
                     }
                     return;
                 }
@@ -415,6 +420,22 @@ export class MapEditorModeManager {
             this.activateTool();
         }
         mapEditorSelectedToolStore.set(tool);
+    }
+
+    public returnToLastMode(): boolean {
+        if (!this.active) {
+            return false;
+        }
+
+        // Only restore exploration when it is the currently active tool. Relying on the
+        // last used tool could switch the active editor tool (Area/Floor/Entity...) to
+        // exploration mode when the Woka menu is closed, which is not desired.
+        if (this.activeTool === EditorToolName.ExploreTheRoom) {
+            this.scene.getCameraManager().setExplorationMode();
+            return true;
+        }
+
+        return false;
     }
 
     private emitMapEditorUpdate(command: FrontCommandInterface, delay = 0): void {

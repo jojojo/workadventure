@@ -7,6 +7,7 @@ const mapEditor: DeepPartial<Translation["mapEditor"]> = {
         deletePrompt: "Aquest mapa s'ha suprimit",
         deletePromptSubtitle: "Se t'ha desconnectat d'aquesta sala.",
         deletePromptDetails: "Actualitzar no restaurarà aquest mapa perquè ja no existeix.",
+        editionFailed: "No s'ha pogut desar el teu canvi i s'ha desfet.",
     },
     sideBar: {
         areaEditor: "Eina d'edició d'àrees",
@@ -75,7 +76,6 @@ const mapEditor: DeepPartial<Translation["mapEditor"]> = {
                 cancel: "Cancel·lar",
                 validate: "Validar",
             },
-            disabled: "La integració de Jitsi està desactivada per a aquesta sala ❌",
             actionButtonLabel: "Iniciar una reunió Jitsi",
         },
         playAudio: {
@@ -122,14 +122,12 @@ const mapEditor: DeepPartial<Translation["mapEditor"]> = {
                 'Els usuaris al pòdium (escenari) poden parlar a tots els assistents a l\'àrea "Audiència" corresponent.',
             nameLabel: "Nom",
             namePlaceholder: "EscenariPrincipal",
-            disabled: "El pòdium està desactivat per a aquesta sala ❌",
             actionButtonLabel: "Unir-se al pòdium",
         },
         listenerMegaphone: {
             label: "Audiència",
             description: "Els usuaris a l'àrea d'audiència poden escoltar l'orador al pòdium vinculat.",
             nameLabel: "Nom del pòdium",
-            disabled: "L'audiència està desactivada per a aquesta sala ❌",
             namePlaceholder: "LaMevaZonaDeParlant",
             waitingMediaLinkLabel: "Mitjà a mostrar abans que comenci la transmissió en directe",
             waitingMediaLinkPlaceholder: "https://www....",

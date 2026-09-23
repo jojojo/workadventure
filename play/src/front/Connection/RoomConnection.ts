@@ -1100,6 +1100,20 @@ export class RoomConnection implements RoomConnection {
         });
     }
 
+    /**
+     * Acknowledges a message sent by a moderator, so the admin never displays it again.
+     */
+    public emitUserMessageRead(adminMessageId: string): void {
+        this.send({
+            message: {
+                $case: "userMessageReadMessage",
+                userMessageReadMessage: {
+                    id: adminMessageId,
+                },
+            },
+        });
+    }
+
     public emitBanPlayerMessage(banUserUuid: string, banUserName: string): void {
         this.send({
             message: {
@@ -1815,6 +1829,26 @@ export class RoomConnection implements RoomConnection {
         return nonUndefinedRecordingsAnswer;
     }
 
+    /**
+     * Signed URLs of the thumbnails of one recording, for the hover preview. The recordings list only
+     * carries one poster per recording, so these are fetched only for the recording being hovered.
+     */
+    public async queryRecordingThumbnails(baseFilename: string, signal?: AbortSignal): Promise<string[]> {
+        const answer = await this.query(
+            {
+                $case: "getRecordingThumbnailsQuery",
+                getRecordingThumbnailsQuery: {
+                    baseFilename,
+                },
+            },
+            { signal },
+        );
+        if (answer.$case !== "getRecordingThumbnailsAnswer") {
+            throw new Error("Unexpected answer");
+        }
+        return answer.getRecordingThumbnailsAnswer.urls;
+    }
+
     public async getSignedUrl(key: string): Promise<string> {
         const answer = await this.query({
             $case: "getSignedUrlQuery",
@@ -1960,7 +1994,16 @@ export class RoomConnection implements RoomConnection {
             console.warn(
                 "Timeout detected. No ping from the server received. Is your connection down? Closing connection.",
             );
-            Sentry.captureMessage("RoomConnection: Ping timeout - closing connection");
+            // A dead connection is a network condition, not a defect: closing here hands over to the
+            // reconnection flow (cleanupConnection emits serverDisconnected, GameScene waits for the
+            // pusher and rebuilds the scene). Reporting it as an event cost ~25k Sentry events a month
+            // without anyone ever acting on one. A breadcrumb keeps it in the timeline of a real error.
+            Sentry.addBreadcrumb({
+                category: "room-connection",
+                level: "info",
+                message: "Ping timeout - closing connection",
+                data: { manualPingDelayMs: manualPingDelay },
+            });
             this.socket.close();
             this.cleanupConnection(false);
         }, manualPingDelay);
@@ -2183,7 +2226,16 @@ export class RoomConnection implements RoomConnection {
 
         if (!this.isRoomJoined && !force) {
             this.eventBeforeRoomJoinedQueue.push(message);
-            Sentry.captureMessage("RoomConnection: Event before room joined queue: " + message.message?.$case);
+            // Expected startup race: the queue is replayed as soon as roomJoinedMessage arrives, so
+            // nothing is lost. Reporting it as an event cost ~19k Sentry events a month for a case
+            // that is handled by design. A breadcrumb keeps the information in the timeline of a real
+            // error instead, at no quota cost.
+            Sentry.addBreadcrumb({
+                category: "room-connection",
+                level: "info",
+                message: "Event queued before room joined",
+                data: { case: message.message?.$case },
+            });
             return;
         }
 

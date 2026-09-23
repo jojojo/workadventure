@@ -48,7 +48,6 @@ export const PUSHER_ADMIN_WS_MAX_BACKPRESSURE_BYTES = env.PUSHER_ADMIN_WS_MAX_BA
 export const ALLOWED_CORS_ORIGIN = env.ALLOWED_CORS_ORIGIN; // Use "*" to allow any domain
 export const PUSHER_URL = env.PUSHER_URL || "";
 export const FRONT_URL = env.FRONT_URL || "";
-export const VITE_URL = env.VITE_URL || FRONT_URL; // Used only in development
 export const PUBLIC_MAP_STORAGE_URL = env.PUBLIC_MAP_STORAGE_URL || "";
 export const INTERNAL_MAP_STORAGE_URL = env.INTERNAL_MAP_STORAGE_URL;
 export const REDIS_HOST = env.REDIS_HOST;
@@ -60,8 +59,9 @@ export const OPID_CLIENT_ISSUER = env.OPENID_CLIENT_ISSUER || env.OPID_CLIENT_IS
 if (OPID_CLIENT_ID && !PUSHER_URL) {
     throw new Error("Missing PUSHER_URL environment variable.");
 }
-export const OPID_CLIENT_REDIRECT_URL = PUSHER_URL + "/openid-callback";
-export const OPID_CLIENT_REDIRECT_LOGOUT_URL = PUSHER_URL + "/logout-callback";
+const PUSHER_URL_WITHOUT_TRAILING_SLASH = PUSHER_URL.replace(/\/+$/, "");
+export const OPID_CLIENT_REDIRECT_URL = PUSHER_URL_WITHOUT_TRAILING_SLASH + "/openid-callback";
+export const OPID_CLIENT_REDIRECT_LOGOUT_URL = PUSHER_URL_WITHOUT_TRAILING_SLASH + "/logout-callback";
 export const OPID_PROFILE_SCREEN_PROVIDER =
     env.OPENID_PROFILE_SCREEN_PROVIDER ||
     env.OPID_PROFILE_SCREEN_PROVIDER ||
@@ -83,7 +83,7 @@ export const OPID_SCOPE = env.OPENID_SCOPE || env.OPID_SCOPE || "openid email pr
 export const OPID_PROMPT =
     env.OPENID_PROMPT || env.OPID_PROMPT || (isUsingDeprecatedOpenIdVariables ? "login" : undefined);
 export const OPID_USERNAME_CLAIM = env.OPENID_USERNAME_CLAIM || env.OPID_USERNAME_CLAIM || "username";
-export const OPID_DISPLAY_NAME_CLAIM = env.OPENID_DISPLAY_NAME_CLAIM || "name";
+export const OPID_DISPLAY_NAME_CLAIM = env.OPENID_DISPLAY_NAME_CLAIM || env.OPID_DISPLAY_NAME_CLAIM || "name";
 export const OPID_LOCALE_CLAIM = env.OPENID_LOCALE_CLAIM || env.OPID_LOCALE_CLAIM || "locale";
 export const OPID_WOKA_NAME_POLICY = env.OPENID_WOKA_NAME_POLICY || env.OPID_WOKA_NAME_POLICY || "user_input";
 export const OPID_TAGS_CLAIM = env.OPENID_TAGS_CLAIM || env.OPID_TAGS_CLAIM || "tags";
@@ -141,6 +141,7 @@ export const TURN_STATIC_AUTH_SECRET: string | undefined = env.TURN_STATIC_AUTH_
 export const TURN_CREDENTIALS_RENEWAL_TIME: number = env.TURN_CREDENTIALS_RENEWAL_TIME;
 
 // RoomAPI
+export const ROOM_API_BIND_HOST = env.ROOM_API_BIND_HOST ?? "[::]";
 export const ROOM_API_PORT = env.ROOM_API_PORT;
 export const ROOM_API_SECRET_KEY = env.ROOM_API_SECRET_KEY;
 
@@ -170,7 +171,9 @@ export const GOOGLE_DRIVE_PICKER_API_KEY = env.GOOGLE_DRIVE_PICKER_API_KEY;
 export const GOOGLE_DRIVE_PICKER_APP_ID = env.GOOGLE_DRIVE_PICKER_APP_ID;
 // Matrix
 export const MATRIX_PUBLIC_URI: string | undefined = env.MATRIX_PUBLIC_URI;
-export const MATRIX_API_URI: string | undefined = env.MATRIX_API_URI;
+export const MATRIX_API_URI: string | undefined = env.MATRIX_API_URI
+    ? env.MATRIX_API_URI.replace(/\/+$/, "") + "/"
+    : env.MATRIX_API_URI;
 export const MATRIX_ADMIN_USER: string | undefined = env.MATRIX_ADMIN_USER;
 export const MATRIX_ADMIN_PASSWORD: string | undefined = env.MATRIX_ADMIN_PASSWORD;
 export const MATRIX_DOMAIN: string | undefined = env.MATRIX_DOMAIN;

@@ -1,6 +1,8 @@
+import * as Phaser from "phaser";
 import { AvailabilityStatus } from "@workadventure/messages";
 import type { GameScene } from "../Game/GameScene";
 import { waScaleManager, WaScaleManagerEvent } from "../Services/WaScaleManager";
+import { PLAYER_NAME_GAP, PLAYER_NAME_HEIGHT } from "./UsernameDisplaySizes";
 import { UsernameMegaphoneDisplay } from "./UsernameMegaphoneDisplay";
 import { UsernameStatusDisplay } from "./UsernameStatusDisplay";
 
@@ -8,14 +10,10 @@ const CORRECTION_RATE = 0.65; // When one game pixel is smaller than one screen 
 const USERNAME_FONT_FAMILY = "Roboto";
 const USERNAME_FONT_SIZE = 10;
 const USERNAME_FONT_WEIGHT = 500;
-const USERNAME_SIZE_ANIMATION_DURATION = 375;
-const USERNAME_SIZE_ANIMATION_EASING = "cubic-bezier(0.2, 0, 0, 1)";
 
 const PLAYER_NAME_BACKGROUND_COLOR = "rgba(27, 42, 65, 0.5)";
 const PLAYER_NAME_BACKGROUND_RADIUS = 8;
-const PLAYER_NAME_HEIGHT = 14;
 const PLAYER_NAME_PADDING = 4;
-const PLAYER_NAME_GAP = 4;
 
 type Position = { x: number; y: number };
 
@@ -29,11 +27,16 @@ export class UsernameDisplay {
     private displayScale: number;
     private readonly statusDisplay: UsernameStatusDisplay;
     private readonly megaphoneDisplay: UsernameMegaphoneDisplay;
-    private sizeAnimation: Animation | undefined;
 
     private readonly onZoomChanged = (zoomModifier: number): void => {
         this.displayScale = this.getDisplayScale(zoomModifier);
-        this.applyStyles();
+        // The ancestor scale we cancel in applyStyles()/applyTransform() is measured from the DOM
+        // layer, so invalidate it and re-apply at render time, once Phaser has updated the layer's
+        // transform for the new zoom. Applying immediately would measure the previous frame's scale.
+        this.gameScene.usernameDomLayer.invalidateAncestorScale();
+        this.scene.events.once(Phaser.Scenes.Events.RENDER, () => {
+            this.applyStyles();
+        });
     };
     private toForeFront: boolean = false;
     private depth: number = 0;
@@ -66,20 +69,19 @@ export class UsernameDisplay {
 
         this.gameScene.usernameDomLayer.addUsername(this.element);
 
+        // The immediate applyStyles() above may have measured the ancestor scale before Phaser
+        // applied the layer transform for this frame. Re-apply once at render time so the initial
+        // scale is measured against the real on-screen transform.
+        this.gameScene.usernameDomLayer.invalidateAncestorScale();
+        this.scene.events.once(Phaser.Scenes.Events.RENDER, () => {
+            this.applyStyles();
+        });
+
         this.scene.game.events.on(WaScaleManagerEvent.ZoomChanged, this.onZoomChanged);
     }
 
     private getDisplayScale(zoomModifier: number): number {
         return Math.max(zoomModifier > 0 ? CORRECTION_RATE / zoomModifier : 1, 1);
-    }
-
-    private showMegaphone(show = true, forceClose = false): void {
-        if (show === this.megaphoneDisplay.isShown()) {
-            return;
-        }
-        this.animateSizeChange(() => {
-            this.megaphoneDisplay.show(show, forceClose);
-        }, show);
     }
 
     public setPlayerNameOutlineColor(outlineColor: number | undefined): void {
@@ -91,9 +93,14 @@ export class UsernameDisplay {
         this.updateUsernameBackgroundColor(outlineColor);
     }
 
-    public setAvailabilityStatus(availabilityStatus: AvailabilityStatus, instant = false, forceClose = false): void {
+    public setAvailabilityStatus(availabilityStatus: AvailabilityStatus, instant = false): void {
         this.statusDisplay.setAvailabilityStatus(availabilityStatus, instant);
-        this.showMegaphone(availabilityStatus === AvailabilityStatus.SPEAKER, forceClose);
+        if (availabilityStatus === AvailabilityStatus.UNCHANGED) {
+            // UNCHANGED is 0, so it would compare unequal to SPEAKER and hide the megaphone, while
+            // the status dot correctly ignores it.
+            return;
+        }
+        this.megaphoneDisplay.show(availabilityStatus === AvailabilityStatus.SPEAKER, instant);
     }
 
     public getAvailabilityStatus(): AvailabilityStatus {
@@ -121,7 +128,6 @@ export class UsernameDisplay {
     }
 
     public destroy(): void {
-        this.stopSizeAnimation();
         this.element.remove();
         this.statusDisplay.destroy();
         this.megaphoneDisplay.destroy();
@@ -143,49 +149,6 @@ export class UsernameDisplay {
             x: this.x,
             y: this.y - (PLAYER_NAME_HEIGHT / 2) * this.displayScale,
         };
-    }
-
-    private animateSizeChange(changeElement: () => void, megaphoneShownAfterChange: boolean): void {
-        this.stopSizeAnimation();
-
-        const previousWidth = this.element.offsetWidth;
-        changeElement();
-        const nextWidth = megaphoneShownAfterChange ? this.element.offsetWidth : this.measureWidthWithoutMegaphone();
-
-        if (previousWidth === nextWidth) {
-            return;
-        }
-
-        this.element.style.overflow = "hidden";
-        this.element.style.width = `${previousWidth}px`;
-
-        this.sizeAnimation = this.element.animate([{ width: `${previousWidth}px` }, { width: `${nextWidth}px` }], {
-            duration: USERNAME_SIZE_ANIMATION_DURATION,
-            easing: USERNAME_SIZE_ANIMATION_EASING,
-        });
-
-        this.sizeAnimation.onfinish = () => {
-            this.sizeAnimation = undefined;
-            this.element.style.overflow = "";
-            this.element.style.width = "";
-        };
-    }
-
-    private stopSizeAnimation(): void {
-        this.sizeAnimation?.cancel();
-        this.sizeAnimation = undefined;
-        this.element.style.overflow = "";
-        this.element.style.width = "";
-    }
-
-    private measureWidthWithoutMegaphone(): number {
-        const previousDisplay = this.megaphoneDisplay.element.style.display;
-
-        this.megaphoneDisplay.element.style.display = "none";
-        const width = this.element.offsetWidth;
-        this.megaphoneDisplay.element.style.display = previousDisplay;
-
-        return width;
     }
 
     private createPlayerNameElement(): HTMLParagraphElement {
@@ -212,14 +175,50 @@ export class UsernameDisplay {
         this.updatePlayerDepth();
     }
 
+    /**
+     * The scale applied through the element's own CSS `transform`.
+     *
+     * This element is a promoted compositing layer (`will-change: transform` + `translate3d`). Safari
+     * rasterizes such a layer's backing store at full resolution ONLY when the element's own
+     * transform is a *minification* (scale < 1); when the own transform is a pure translation
+     * (scale === 1) it caches the bitmap at `devicePixelRatio` and lets the parent transform stretch
+     * it — blurry on a low-DPI screen, but fine on a 2× Retina screen whose backing store is already
+     * twice as dense. That is exactly why the name was blurry at a medium zoom only on the 2K
+     * monitor.
+     *
+     * So we cancel the parent DOM layer's on-screen scale here to bring the layer's total scale to
+     * ≤ 1, which makes the own transform a genuine minification whenever the parent magnifies. We
+     * MEASURE that parent scale from the DOM (`getAncestorScale`) rather than deriving it from
+     * `zoomModifier`/`actualZoom`, because the real value depends on the camera zoom and the device
+     * pixel ratio together and does not match either of those numbers.
+     *
+     * Clamp at 1 so we never magnify: a scale ≥ 1 is the pure-translate/upscale case that blurs on
+     * Safari. When the parent is already minifying (ancestorScale < 1, e.g. zoomed out) the clamp
+     * leaves the own transform at 1, which is fine — minifying a bitmap stays sharp everywhere.
+     */
+    private getTransformScale(): number {
+        return Math.min(1 / this.gameScene.usernameDomLayer.getAncestorScale(), 1);
+    }
+
     private applyTransform(): void {
-        const scale = 1 / waScaleManager.zoomModifier;
+        const scale = this.getTransformScale();
         const position = this.getDomPosition();
         this.element.style.transform = `translate3d(${position.x}px, ${position.y}px, 0) translate(-50%, -50%) scale(${scale})`;
     }
 
+    private getDomScale(): number {
+        // Layout scale for the name (font-size, padding, …). Dividing by the transform scale folds
+        // the part of the zoom compensation that getTransformScale() cannot apply without magnifying
+        // into the layout size, so the element is laid out — and therefore rasterized — at full
+        // resolution. `displayScale / transformScale` keeps the final rendered size independent of
+        // the split: the parent Phaser DOM layer re-applies `ancestorScale`, which cancels the
+        // `1/ancestorScale` the transform removed, leaving the rendered size at
+        // `displayScale * ancestorScale` — unchanged from before this fix.
+        return this.displayScale / this.getTransformScale();
+    }
+
     private applyStyles(): void {
-        const domScale = waScaleManager.zoomModifier * this.displayScale;
+        const domScale = this.getDomScale();
         this.element.style.setProperty("--username-dom-scale", domScale.toString());
         this.element.style.height = `${PLAYER_NAME_HEIGHT * domScale}px`;
         this.element.style.gap = `${PLAYER_NAME_GAP * domScale}px`;

@@ -1,5 +1,6 @@
 <script lang="ts">
     import { defaultColor } from "@workadventure/shared-utils";
+    import { EventType } from "matrix-js-sdk";
     import LL from "../../../../i18n/i18n-svelte";
     import { localUserStore } from "../../../Connection/LocalUserStore";
     import type { ChatRoomMember, ChatRoomMembership, ChatRoomModeration } from "../../Connection/ChatConnection";
@@ -119,10 +120,10 @@
         room.changePermissionLevelFor(member, target.value as ChatPermissionLevel).catch((e) => console.error(e));
     }
 
-    let isRoomAdmin = $derived(room.isCurrentUserRoomAdmin);
     let hasPermissionToInvite = $derived(room.hasPermissionTo("invite", member));
     let hasPermissionToKick = $derived(room.hasPermissionTo("kick", member));
     let hasPermissionToBan = $derived(room.hasPermissionTo("ban", member));
+    let hasPermissionToChangePowerLevels = $derived(room.hasPermissionForRoomStateEvent(EventType.RoomPowerLevels));
 
     let availableRoles = $derived(room.canModifyRoleOf($permissionLevel) ? room.getAllowedRolesToAssign() : []);
     let permissionLevelOptions = $derived(
@@ -143,7 +144,7 @@
 </script>
 
 <div
-    class="wa-chat-item group/chatItem relative mb-[1px] flex flex-col gap-3 px-2 py-2 text-md transition-all hover:bg-white hover:bg-opacity-10 hover:rounded sm:flex-row sm:items-center sm:gap-4"
+    class="wa-chat-item group/chatItem relative mb-[1px] flex flex-col gap-3 px-2 py-2 text-md transition-all hover:bg-white/10 hover:rounded sm:flex-row sm:items-center sm:gap-4"
     data-testid={`${id}-participant`}
 >
     <div class="flex min-w-0 flex-1 items-center gap-3">
@@ -181,13 +182,13 @@
                 value={$permissionLevel}
                 onchange={onPermissionLevelChange}
                 dataTestId={`${id}-permissionLevel`}
-                disabled={!$isRoomAdmin || availableRoles.length === 0 || $membership !== "join"}
+                disabled={!$hasPermissionToChangePowerLevels || availableRoles.length === 0 || $membership !== "join"}
                 outerClass="mb-0 w-full"
                 extraSelectClass="border-white/20 bg-black/20 text-sm"
             />
         </div>
         <div class="flex flex-wrap justify-end gap-1.5">
-            {#if $isRoomAdmin && $hasPermissionToInvite && $membership === "leave"}
+            {#if $hasPermissionToInvite && $membership === "leave"}
                 <button
                     type="button"
                     class="rounded-lg bg-success-900/25 px-2.5 py-1.5 text-xs font-medium text-white/95 transition hover:bg-success-900/45 disabled:opacity-50"
@@ -202,7 +203,7 @@
                     {/if}
                 </button>
             {/if}
-            {#if $isRoomAdmin && $hasPermissionToKick && $membership !== "leave" && $membership !== "ban"}
+            {#if $hasPermissionToKick && $membership !== "leave" && $membership !== "ban"}
                 <button
                     type="button"
                     class="rounded-lg bg-warning-900/25 px-2.5 py-1.5 text-xs font-medium text-white/95 transition hover:bg-warning-900/45 disabled:opacity-50"
@@ -217,7 +218,7 @@
                     {/if}
                 </button>
             {/if}
-            {#if $isRoomAdmin && $hasPermissionToBan}
+            {#if $hasPermissionToBan}
                 {#if $membership === "ban"}
                     <button
                         type="button"

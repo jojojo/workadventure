@@ -15,8 +15,7 @@
     "lint-fix": "DEBUG= eslint --fix src/ --ext .ts",
     "precommit": "lint-staged",
     "pretty": "prettier --write 'src/**/*.{ts,tsx}'",
-    "pretty-check": "prettier --check 'src/**/*.{ts,tsx}'",
-    "push-sentry-sourcemaps": "tsc && sentry-cli releases new $SENTRY_RELEASE && sentry-cli releases files $SENTRY_RELEASE upload-sourcemaps dist && sentry-cli releases finalize $SENTRY_RELEASE"
+    "pretty-check": "prettier --check 'src/**/*.{ts,tsx}'"
   },
   "repository": {
     "type": "git",
@@ -63,7 +62,7 @@
     "openapi3-ts": "^4.5.0",
     "prom-client": "^15.1.3",
     "protobuf-fieldmask": "^2.0.0",
-    "query-string": "^9.3.1",
+    "query-string": "^9.5.1",
     "redis": "^5.12.1",
     "rxjs": "^7.8.2",
     "source-map-support": "^0.5.21",
@@ -72,7 +71,6 @@
     "zod": "^3.25.76"
   },
   "devDependencies": {
-    "@sentry/cli": "^3.4.3",
     "@types/bigbluebutton-js": "^0.2.3",
     "@types/busboy": "^1.5.4",
     "@types/debug": "^4.1.13",

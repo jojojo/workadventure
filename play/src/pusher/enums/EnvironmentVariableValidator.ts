@@ -60,8 +60,6 @@ export const EnvironmentVariables = z.object({
         .describe(
             "Maximum uWebSockets backpressure bytes accepted on admin websocket connections. Defaults to 1048576.",
         ),
-    // Used only in development
-    VITE_URL: z.string().url().optional().describe("URL of the Vite development server (development only)"),
     // Use "*" to allow any domain
     ALLOWED_CORS_ORIGIN: z
         .string()
@@ -174,7 +172,8 @@ export const EnvironmentVariables = z.object({
             }
             return val;
         }),
-    OPID_DISPLAY_NAME_CLAIM: z.string().optional().describe("OpenID claim to use for display name"),
+    OPID_DISPLAY_NAME_CLAIM: z.string().optional().describe("Legacy alias for OPENID_DISPLAY_NAME_CLAIM"),
+    OPENID_DISPLAY_NAME_CLAIM: z.string().optional().describe("OpenID claim to use for display name"),
     OPID_LOCALE_CLAIM: z
         .string()
         .optional()
@@ -221,7 +220,7 @@ export const EnvironmentVariables = z.object({
         .describe("JWT claim to use as the username. Defaults to 'preferred_username'"),
     OPENID_LOCALE_CLAIM: z.string().optional().describe("JWT claim to use for user locale. Defaults to 'locale'"),
     OPENID_WOKA_NAME_POLICY: OpidWokaNamePolicy.optional().describe(
-        "Policy for avatar naming: 'user_input' or 'openid_nickname'",
+        "Policy for avatar naming: 'user_input', 'allow_override_opid', or 'force_opid'",
     ),
     OPENID_TAGS_CLAIM: z.string().optional().describe("JWT claim containing user tags/roles"),
     EXTERNAL_PRESENCE_URL: z
@@ -418,6 +417,7 @@ export const EnvironmentVariables = z.object({
         .describe("The sampling rate for Sentry traces. Only used if SENTRY_DSN is configured. Defaults to 0.1"),
 
     // RoomAPI related environment variables
+    ROOM_API_BIND_HOST: z.string().optional().describe("Bind host for the Room API gRPC server. Defaults to `[::]`."),
     ROOM_API_PORT: PositiveIntAsString.optional()
         .transform((val) => toNumber(val, 50051))
         .describe("Port for the Room API gRPC server. Defaults to 50051"),
@@ -507,7 +507,10 @@ export const EnvironmentVariables = z.object({
     MATRIX_ADMIN_USER: z.string().optional().describe("Matrix administrator username"),
     MATRIX_ADMIN_PASSWORD: z.string().optional().describe("Matrix administrator password"),
     MATRIX_DOMAIN: z.string().optional().describe("Matrix server domain"),
-    MATRIX_AUTO_SYNC: z.string().optional().describe("Enable automatic synchronization of WOKA avatar and display name to Matrix profile (default: true)"),
+    MATRIX_AUTO_SYNC: z
+        .string()
+        .optional()
+        .describe("Enable automatic synchronization of WOKA avatar and display name to Matrix profile (default: true)"),
     EMBEDLY_KEY: z.string().optional().describe("Embedly API key for rich link previews"),
     GRPC_MAX_MESSAGE_SIZE: PositiveIntAsString.optional()
         .or(z.string().max(0))

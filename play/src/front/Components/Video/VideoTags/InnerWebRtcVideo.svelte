@@ -68,10 +68,12 @@
                 lastHeight = height;
                 setDimensions(width, height);
             } else {
-                console.warn("WebRtcVideo: Invalid video element dimensions", {
+                // On startup, there is a small moment where width and height of the video element are 0
+                // (because the container is collapsed)
+                /*console.warn("WebRtcVideo: Invalid video element dimensions", {
                     width,
                     height,
-                });
+                });*/
             }
         };
 
@@ -115,6 +117,9 @@
     });
 
     onDestroy(() => {
+        // The tile is gone: scrolled out of view (VideoBoxOptimizer), tab hidden without Picture-in-Picture
+        // (CenteredVideo), layout change... Tell the sender to stop encoding for us.
+        setDimensions(0, 0);
         if (noVideoOutputDetector) {
             noVideoOutputDetector.destroy();
             noVideoOutputDetector = undefined;

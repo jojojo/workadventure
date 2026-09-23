@@ -1,13 +1,7 @@
 import { describe, expect, it, vi, beforeEach, afterEach } from "vitest";
 import { Subject } from "rxjs";
 import { get, writable } from "svelte/store";
-import {
-    ConnectionQuality,
-    Track,
-    type RemoteParticipant,
-    type RemoteTrack,
-    type RemoteTrackPublication,
-} from "livekit-client";
+import { Track, type RemoteParticipant, type RemoteTrack, type RemoteTrackPublication } from "livekit-client";
 import type { SpaceInterface, SpaceUserExtended } from "../Space/SpaceInterface";
 import type { StreamableSubjects } from "../Space/SpacePeerManager/SpacePeerManager";
 import type { LivekitStreamable, Streamable } from "../Space/Streamable";
@@ -151,7 +145,31 @@ describe("LiveKitParticipant", () => {
             microphoneStream.getAudioTracks()[0],
             scriptingStream.getAudioTracks()[0],
         ]);
-        expect(get(participant.getStreamable().isMuted)).toBe(false);
+        expect(get(participant.getStreamable().hasAudio)).toBe(true);
+    });
+
+    it("should expose scripting-only audio as streamable audio", () => {
+        const participant = createParticipant({ publications: [] });
+        const media = participant.getStreamable().media as LivekitStreamable;
+        const scriptingPublication = createScriptingAudioPublication();
+        const scriptingStream = createAudioMediaStream("scripting");
+
+        participant["handleTrackPublished"](scriptingPublication);
+        participant["handleTrackSubscribed"](createRemoteAudioTrack(scriptingStream), scriptingPublication);
+
+        expect(scriptingPublication.setSubscribed).toHaveBeenCalledWith(true);
+        expect(get(media.streamStore)).toBe(scriptingStream);
+        expect(get(participant.getStreamable().hasAudio)).toBe(true);
+
+        participant["handleTrackMuted"](scriptingPublication);
+        expect(get(participant.getStreamable().hasAudio)).toBe(false);
+
+        participant["handleTrackUnmuted"](scriptingPublication);
+        expect(get(participant.getStreamable().hasAudio)).toBe(true);
+
+        participant["handleTrackUnpublished"](scriptingPublication);
+        expect(get(media.streamStore)).toBeUndefined();
+        expect(get(participant.getStreamable().hasAudio)).toBe(false);
     });
 
     it("should restart scripting audio without dropping microphone audio", () => {
@@ -178,7 +196,29 @@ describe("LiveKitParticipant", () => {
             microphoneStream.getAudioTracks()[0],
             secondScriptingStream.getAudioTracks()[0],
         ]);
-        expect(get(participant.getStreamable().isMuted)).toBe(false);
+        expect(get(participant.getStreamable().hasAudio)).toBe(true);
+    });
+
+    it("should ignore stale scripting audio events after scripting audio restarts", () => {
+        const participant = createParticipant({ publications: [] });
+        const media = participant.getStreamable().media as LivekitStreamable;
+        const firstScriptingPublication = createScriptingAudioPublication();
+        const secondScriptingPublication = createScriptingAudioPublication();
+        const firstScriptingStream = createAudioMediaStream("scripting-1");
+        const secondScriptingStream = createAudioMediaStream("scripting-2");
+        const firstScriptingTrack = createRemoteAudioTrack(firstScriptingStream);
+
+        participant["handleTrackPublished"](firstScriptingPublication);
+        participant["handleTrackSubscribed"](firstScriptingTrack, firstScriptingPublication);
+        participant["handleTrackPublished"](secondScriptingPublication);
+        participant["handleTrackSubscribed"](createRemoteAudioTrack(secondScriptingStream), secondScriptingPublication);
+
+        participant["handleTrackMuted"](firstScriptingPublication);
+        participant["handleTrackUnsubscribed"](firstScriptingTrack, firstScriptingPublication);
+        participant["handleTrackUnpublished"](firstScriptingPublication);
+
+        expect(get(media.streamStore)).toBe(secondScriptingStream);
+        expect(get(participant.getStreamable().hasAudio)).toBe(true);
     });
 
     it("should keep microphone audio when scripting audio is unpublished or unsubscribed", () => {
@@ -202,7 +242,7 @@ describe("LiveKitParticipant", () => {
         participant["handleTrackUnpublished"](unpublishedScriptingPublication);
 
         expect(get(media.streamStore)).toBe(microphoneStream);
-        expect(get(participant.getStreamable().isMuted)).toBe(false);
+        expect(get(participant.getStreamable().hasAudio)).toBe(true);
 
         participant["handleTrackPublished"](unsubscribedScriptingPublication);
         const unsubscribedTrack = createRemoteAudioTrack(unsubscribedScriptingStream);
@@ -211,7 +251,7 @@ describe("LiveKitParticipant", () => {
         participant["handleTrackUnsubscribed"](unsubscribedTrack, unsubscribedScriptingPublication);
 
         expect(get(media.streamStore)).toBe(microphoneStream);
-        expect(get(participant.getStreamable().isMuted)).toBe(false);
+        expect(get(participant.getStreamable().hasAudio)).toBe(true);
     });
 });
 
@@ -227,7 +267,6 @@ function createParticipant({ publications }: { publications: RemoteTrackPublicat
         identity: "user-1",
         sid: "sid-1",
         isSpeaking: false,
-        connectionQuality: ConnectionQuality.Excellent,
         name: "Alice",
         on: vi.fn(),
         off: vi.fn(),
@@ -294,5 +333,14 @@ function createRemoteAudioTrack(mediaStream: MediaStream): RemoteTrack {
 }
 
 function createAudioMediaStream(id: string): MediaStream {
-    return new MediaStream([{ id, kind: "audio" } as MediaStreamTrack]);
+    const track = new EventTarget() as MediaStreamTrack;
+    Object.defineProperties(track, {
+        id: { value: id },
+        kind: { value: "audio" },
+        readyState: { value: "live" },
+        muted: { value: false },
+        enabled: { value: true, writable: true },
+    });
+
+    return new MediaStream([track]);
 }

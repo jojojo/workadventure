@@ -3,6 +3,7 @@
     import { scale } from "svelte/transition";
     import type { MatrixChatConnectionLike, MatrixUserSettingsDiagnostics } from "../Connection/ChatConnection";
     import ButtonClose from "../../Components/Input/ButtonClose.svelte";
+    import Button from "../../Components/UI/Button.svelte";
     import LL from "../../../i18n/i18n-svelte";
     import { clearIgnoredSuggestedRooms } from "../Stores/ChatStore";
     import { DEBUG_MODE } from "../../Enum/EnvironmentVariable";
@@ -226,12 +227,13 @@
         {#if !loading && data}
             <div class="flex flex-shrink-0 flex-col gap-2 border-t border-white/10 p-4 sm:p-5">
                 <p class="text-xs text-white/55">{$LL.chat.matrixSettings.clearSuggestedRoomsHint()}</p>
-                <button
+                <Button
                     type="button"
-                    class="flex w-full items-center justify-center gap-2 rounded-2xl border px-4 py-3 text-sm font-semibold transition-all duration-200 active:scale-[0.98] disabled:opacity-50 disabled:active:scale-100 {successFlash ===
-                    'clearSuggested'
-                        ? 'border-emerald-400/50 bg-emerald-500/15 text-emerald-100 shadow-[0_0_18px_rgba(16,185,129,0.22)] matrix-settings-btn-success'
-                        : 'border-white/15 bg-white/[0.06] text-white hover:bg-white/10'}"
+                    variant={successFlash === "clearSuggested" ? "success" : "light"}
+                    appearance={successFlash === "clearSuggested" ? "filled" : "border"}
+                    class={`transition-all duration-200 active:scale-[0.98] disabled:opacity-50 disabled:active:scale-100 ${
+                        successFlash === "clearSuggested" ? "matrix-settings-btn-success" : ""
+                    }`}
                     disabled={syncing}
                     onclick={handleClearSuggested}
                 >
@@ -246,16 +248,16 @@
                     {:else}
                         {$LL.chat.matrixSettings.clearSuggestedRoomsButton()}
                     {/if}
-                </button>
+                </Button>
                 {#if DEBUG_MODE}
                     <p class="text-xs text-white/55 pt-1">{$LL.chat.matrixSettings.publishWokaToMatrixProfileHint()}</p>
                 {/if}
-                <button
+                <Button
                     type="button"
-                    class="flex w-full items-center justify-center gap-2 rounded-2xl px-4 py-3 text-sm font-semibold transition-all duration-200 active:scale-[0.98] disabled:opacity-50 disabled:active:scale-100 {successFlash ===
-                    'syncAccount'
-                        ? 'border-2 border-emerald-400/55 bg-emerald-600/90 text-white shadow-[0_0_20px_rgba(16,185,129,0.35)] matrix-settings-btn-success'
-                        : 'bg-secondary text-contrast hover:opacity-90'}"
+                    variant={successFlash === "syncAccount" ? "success" : "secondary"}
+                    class={`font-semibold transition-all duration-200 active:scale-[0.98] disabled:opacity-50 disabled:active:scale-100 ${
+                        successFlash === "syncAccount" ? "matrix-settings-btn-success" : ""
+                    }`}
                     disabled={syncing}
                     onclick={syncAccountData}
                 >
@@ -273,14 +275,15 @@
                     {:else}
                         {$LL.chat.matrixSettings.syncButton()}
                     {/if}
-                </button>
+                </Button>
             </div>
         {/if}
     </div>
 </div>
 
 <style>
-    @keyframes matrix-settings-success-pop {
+    /* -global- keeps the keyframe name un-hashed so the :global() rule below can reference it. */
+    @keyframes -global-matrix-settings-success-pop {
         0% {
             transform: scale(1);
         }
@@ -291,7 +294,8 @@
             transform: scale(1);
         }
     }
-    .matrix-settings-btn-success {
+    /* Global so it survives on the <button> that <Button> renders (scoped CSS would not reach it). */
+    :global(.matrix-settings-btn-success) {
         animation: matrix-settings-success-pop 0.55s cubic-bezier(0.34, 1.25, 0.64, 1);
     }
 </style>

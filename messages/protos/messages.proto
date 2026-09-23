@@ -21,6 +21,10 @@ enum AvailabilityStatus {
   BACK_IN_A_MOMENT = 10;
   LIVEKIT = 11;
   LISTENER = 12;
+  // Set automatically when the browser refuses to play audio for lack of a user
+  // gesture. Unlike BACK_IN_A_MOMENT, which the user picks, this one is imposed and
+  // clears on the next click.
+  SOUND_BLOCKED = 13;
 }
 
 message PositionMessage {
@@ -137,22 +141,33 @@ message WebRtcSignal {
 }
 
 enum VideoQualityStreamCategory {
-  VIDEO_QUALITY_STREAM_CATEGORY_UNSPECIFIED = 0;
-  VIDEO_QUALITY_STREAM_CATEGORY_VIDEO = 1;
-  VIDEO_QUALITY_STREAM_CATEGORY_SCREEN_SHARING = 2;
+  VIDEO_QUALITY_STREAM_CATEGORY_VIDEO = 0;
+  VIDEO_QUALITY_STREAM_CATEGORY_SCREEN_SHARING = 1;
 }
 
 enum VideoQualityTransportType {
-  VIDEO_QUALITY_TRANSPORT_TYPE_UNSPECIFIED = 0;
-  VIDEO_QUALITY_TRANSPORT_TYPE_P2P = 1;
-  VIDEO_QUALITY_TRANSPORT_TYPE_LIVEKIT = 2;
+  VIDEO_QUALITY_TRANSPORT_TYPE_P2P = 0;
+  VIDEO_QUALITY_TRANSPORT_TYPE_LIVEKIT = 1;
 }
 
 enum VideoQualityRelayProtocol {
-  VIDEO_QUALITY_RELAY_PROTOCOL_UNSPECIFIED = 0;
-  VIDEO_QUALITY_RELAY_PROTOCOL_UDP = 1;
-  VIDEO_QUALITY_RELAY_PROTOCOL_TCP = 2;
-  VIDEO_QUALITY_RELAY_PROTOCOL_TLS = 3;
+  VIDEO_QUALITY_RELAY_PROTOCOL_UDP = 0;
+  VIDEO_QUALITY_RELAY_PROTOCOL_TCP = 1;
+  VIDEO_QUALITY_RELAY_PROTOCOL_TLS = 2;
+}
+
+// Direction of a video stream from the reporter's point of view.
+enum VideoQualityStreamDirection {
+  VIDEO_QUALITY_STREAM_DIRECTION_INBOUND = 0;
+  VIDEO_QUALITY_STREAM_DIRECTION_OUTBOUND = 1;
+}
+
+// Why the browser's encoder is not sending at full quality (RTCOutboundRtpStreamStats.qualityLimitationReason).
+enum VideoQualityLimitationReason {
+  VIDEO_QUALITY_LIMITATION_REASON_NONE = 0;
+  VIDEO_QUALITY_LIMITATION_REASON_CPU = 1;
+  VIDEO_QUALITY_LIMITATION_REASON_BANDWIDTH = 2;
+  VIDEO_QUALITY_LIMITATION_REASON_OTHER = 3;
 }
 
 message VideoQualitySampleMessage {
@@ -176,6 +191,11 @@ message VideoQualitySampleMessage {
   uint32 frameWidth = 18;
   uint32 frameHeight = 19;
   optional string mimeType = 20;
+  VideoQualityStreamDirection direction = 21;
+  // Outbound streams only.
+  optional VideoQualityLimitationReason qualityLimitationReason = 22;
+  // Outbound streams only: encoder implementation reported by the browser (e.g. "libaom", "libvpx", "ExternalEncoder").
+  optional string encoderImplementation = 23;
 }
 
 message VideoQualityReportMessage {
@@ -351,6 +371,10 @@ message UploadEntityMessage {
   string color = 7;
   optional google.protobuf.Value collisionGrid = 8;
   optional int32 depthOffset = 9;
+  // UUID of the user who uploaded the entity. Always overwritten by map-storage with the
+  // authenticated user UUID: any value sent by the client is discarded. It is sent back in the
+  // broadcast copy of the command so every client knows who owns the asset.
+  optional string ownerId = 10;
 }
 
 message UploadFileMessage {
@@ -432,6 +456,7 @@ message ClientToServerMessage {
     MeetingInvitationResponseMessage meetingInvitationResponseMessage = 49;
     SetAreaPropertyVariableMessage setAreaPropertyVariableMessage = 46;
     VideoQualityReportMessage videoQualityReportMessage = 50;
+    UserMessageReadMessage userMessageReadMessage = 51;
   }
 }
 
@@ -541,6 +566,7 @@ message QueryMessage {
     GetSignedUrlQuery getSignedUrlQuery = 19;
     StartRecordingQuery startRecordingQuery = 21;
     StopRecordingQuery stopRecordingQuery = 22;
+    GetRecordingThumbnailsQuery getRecordingThumbnailsQuery = 23;
   }
 }
 
@@ -622,6 +648,11 @@ message GetRecordingsQuery {
   optional string uuid = 2;
 }
 
+// Thumbnails of a single recording, fetched on demand: the list only carries one poster per recording.
+message GetRecordingThumbnailsQuery {
+  string baseFilename = 1;
+}
+
 message DeleteRecordingQuery {
   string recordingId = 1;
 }
@@ -659,6 +690,7 @@ message AnswerMessage {
     GetSignedUrlAnswer getSignedUrlAnswer = 21;
     StartRecordingAnswer startRecordingAnswer = 22;
     StopRecordingAnswer stopRecordingAnswer = 23;
+    GetRecordingThumbnailsAnswer getRecordingThumbnailsAnswer = 24;
   }
 }
 
@@ -748,6 +780,11 @@ message GetRecordingsAnswer {
   repeated Recording recordings = 1;
 }
 
+message GetRecordingThumbnailsAnswer {
+  // Signed URLs, evenly spaced over the recording, oldest first.
+  repeated string urls = 1;
+}
+
 message DeleteRecordingAnswer {
   bool success = 1;
   optional string errorMessage = 2;
@@ -789,22 +826,15 @@ message Recording {
   string timestamp = 1;
   string baseFilename = 2;
   VideoFile videoFile = 3;
-  repeated Thumbnail thumbnails = 4;
+  // Signed URL of the thumbnail shown in the list, empty if the recording has none.
+  // The other thumbnails are fetched on demand, see GetRecordingThumbnailsQuery.
+  string posterUrl = 4;
 }
 
 message VideoFile {
   string key = 1;
   string filename = 2;
   optional uint64 size = 3;
-}
-
-message Thumbnail {
-  string key = 1;
-  string url = 2;
-  string filename = 3;
-  optional uint64 size = 4;
-  optional int32 sequenceNumber = 5;
-  optional int32 timestampSeconds = 6;
 }
 
 /*********** PUSHER TO BACK QUERYMESSAGES *************/
@@ -1050,6 +1080,9 @@ message MeetingConnectionRestartMessage {
   // Optional. Present for WebRTC reconnections to specify which peer to reconnect with.
   // Absent for LiveKit reconnections, where no specific peer is targeted.
   optional string userId = 1;
+  // Optional for backward compatibility during rolling deployments.
+  // Once all clients send it, this can become required in the next protocol version.
+  optional string connectionId = 2;
 }
 
 message WebRtcDisconnectMessage {
@@ -1063,6 +1096,16 @@ message TeleportMessageMessage{
 message SendUserMessage{
   string type = 1;
   string message = 2;
+  // Identifier of the message on the admin side. Sent back by the client in a
+  // UserMessageReadMessage once the message has been read, so the admin can stop sending it.
+  // Empty when the admin did not provide one.
+  string id = 3;
+}
+
+// Sent by the client when the user acknowledged a message received in a SendUserMessage
+// (typically by clicking the "Ok" button of the moderation warning popup).
+message UserMessageReadMessage{
+  string id = 1;
 }
 
 message WorldFullWarningMessage{
@@ -1100,6 +1143,8 @@ message WorldConnectionMessage{
 message BanUserMessage{
   string type = 1;
   string message = 2;
+  // See SendUserMessage.id
+  string id = 3;
 }
 
 message AskPositionMessage{
@@ -1602,6 +1647,8 @@ message AdminMessage {
   string recipientUuid = 2;
   string roomId = 3;
   string type = 4;
+  // See SendUserMessage.id
+  string id = 5;
 }
 
 // A message sent by an administrator to everyone in a specific room

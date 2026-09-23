@@ -1,4 +1,5 @@
 <script lang="ts">
+    import { SvelteMap } from "svelte/reactivity";
     import type { ListenerMegaphonePropertyData } from "@workadventure/map-editor";
     import { SpeakerMegaphonePropertyData } from "@workadventure/map-editor";
 
@@ -25,7 +26,7 @@
     }
 
     function getSpeakerZoneNames() {
-        const areasName = new Map<string, string>();
+        const areasName = new SvelteMap<string, string>();
         const wamFile = gameManager.getCurrentGameScene().getGameMap().getWamFile();
         if (!wamFile) {
             return areasName;
@@ -114,14 +115,14 @@
                     onchange={onValueChange}
                 />
             </div>
-            <!--<div class="value-switch">
+            <div class="value-switch">
                 <InputSwitch
                     id="allowTalking"
                     label={$LL.mapEditor.properties.allowTalking()}
                     bind:value={property.allowTalking}
                     onchange={onValueChange}
                 />
-            </div>-->
+            </div>
         </span>
     {/snippet}
 </PropertyEditorBase>

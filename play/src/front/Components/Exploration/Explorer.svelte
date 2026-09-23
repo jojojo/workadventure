@@ -40,6 +40,24 @@
         if ($mapExplorationAreasStore) areasListFiltered.set($mapExplorationAreasStore);
     }
 
+    // Name used to display and sort an entity: its custom name if set, otherwise the prefab name.
+    function getEntityDisplayName(entity: Entity): string {
+        const name = entity.getEntityData().name;
+        return name && name !== "" ? name : entity.getPrefab().name;
+    }
+
+    // Name used to display and sort an area (may be an empty string when the area has no name).
+    function getAreaDisplayName(area: AreaPreview): string {
+        return area.getAreaData().name;
+    }
+
+    // Sort the filtered entries alphabetically by display name (case-insensitive, natural number order).
+    function sortByName<T>(entries: Iterable<[string, T]>, getName: (item: T) => string): Array<[string, T]> {
+        return [...entries].sort(([, a], [, b]) =>
+            getName(a).localeCompare(getName(b), undefined, { sensitivity: "base", numeric: true }),
+        );
+    }
+
     function onChangeFilterHandle() {
         entitiesListFiltered.set(new Map());
         for (let [key, entity] of $mapExplorationEntitiesStore) {
@@ -120,9 +138,8 @@
         entity.setPointedToEditColor(0xf9e82d);
         gameManager.getCurrentGameScene().getCameraManager().centerCameraOn(entity);
         // Use explorer tool to define the zoom to center camera position
-        (
-            gameManager.getCurrentGameScene().getMapEditorModeManager().currentlyActiveTool as ExplorerTool
-        ).defineZoomToCenterCameraPosition();
+        const activeTool = gameManager.getCurrentGameScene().getMapEditorModeManager()?.currentlyActiveTool;
+        (activeTool as ExplorerTool | undefined)?.defineZoomToCenterCameraPosition();
     }
     function unhighlightEntity(entity: Entity) {
         // Don't unhighlight if the entity is selected
@@ -136,9 +153,8 @@
         area.setStrokeStyle(2, 0xf9e82d);
         gameManager.getCurrentGameScene().getCameraManager().centerCameraOn(area);
         // Use explorer tool to define the zoom to center camera position
-        (
-            gameManager.getCurrentGameScene().getMapEditorModeManager().currentlyActiveTool as ExplorerTool
-        ).defineZoomToCenterCameraPosition();
+        const activeTool = gameManager.getCurrentGameScene().getMapEditorModeManager()?.currentlyActiveTool;
+        (activeTool as ExplorerTool | undefined)?.defineZoomToCenterCameraPosition();
     }
     function unhighlightArea(area: AreaPreview) {
         // Don't unhighlight if the area is selected
@@ -228,7 +244,7 @@
                     closable: true,
                 });
             });
-        gameManager.getCurrentGameScene().getMapEditorModeManager().equipTool(undefined);
+        gameManager.getCurrentGameScene().getMapEditorModeManager()?.equipTool(undefined);
 
         // Close map editor to walk on the entity or zone
         analyticsClient.toggleMapEditor(!$mapEditorModeStore);
@@ -398,7 +414,7 @@
 
             {#if entityListActive && $entitiesListFiltered.size > 0}
                 <div class="entity-items p-2 flex flex-col">
-                    {#each [...$entitiesListFiltered] as [key, entity] (key)}
+                    {#each sortByName($entitiesListFiltered, getEntityDisplayName) as [key, entity] (key)}
                         <!-- svelte-ignore a11y_click_events_have_key_events -->
                         <!-- svelte-ignore a11y_no_static_element_interactions -->
                         <div
@@ -406,8 +422,12 @@
                             onmouseenter={() => highlightEntity(entity)}
                             onmouseleave={() => unhighlightEntity(entity)}
                             onclick={() => handlerToSelectEntity(entity)}
-                            class="item p-2 rounded flex flex-row justify-start gap-2 items-center cursor-pointer hover:bg-white/10 transition-all"
-                            class:active={$mapExplorationObjectSelectedStore === entity}
+                            class={[
+                                "item p-2 rounded flex flex-row justify-start gap-2 items-center cursor-pointer hover:bg-white/10 transition-all",
+                                {
+                                    "bg-white/10": $mapExplorationObjectSelectedStore === entity,
+                                },
+                            ]}
                         >
                             <img
                                 draggable="false"
@@ -483,7 +503,7 @@
             {#if areaListActive && $areasListFiltered.size > 0}
                 <div class="area-items p-2 flex flex-col">
                     {#if $areasListFiltered.size > 0}
-                        {#each [...$areasListFiltered] as [key, area] (key)}
+                        {#each sortByName($areasListFiltered, getAreaDisplayName) as [key, area] (key)}
                             <!-- svelte-ignore a11y_click_events_have_key_events -->
                             <!-- svelte-ignore a11y_no_static_element_interactions -->
                             <div
@@ -491,8 +511,12 @@
                                 onmouseenter={() => highlightArea(area)}
                                 onmouseleave={() => unhighlightArea(area)}
                                 onclick={() => handlerToSelectArea(area)}
-                                class="item p-2 rounded flex flex-row justify-start gap-2 items-center cursor-pointer hover:bg-white/10 transition-all"
-                                class:active={$mapExplorationObjectSelectedStore === area}
+                                class={[
+                                    "item p-2 rounded flex flex-row justify-start gap-2 items-center cursor-pointer hover:bg-white/10 transition-all",
+                                    {
+                                        "bg-white/10": $mapExplorationObjectSelectedStore === area,
+                                    },
+                                ]}
                                 title={area.getAreaData().name || "No name"}
                             >
                                 <img
@@ -536,29 +560,3 @@
         </div>
     </div>
 </div>
-
-<style lang="scss">
-    .mapexplorer {
-        scrollbar-width: 20px;
-        scrollbar-color: rgb(0 0 0 / 0.8) rgb(0 0 0 / 0.2);
-    }
-    .mapexplorer::-webkit-scrollbar {
-        width: 20px;
-    }
-    .mapexplorer::-webkit-scrollbar-track {
-        background-color: transparent;
-    }
-    .mapexplorer::-webkit-scrollbar-thumb {
-        background-color: rgb(0 0 0 / 0.5);
-        border-radius: 20px;
-        border: 6px solid transparent;
-        background-clip: content-box;
-        cursor: grab;
-    }
-    .mapexplorer::-webkit-scrollbar-thumb:hover {
-        background-color: rgb(0 0 0 / 1);
-    }
-    .item.active {
-        background-color: rgba(255, 255, 255, 0.2);
-    }
-</style>

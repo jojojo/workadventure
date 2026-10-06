@@ -12,7 +12,7 @@
     import { requestVisitCardsStore } from "../../../Stores/GameStore";
     import { wokaMenuStore } from "../../../Stores/WokaMenuStore";
     import { LL } from "../../../../i18n/i18n-svelte";
-    import { showReportScreenStore } from "../../../Stores/ShowReportScreenStore";
+    import { openModerationModal } from "../../../Components/Moderation/openModerationModal";
     import { analyticsClient } from "../../../Administration/AnalyticsClient";
     import type { UserProviderMerger } from "../../UserProviderMerger/UserProviderMerger";
     import { IconForbid, IconDots, IconCamera, IconMapPin, IconUserPlus } from "@wa-icons";
@@ -67,10 +67,8 @@
 
     let isInTheSameMap = $derived(user.playUri === roomUrl);
 
-    const iAmAdmin = connection?.hasTag("admin");
-
     const goTo = (type: string, playUri: string, uuid: string) => {
-        analyticsClient.goToUser();
+        analyticsClient.trackAdminEvent("user.go_to_clicked");
 
         if (type === "room") {
             scriptUtils.goToPage(`${playUri}#moveToUser=${uuid}`);
@@ -126,7 +124,7 @@
     });
 
     const showBusinessCard = (visitCardUrl: string | undefined) => {
-        analyticsClient.showBusinessCard();
+        analyticsClient.trackAdminEvent("user.business_card.opened");
 
         // If woka menu is open, close it
         if ($wokaMenuStore) {
@@ -153,7 +151,7 @@
         }
 
         // Track the open woka menu action
-        analyticsClient.openWokaMenu();
+        analyticsClient.trackAdminEvent("user.woka_menu.opened");
 
         const currentScerne = gameManager.getCurrentGameScene();
 
@@ -317,17 +315,16 @@
                 >
             {/if}
 
-            {#if iAmAdmin}
+            {#if user.username && user.uuid}
                 <!-- svelte-ignore a11y_click_events_have_key_events -->
                 <!-- svelte-ignore a11y_no_static_element_interactions -->
                 <span
-                    class="ban wa-dropdown-item text-pop-red text-nowrap flex gap-2 items-center hover:bg-white/10 m-0 p-2 w-full text-sm rounded"
+                    class="ban wa-dropdown-item text-nowrap flex gap-2 items-center hover:bg-white/10 m-0 p-2 w-full text-sm rounded"
                     onclick={(event) => {
                         event.stopPropagation();
-                        if (user.username && user.uuid) {
-                            showReportScreenStore.set({ userUuid: user.uuid, userName: user.username });
-                        }
-                    }}><IconForbid font-size="13" /> {$LL.chat.ban.title()}</span
+                        openModerationModal(user.uuid ?? "", user.username ?? "");
+                        closeChatUserMenu();
+                    }}><IconForbid font-size="13" /> {$LL.report.moderate.action()}</span
                 >
             {/if}
         </div>

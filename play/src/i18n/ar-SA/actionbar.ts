@@ -88,7 +88,6 @@ const actionbar: DeepPartial<Translation["actionbar"]> = {
         blurMiddle: "ضبابية متوسطة",
         blurHigh: "ضبابية عالية",
         images: "الصور",
-        videos: "الفيديوهات",
     },
     help: {
         chat: {
@@ -102,6 +101,10 @@ const actionbar: DeepPartial<Translation["actionbar"]> = {
         emoji: {
             title: "عرض رمز تعبيري",
             desc: "عبّر عن شعورك بنقرة واحدة باستخدام ردود الفعل الرمزية. فقط اضغط وانطلق!",
+        },
+        raiseHand: {
+            title: "ارفع يدك",
+            desc: "أشر إلى أنك تريد التحدث. تظهر يدك المرفوعة على الخريطة وعلى الفيديو الخاص بك، حتى يعرف الجميع دور من التالي.",
         },
         audioManager: {
             title: "حجم الأصوات المحيطة",
@@ -128,6 +131,10 @@ const actionbar: DeepPartial<Translation["actionbar"]> = {
             areaPickerTitle: "اختر المنطقة لقفلها/فتحها",
             bubbleLabel: "فقاعة المناقشة",
             unnamedArea: "منطقة بدون اسم",
+        },
+        giveBackFloor: {
+            title: "إعادة الكلمة",
+            desc: "تم منحك الكلمة. انقر للتوقف عن التحدث وإعادتها.",
         },
         megaphone: {
             title: "إيقاف المكبر الصوتي",
@@ -176,6 +183,14 @@ const actionbar: DeepPartial<Translation["actionbar"]> = {
             desc: "يمكنك استخدام ميزة صورة داخل صورة لمشاهدة فيديو أو عرض تقديمي أثناء وجودك في محادثة. ما عليك سوى النقر على أيقونة صورة داخل صورة والاستمتاع بمحتواك.",
         },
         videoNotSupported: "متصفحك لا يدعم وسم الفيديو.",
+    },
+    raisedHands: {
+        speaking: "لديه الكلمة",
+        title: "الأيدي المرفوعة",
+        empty: "لا أحد رفع يده",
+        help: "اطّلع على من رفع يده، بالترتيب، وأعطه الكلمة.",
+        lowerHand: "خفض اليد",
+        lowerAllHands: "خفض الكل",
     },
     listStatusTitle: {
         enable: "تغيير حالتك",

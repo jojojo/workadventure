@@ -1,5 +1,5 @@
 import type { MatrixClient, Room } from "matrix-js-sdk";
-import { ClientEvent, EventType, PendingEventOrdering, RoomEvent, SyncState } from "matrix-js-sdk";
+import { ClientEvent, EventType, MatrixError, PendingEventOrdering, RoomEvent, SyncState } from "matrix-js-sdk";
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { KnownMembership } from "matrix-js-sdk/lib/types";
 import type { Readable } from "svelte/store";
@@ -666,21 +666,41 @@ describe("MatrixChatConnection", () => {
                 myMembership = KnownMembership.Join,
                 lastActiveTimestamp = 0,
                 isSpace = false,
-            }: { myMembership?: string; lastActiveTimestamp?: number; isSpace?: boolean } = {},
-        ) =>
-            ({
+                // Defaults to the loaded memberships; set it to mimic lazy loading, where the summary
+                // counts the whole room while only a couple of member events are loaded.
+                summaryMemberCount,
+            }: {
+                myMembership?: string;
+                lastActiveTimestamp?: number;
+                isSpace?: boolean;
+                summaryMemberCount?: number;
+            } = {},
+        ) => {
+            const members = memberships.map(([userId, membership]) => ({ userId, membership }));
+            const activeMembers = members.filter(
+                ({ membership }) => membership === KnownMembership.Join || membership === KnownMembership.Invite,
+            );
+            return {
                 roomId,
                 isSpaceRoom: () => isSpace,
                 getMyMembership: () => myMembership,
-                getMembers: () => memberships.map(([userId, membership]) => ({ userId, membership })),
+                getMembers: () => members,
+                getMember: (userId: string) => members.find((member) => member.userId === userId),
+                getJoinedMemberCount: () => summaryMemberCount ?? activeMembers.length,
+                getInvitedMemberCount: () => 0,
                 getLastActiveTimestamp: () => lastActiveTimestamp,
-            }) as unknown as Room;
+            } as unknown as Room;
+        };
 
         // The lookup must read the SDK client directly: roomList is filled asynchronously
         // and can miss a DM the client already knows about (cold start, reconciliation).
-        const getConnectionWithSdkRooms = async (sdkRooms: Room[]) => {
+        const getConnectionWithSdkRooms = async (
+            sdkRooms: Room[],
+            directRoomsPerUser: Record<string, string[]> = {},
+        ) => {
             const mockMatrixClient = {
                 getRooms: () => sdkRooms,
+                getAccountData: () => ({ getContent: () => directRoomsPerUser }),
             } as unknown as MatrixClient;
             const matrixChatConnection = await getMatrixConnection(Promise.resolve(mockMatrixClient));
             const createAndAddNewRootRoom = vi.fn(
@@ -750,6 +770,24 @@ describe("MatrixChatConnection", () => {
             const { matrixChatConnection } = await getConnectionWithSdkRooms([crowdedRoom]);
 
             expect(await matrixChatConnection.getDirectRoomFor("@alice:matrix.org")).toBeUndefined();
+        });
+
+        it("should ignore a crowded room whose only loaded members are the two of us", async () => {
+            // Lazy loading: the summary says five people, but only the heroes are loaded.
+            const crowdedRoom = createSdkRoomStub("crowded", directMemberships, { summaryMemberCount: 5 });
+            const { matrixChatConnection } = await getConnectionWithSdkRooms([crowdedRoom]);
+
+            expect(await matrixChatConnection.getDirectRoomFor("@alice:matrix.org")).toBeUndefined();
+        });
+
+        it("should prefer the room flagged as a direct room in m.direct", async () => {
+            const leftoverGroup = createSdkRoomStub("leftoverGroup", directMemberships, { lastActiveTimestamp: 200 });
+            const flaggedDm = createSdkRoomStub("flaggedDm", directMemberships, { lastActiveTimestamp: 100 });
+            const { matrixChatConnection } = await getConnectionWithSdkRooms([leftoverGroup, flaggedDm], {
+                "@alice:matrix.org": ["flaggedDm"],
+            });
+
+            expect((await matrixChatConnection.getDirectRoomFor("@alice:matrix.org"))?.id).toBe("flaggedDm");
         });
 
         it("should ignore rooms the other user has left", async () => {
@@ -1166,6 +1204,55 @@ describe("MatrixChatConnection", () => {
             await matrixChatConnection["addDMRoomInAccountData"](userId, roomId);
 
             expect(mockSetAccountData).not.toHaveBeenCalled();
+        });
+    });
+
+    describe("isUserExist", () => {
+        const getConnectionWithProfileInfo = async (getProfileInfo: ReturnType<typeof vi.fn>) => {
+            const mockMatrixClient = {
+                isGuest: vi.fn(),
+                on: vi.fn(),
+                once: vi.fn().mockImplementation((_, funcToResolve) => {
+                    funcToResolve(SyncState.Syncing);
+                }),
+                store: {
+                    startup: vi.fn(),
+                },
+                initRustCrypto: vi.fn(),
+                startClient: vi.fn(),
+                createRoom: vi.fn(),
+                getRoom: vi.fn().mockReturnValue(null),
+                joinRoom: vi.fn().mockResolvedValue(""),
+                getProfileInfo,
+            } as unknown as MatrixClient;
+
+            return getMatrixConnection(Promise.resolve(mockMatrixClient));
+        };
+
+        it("should look the exact user up instead of searching the user directory", async () => {
+            // The user directory matches on words, so searching it for "@admin:matrix.localhost" returns any
+            // other user of matrix.localhost and reports an existing user as missing.
+            const getProfileInfo = vi.fn().mockResolvedValue({ displayname: "Admin" });
+            const matrixChatConnection = await getConnectionWithProfileInfo(getProfileInfo);
+
+            await expect(matrixChatConnection.isUserExist("@admin:matrix.localhost")).resolves.toBe(true);
+            expect(getProfileInfo).toHaveBeenCalledWith("@admin:matrix.localhost");
+        });
+
+        it("should return false when the homeserver knows no such user", async () => {
+            const matrixChatConnection = await getConnectionWithProfileInfo(
+                vi.fn().mockRejectedValue(new MatrixError({ errcode: "M_NOT_FOUND" }, 404)),
+            );
+
+            await expect(matrixChatConnection.isUserExist("@nobody:matrix.localhost")).resolves.toBe(false);
+        });
+
+        it("should rethrow any other error instead of reporting the user as missing", async () => {
+            const matrixChatConnection = await getConnectionWithProfileInfo(
+                vi.fn().mockRejectedValue(new MatrixError({ errcode: "M_UNKNOWN" }, 500)),
+            );
+
+            await expect(matrixChatConnection.isUserExist("@admin:matrix.localhost")).rejects.toThrow();
         });
     });
 

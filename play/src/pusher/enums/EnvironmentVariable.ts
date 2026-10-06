@@ -109,6 +109,10 @@ export const ENABLE_CHAT_DISCONNECTED_LIST: boolean = env.ENABLE_CHAT_DISCONNECT
 export const DEFAULT_WOKA_NAME: string = env.DEFAULT_WOKA_NAME || "";
 export const DEFAULT_WOKA_TEXTURE: string = env.DEFAULT_WOKA_TEXTURE || "";
 export const SKIP_CAMERA_PAGE: boolean = env.SKIP_CAMERA_PAGE ?? false;
+/** Initial value of the camera privacy setting for users who have not set their own preference. */
+export const DEFAULT_CAMERA_PRIVACY_SETTINGS: boolean = env.DEFAULT_CAMERA_PRIVACY_SETTINGS ?? false;
+/** Initial value of the microphone privacy setting for users who have not set their own preference. */
+export const DEFAULT_MICROPHONE_PRIVACY_SETTINGS: boolean = env.DEFAULT_MICROPHONE_PRIVACY_SETTINGS ?? true;
 /** When true, map details include bypassPwa so the play client never shows the Web App install screen. */
 export const BYPASS_PWA: boolean = env.BYPASS_PWA ?? false;
 export const PROVIDE_DEFAULT_WOKA_NAME: "no" | "random" | "fix" | "fix-plus-random-numbers" | undefined =
@@ -191,10 +195,11 @@ export const LIVEKIT_PIXEL_DENSITY: number = env.LIVEKIT_PIXEL_DENSITY;
 export const ENABLE_ISSUE_REPORT: boolean = env.ENABLE_ISSUE_REPORT || true;
 // Tutorial settings
 export const ENABLE_TUTORIAL: boolean = env.ENABLE_TUTORIAL ?? true;
-export const VIDEO_ANALYTICS_FLUSH_INTERVAL_MS: number = env.VIDEO_ANALYTICS_FLUSH_INTERVAL_MS;
-export const VIDEO_ANALYTICS_TIMEOUT_MS: number = env.VIDEO_ANALYTICS_TIMEOUT_MS;
-export const VIDEO_ANALYTICS_MAX_QUEUE_SIZE: number = env.VIDEO_ANALYTICS_MAX_QUEUE_SIZE;
-export const VIDEO_ANALYTICS_MAX_BATCH_SIZE: number = env.VIDEO_ANALYTICS_MAX_BATCH_SIZE;
+export const ANALYTICS_FLUSH_INTERVAL_MS: number = env.ANALYTICS_FLUSH_INTERVAL_MS;
+export const ANALYTICS_TIMEOUT_MS: number = env.ANALYTICS_TIMEOUT_MS;
+export const ANALYTICS_MAX_QUEUE_SIZE: number = env.ANALYTICS_MAX_QUEUE_SIZE;
+export const ANALYTICS_MAX_BATCH_SIZE: number = env.ANALYTICS_MAX_BATCH_SIZE;
+export const DRAIN_TIMEOUT_MS: number = env.DRAIN_TIMEOUT_MS;
 
 // Front container:
 export const FRONT_ENVIRONMENT_VARIABLES: FrontConfigurationInterface = {
@@ -236,7 +241,6 @@ export const FRONT_ENVIRONMENT_VARIABLES: FrontConfigurationInterface = {
     SENTRY_RELEASE: env.SENTRY_RELEASE,
     SENTRY_TRACES_SAMPLE_RATE: env.SENTRY_TRACES_SAMPLE_RATE,
     WOKA_SPEED: env.WOKA_SPEED,
-    FEATURE_FLAG_BROADCAST_AREAS: env.FEATURE_FLAG_BROADCAST_AREAS,
     KLAXOON_ENABLED: env.KLAXOON_ENABLED,
     KLAXOON_CLIENT_ID: env.KLAXOON_CLIENT_ID,
     YOUTUBE_ENABLED: env.YOUTUBE_ENABLED,
@@ -264,7 +268,6 @@ export const FRONT_ENVIRONMENT_VARIABLES: FrontConfigurationInterface = {
     ENABLE_ISSUE_REPORT: env.ENABLE_ISSUE_REPORT || true,
     GRPC_MAX_MESSAGE_SIZE: env.GRPC_MAX_MESSAGE_SIZE,
     TURN_CREDENTIALS_RENEWAL_TIME: env.TURN_CREDENTIALS_RENEWAL_TIME,
-    BACKGROUND_TRANSFORMER_ENGINE: env.BACKGROUND_TRANSFORMER_ENGINE || "selfie-segmentation",
     // Woka settings
     DEFAULT_WOKA_NAME,
     DEFAULT_WOKA_TEXTURE,

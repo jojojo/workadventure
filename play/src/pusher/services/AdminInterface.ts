@@ -1,5 +1,4 @@
 import type {
-    AdminApiData,
     ErrorApiData,
     IceServer,
     MapDetailsData,
@@ -8,7 +7,7 @@ import type {
     RoomRedirect,
     Capabilities,
 } from "@workadventure/messages";
-import type { AdminBannedData, FetchMemberDataByUuidResponse } from "./AdminApi";
+import type { FetchMemberDataByUuidResponse } from "./AdminApi";
 import type { ShortMapDescriptionList } from "./ShortMapDescription";
 import type { WorldChatMembersData } from "./WorldChatMembersData";
 
@@ -44,18 +43,6 @@ export interface AdminInterface {
     ): Promise<MapDetailsData | RoomRedirect | ErrorApiData>;
 
     /**
-     * @param locale
-     * @param organizationMemberToken
-     * @param playUri
-     * @return AdminApiData
-     */
-    fetchMemberDataByToken(
-        organizationMemberToken: string,
-        playUri: string | null,
-        locale?: string,
-    ): Promise<AdminApiData>;
-
-    /**
      * @var host Request hostname
      * @return string
      */
@@ -75,24 +62,6 @@ export interface AdminInterface {
         roomUrl: string,
         locale?: string,
     ): Promise<unknown>;
-
-    /**
-     * Flags a message previously sent to a user (see the "messages" field of fetchMemberDataByUuid)
-     * as read, so it is not sent again the next time the user connects.
-     *
-     * @param messageId identifier of the message, as returned by fetchMemberDataByUuid
-     * @param userIdentifier the user who read the message
-     */
-    markUserMessageAsRead(messageId: string, userIdentifier: string): Promise<void>;
-
-    /**
-     * @param locale
-     * @param userUuid
-     * @param ipAddress
-     * @param roomUrl
-     * @return AdminBannedData
-     */
-    verifyBanUser(userUuid: string, ipAddress: string, roomUrl: string, locale?: string): Promise<AdminBannedData>;
 
     /**
      * @param locale
@@ -120,13 +89,17 @@ export interface AdminInterface {
      */
     logoutOauth(token: string): Promise<void>;
 
+    /**
+     * @param ipAddress the IP the user connects from, to ban it too; undefined to ban their account only
+     */
     banUserByUuid(
         uuidToBan: string,
         playUri: string,
         name: string,
         message: string,
         byUserUuid: string,
-    ): Promise<boolean>;
+        ipAddress: string | undefined,
+    ): Promise<void>;
 
     getTagsList(roomUrl: string): Promise<string[]>;
 

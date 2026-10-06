@@ -1,4 +1,4 @@
-import type { Readable, Writable } from "svelte/store";
+import type { Readable, Unsubscriber, Writable } from "svelte/store";
 import { derived, get, readable, writable } from "svelte/store";
 import deepEqual from "fast-deep-equal";
 import { AvailabilityStatus } from "@workadventure/messages";
@@ -6,16 +6,25 @@ import { AbortError } from "@workadventure/shared-utils/src/Abort/AbortError";
 import * as Sentry from "@sentry/svelte";
 import type { VideoQualitySetting } from "../Connection/LocalUserStore";
 import { localUserStore } from "../Connection/LocalUserStore";
+import { Room } from "../Connection/Room";
+import { analyticsClient } from "../Administration/AnalyticsClient";
+import { openTimedEventPerMeeting } from "../Administration/CurrentMeeting";
+import type { EndTimedAnalyticsEvent } from "../Administration/TimedAnalyticsEvent";
+import { createHeldIntervalTracker } from "../Administration/HeldIntervalTracker";
 import { isIOS, isSafari } from "../WebRtc/DeviceUtils";
 import { SoundMeter } from "../Phaser/Components/SoundMeter";
 import type { RequestedStatus } from "../Rules/StatusRules/statusRules";
 import { statusChanger } from "../Components/ActionBar/AvailabilityStatus/statusChanger";
 import {
+    BackgroundProcessingUnsupportedError,
     type BackgroundConfig,
+    type BackgroundMode,
     type BackgroundTransformer,
     createBackgroundTransformer,
 } from "../WebRtc/BackgroundProcessor/createBackgroundTransformer";
 import { LL } from "../../i18n/i18n-svelte";
+import { currentRoomStore } from "./CurrentRoomStore";
+import { gameSceneIsLoadedStore } from "./GameSceneStore";
 import { MediaStreamConstraintsError } from "./Errors/MediaStreamConstraintsError";
 import { BrowserTooOldError } from "./Errors/BrowserTooOldError";
 import { errorStore, warningMessageStore } from "./ErrorStore";
@@ -26,7 +35,7 @@ import { privacyShutdownStore } from "./PrivacyShutdownStore";
 import { inExternalServiceStore, myCameraStore, myMicrophoneStore, proximityMeetingStore } from "./MyMediaStore";
 import { userMovingStore } from "./GameStore";
 import { hideHelpCameraSettings } from "./HelpSettingsStore";
-import { isLiveStreamingStore } from "./IsStreamingStore";
+import { isLiveStreamingAudioStore, isLiveStreamingStore } from "./IsStreamingStore";
 import { currentPlayerGroupIdStore } from "./CurrentPlayerGroupStore";
 
 import { backgroundConfigStore, backgroundProcessingEnabledStore } from "./BackgroundTransformStore";
@@ -55,6 +64,7 @@ import { browserNotificationStore } from "./BrowserNotificationStore";
 export const inBackgroundSettingsStore = writable<boolean>(false);
 
 export type MediaAccessIssue = "permission_denied" | "no_device";
+type MediaDeviceAnalyticsKind = "camera" | "microphone" | "camera_microphone";
 
 /**
  * Last camera access failure, or no videoinput reported by the browser.
@@ -451,9 +461,34 @@ export const availabilityStatusStore = derived(
     AvailabilityStatus.ONLINE,
 );
 
+/**
+ * The period the user has been in their current status, and which status that is.
+ *
+ * The name is kept because availabilityStatusStore is derived and re-emits the same
+ * value: without it, every recomputation would end one dwell and start another.
+ */
+let endStatusDwell: EndTimedAnalyticsEvent | undefined;
+let currentStatusName: string | undefined;
+
 // This is a singleton so we can safely not ever unsubscribe from it.
 // eslint-disable-next-line svelte/no-ignored-unsubscribe
 availabilityStatusStore.subscribe((newStatus: AvailabilityStatus) => {
+    // Time-in-status is reported as a `status.dwell` timed event, gated per world by
+    // the `user_level_activity` policy the admin applies at ingestion: without opt-in
+    // it is pseudonymized there, so no named per-member timeline is stored. The enum
+    // key name ("ONLINE", …) is sent, low-cardinality and non-PII, so it survives.
+    const statusName = AvailabilityStatus[newStatus] ?? String(newStatus);
+    if (statusName !== currentStatusName) {
+        currentStatusName = statusName;
+        endStatusDwell?.();
+        endStatusDwell = analyticsClient.openTimedEvent(
+            "status.dwell",
+            { status: statusName },
+            // The status did not change because the socket did: after a reconnect the
+            // user is still Busy, and nothing will say so again.
+            { reopenOnReconnect: true },
+        );
+    }
     try {
         statusChanger.changeStatusTo(newStatus);
     } catch (e) {
@@ -464,6 +499,20 @@ availabilityStatusStore.subscribe((newStatus: AvailabilityStatus) => {
 
 let previousComputedVideoConstraint: boolean | MediaTrackConstraints = false;
 let previousComputedAudioConstraint: boolean | MediaTrackConstraints = false;
+let previousComputedKeepAudioWarm = false;
+
+export interface MediaStreamConstraintsValue {
+    video: false | MediaTrackConstraints;
+    audio: false | MediaTrackConstraints;
+    /**
+     * True when the microphone is off only because the user muted it during a conversation: the audio track
+     * is then kept open (disabled) so that unmuting does not have to reopen the device.
+     * Reopening it takes 0.3 to 1 s, and 1 to 3 s with Bluetooth headsets that switch from their music profile
+     * (A2DP) to their call profile (HFP). People start talking as soon as they click unmute, so their first words
+     * were lost.
+     */
+    keepAudioWarm: boolean;
+}
 
 /**
  * A store containing the media constraints we want to apply.
@@ -479,10 +528,12 @@ export const mediaStreamConstraintsStore = derived(
         videoConstraintStore,
         audioConstraintStore,
         privacyShutdownStore,
+        currentRoomStore,
         cameraEnergySavingStore,
         availabilityStatusStore,
         batchGetUserMediaStore,
         inBackgroundSettingsStore,
+        isLiveStreamingAudioStore,
     ],
     (
         [
@@ -495,10 +546,12 @@ export const mediaStreamConstraintsStore = derived(
             $videoConstraintStore,
             $audioConstraintStore,
             $privacyShutdownStore,
+            $currentRoomStore,
             $cameraEnergySavingStore,
             $availabilityStatusStore,
             $batchGetUserMediaStore,
             $inBackgroundSettingsStore,
+            $isLiveStreamingAudioStore,
         ],
         set,
     ) => {
@@ -521,21 +574,36 @@ export const mediaStreamConstraintsStore = derived(
             $availabilityStatusStore === AvailabilityStatus.SOUND_BLOCKED ||
             $availabilityStatusStore === AvailabilityStatus.BUSY;
         const shouldDisableMicrophoneForPrivacy =
-            $privacyShutdownStore === true && !localUserStore.getMicrophonePrivacySettings();
+            $privacyShutdownStore === true &&
+            !localUserStore.getMicrophonePrivacySettings(
+                $currentRoomStore?.defaultMicrophonePrivacySettings ?? Room.DEFAULT_MICROPHONE_PRIVACY_SETTINGS,
+            );
         const shouldDisableCameraForPrivacy =
-            $privacyShutdownStore === true && !localUserStore.getCameraPrivacySettings();
+            $privacyShutdownStore === true &&
+            !localUserStore.getCameraPrivacySettings(
+                $currentRoomStore?.defaultCameraPrivacySettings ?? Room.DEFAULT_CAMERA_PRIVACY_SETTINGS,
+            );
 
-        // Audio constraints always apply
-        if (
-            $requestedMicrophoneState === false ||
+        // Every reason, other than the user muting it, to cut the microphone
+        const isMicrophoneForcedOff =
             $myMicrophoneStore === false ||
             isInExternalService ||
             shouldDisableMicrophoneForPrivacy ||
             isEnergySaving ||
-            isUnavailableStatus
-        ) {
+            isUnavailableStatus;
+
+        // Audio constraints always apply
+        if ($requestedMicrophoneState === false || isMicrophoneForcedOff) {
             currentAudioConstraint = false;
         }
+
+        // Unmuting must be instant during a conversation: reopening the microphone with getUserMedia takes
+        // 1 to 3 seconds (much more with Bluetooth headsets switching to their call profile).
+        // Only a mute by the user keeps the track open; every other reason really releases the device.
+        // A space streams our audio in a bubble, a meeting area, or a speaker zone where we are a speaker
+        // (not a mere listener, who cannot be heard anyway).
+        const keepAudioWarm =
+            $isLiveStreamingAudioStore && $requestedMicrophoneState === false && !isMicrophoneForcedOff;
 
         // Video constraints only apply when NOT in background settings (to allow camera preview)
         if (!$inBackgroundSettingsStore) {
@@ -553,10 +621,12 @@ export const mediaStreamConstraintsStore = derived(
         // Let's make the changes only if the new value is different from the old one.
         if (
             !deepEqual(previousComputedVideoConstraint, currentVideoConstraint) ||
-            !deepEqual(previousComputedAudioConstraint, currentAudioConstraint)
+            !deepEqual(previousComputedAudioConstraint, currentAudioConstraint) ||
+            previousComputedKeepAudioWarm !== keepAudioWarm
         ) {
             previousComputedVideoConstraint = currentVideoConstraint;
             previousComputedAudioConstraint = currentAudioConstraint;
+            previousComputedKeepAudioWarm = keepAudioWarm;
             // Let's copy the objects.
             if (typeof previousComputedVideoConstraint !== "boolean") {
                 previousComputedVideoConstraint = { ...previousComputedVideoConstraint };
@@ -568,21 +638,49 @@ export const mediaStreamConstraintsStore = derived(
             set({
                 video: currentVideoConstraint,
                 audio: currentAudioConstraint,
+                keepAudioWarm,
             });
         }
     },
     {
         video: false,
         audio: false,
-    } as {
-        video: false | MediaTrackConstraints;
-        audio: false | MediaTrackConstraints;
-    },
+        keepAudioWarm: false,
+    } as MediaStreamConstraintsValue,
 );
 
 export type { LocalStreamStoreValue } from "./LocalStreamTypes";
 
 let currentStream: MediaStream | undefined = undefined;
+/**
+ * The microphone track muted during a conversation, kept open but disabled (see keepAudioWarm).
+ * It is out of currentStream, so the rest of the application sees the microphone as off.
+ */
+let warmAudio: { track: MediaStreamTrack; constraints: MediaTrackConstraints } | undefined = undefined;
+
+function releaseWarmAudio(): void {
+    warmAudio?.track.stop();
+    warmAudio = undefined;
+}
+
+/**
+ * Returns the warm microphone track if it can serve the requested audio constraints, re-enabled.
+ */
+function takeWarmAudio(audioConstraints: false | MediaTrackConstraints): MediaStreamTrack | undefined {
+    if (
+        warmAudio === undefined ||
+        audioConstraints === false ||
+        warmAudio.track.readyState !== "live" ||
+        !deepEqual(warmAudio.constraints, audioConstraints)
+    ) {
+        return undefined;
+    }
+    const track = warmAudio.track;
+    warmAudio = undefined;
+    track.enabled = true;
+    return track;
+}
+
 let oldConstraints: { video: MediaTrackConstraints | false; audio: MediaTrackConstraints | false } = {
     video: false,
     audio: false,
@@ -603,18 +701,15 @@ const noiseSuppressionController = new NoiseSuppressionController();
 export function updateBackgroundProcessor(config: {
     blurAmount?: number;
     backgroundImage?: string;
-    backgroundVideo?: string;
-    mode?: string;
-    segmenterOptions?: unknown;
+    mode?: BackgroundMode;
 }) {
     if (backgroundTransformer && backgroundTransformer.updateConfig) {
         try {
             backgroundTransformer
                 .updateConfig({
-                    mode: config.mode as "none" | "blur" | "image" | "video",
+                    mode: config.mode,
                     blurAmount: config.blurAmount,
                     backgroundImage: config.backgroundImage,
-                    backgroundVideo: config.backgroundVideo,
                 })
                 .catch((error) => {
                     console.warn("[MediaStore] Failed to update background transformer configuration:", error);
@@ -622,16 +717,13 @@ export function updateBackgroundProcessor(config: {
 
             // Update the tracked config
             if (lastBackgroundConfig && config.mode) {
-                lastBackgroundConfig.mode = config.mode as "none" | "blur" | "image" | "video";
+                lastBackgroundConfig.mode = config.mode;
             }
             if (lastBackgroundConfig && config.blurAmount !== undefined) {
                 lastBackgroundConfig.blurAmount = config.blurAmount;
             }
             if (lastBackgroundConfig && config.backgroundImage !== undefined) {
                 lastBackgroundConfig.backgroundImage = config.backgroundImage;
-            }
-            if (lastBackgroundConfig && config.backgroundVideo !== undefined) {
-                lastBackgroundConfig.backgroundVideo = config.backgroundVideo;
             }
         } catch (error) {
             console.warn("[MediaStore] Failed to update background transformer configuration:", error);
@@ -663,6 +755,14 @@ function classifyMediaAccessError(error: unknown): MediaAccessIssue | null {
     return null;
 }
 
+function trackMediaAccessIssue(kind: MediaDeviceAnalyticsKind, issue: MediaAccessIssue | null): void {
+    if (issue === "permission_denied") {
+        analyticsClient.trackAdminEvent("media.permission_denied", { kind, reason: issue });
+    } else if (issue === "no_device") {
+        analyticsClient.trackAdminEvent("media.device_error", { kind, reason: issue });
+    }
+}
+
 function emitCurrentStreamOrError(setIfCurrent: SetRawStreamIfCurrent, error: unknown) {
     if (currentStream) {
         setIfCurrent({
@@ -679,11 +779,15 @@ function emitCurrentStreamOrError(setIfCurrent: SetRawStreamIfCurrent, error: un
 }
 
 async function runRawStreamUpdate(
-    constraints: { video: false | MediaTrackConstraints; audio: false | MediaTrackConstraints },
+    constraints: MediaStreamConstraintsValue,
     setIfCurrent: SetRawStreamIfCurrent,
     generation: number,
 ): Promise<{ video: false | MediaTrackConstraints; audio: false | MediaTrackConstraints }> {
     if (navigator.mediaDevices === undefined) {
+        analyticsClient.trackAdminEvent("media.device_error", {
+            kind: "camera_microphone",
+            reason: "media_devices_unavailable",
+        });
         if (window.location.protocol === "http:") {
             setIfCurrent({
                 type: "error",
@@ -720,17 +824,27 @@ async function runRawStreamUpdate(
         audio: constraints.audio ?? false,
     };
 
+    const warmAudioTrack = takeWarmAudio(constraints.audio);
+    // Keep the warm track only while the microphone stays muted in the conversation. Otherwise, release it
+    // before any getUserMedia call (see the Chromium issue below).
+    if (constraints.audio !== false || !constraints.keepAudioWarm) {
+        releaseWarmAudio();
+    }
+
     const hasLiveVideoTrack = currentStream ? hasLiveTrack(currentStream.getVideoTracks()) : false;
     const hasLiveAudioTrack = currentStream ? hasLiveTrack(currentStream.getAudioTracks()) : false;
     const mustRequestNewVideo =
         constraints.video !== false && (!deepEqual(oldConstraints.video, constraints.video) || !hasLiveVideoTrack);
     const mustRequestNewAudio =
-        constraints.audio !== false && (!deepEqual(oldConstraints.audio, constraints.audio) || !hasLiveAudioTrack);
+        constraints.audio !== false &&
+        warmAudioTrack === undefined &&
+        (!deepEqual(oldConstraints.audio, constraints.audio) || !hasLiveAudioTrack);
 
     if (currentStream) {
         const oldStream = currentStream;
         const mustStopVideo = oldConstraints.video !== false && constraints.video === false;
-        const mustStopAudio = oldConstraints.audio !== false && constraints.audio === false;
+        const oldAudioConstraints = oldConstraints.audio;
+        const mustStopAudio = oldAudioConstraints !== false && constraints.audio === false;
 
         if (mustStopVideo) {
             oldStream.getVideoTracks().forEach((t) => {
@@ -740,8 +854,14 @@ async function runRawStreamUpdate(
         }
         if (mustStopAudio) {
             oldStream.getAudioTracks().forEach((t) => {
-                t.stop();
                 oldStream.removeTrack(t);
+                if (constraints.keepAudioWarm && t.readyState === "live") {
+                    releaseWarmAudio();
+                    t.enabled = false;
+                    warmAudio = { track: t, constraints: oldAudioConstraints };
+                } else {
+                    t.stop();
+                }
             });
         }
         if (mustStopVideo || mustStopAudio) {
@@ -750,6 +870,17 @@ async function runRawStreamUpdate(
                 stream: oldStream,
             });
         }
+    }
+
+    if (warmAudioTrack) {
+        currentStream = new MediaStream([
+            ...(currentStream?.getVideoTracks().filter((track) => track.readyState !== "ended") ?? []),
+            warmAudioTrack,
+        ]);
+        setIfCurrent({
+            type: "success",
+            stream: currentStream,
+        });
     }
 
     if (mustRequestNewVideo || mustRequestNewAudio) {
@@ -824,6 +955,10 @@ async function runRawStreamUpdate(
             hideHelpCameraSettings();
         } catch (e) {
             if (isOverConstrainedError(e) && e.constraint === "deviceId") {
+                analyticsClient.trackAdminEvent("media.device_error", {
+                    kind: "camera_microphone",
+                    reason: "device_constraint",
+                });
                 console.info(
                     "Could not access the requested microphone or webcam. Falling back to default microphone and webcam",
                     newConstraints,
@@ -841,6 +976,7 @@ async function runRawStreamUpdate(
                 );
                 emitCurrentStreamOrError(setIfCurrent, e);
                 const classified = classifyMediaAccessError(e);
+                trackMediaAccessIssue(mustRequestNewAudio ? "camera_microphone" : "camera", classified);
                 requestedCameraState.disableWebcam();
                 cameraAccessIssueStore.set(classified);
                 if (mustRequestNewAudio) {
@@ -857,6 +993,7 @@ async function runRawStreamUpdate(
                 console.info("Error. Unable to get microphone and/or camera access.", newConstraints, e);
                 emitCurrentStreamOrError(setIfCurrent, e);
                 if (mustRequestNewAudio) {
+                    trackMediaAccessIssue("microphone", classifyMediaAccessError(e));
                     requestedMicrophoneState.disableMicrophone();
                     microphoneAccessIssueStore.set(classifyMediaAccessError(e));
                 }
@@ -1033,19 +1170,23 @@ async function runLocalVideoTrackUpdate(
 
     if (!backgroundTransformer) {
         const currentConfig = get(backgroundConfigStore);
-        const transformer = createBackgroundTransformer(currentConfig, (error) => {
-            if (backgroundTransformer !== transformer) {
-                return;
-            }
+        const transformer = createBackgroundTransformer(
+            currentConfig,
+            (error) => {
+                if (backgroundTransformer !== transformer) {
+                    return;
+                }
 
-            console.warn("[MediaStore] Background transformer stopped after a terminal failure:", error);
-            Sentry.captureException(error);
-            warningMessageStore.addWarningMessage(get(LL).warning.backgroundProcessing.failedToApply());
-            transformer.close();
-            backgroundTransformer = undefined;
-            lastBackgroundConfig = undefined;
-            backgroundConfigStore.reset();
-        });
+                console.warn("[MediaStore] Background transformer stopped after a terminal failure:", error);
+                Sentry.captureException(error);
+                warningMessageStore.addWarningMessage(get(LL).warning.backgroundProcessing.failedToApply());
+                transformer.close();
+                backgroundTransformer = undefined;
+                lastBackgroundConfig = undefined;
+                backgroundConfigStore.reset();
+            },
+            (sample) => analyticsClient.trackAdminEvent("media.background_effect.sample", sample),
+        );
         backgroundTransformer = transformer;
     }
 
@@ -1066,9 +1207,14 @@ async function runLocalVideoTrackUpdate(
         if (isAbort) {
             return;
         }
-        console.warn("[MediaStore] Failed to transform stream:", error);
-        Sentry.captureException(error);
-        warningMessageStore.addWarningMessage(get(LL).warning.backgroundProcessing.failedToApply());
+        if (error instanceof BackgroundProcessingUnsupportedError) {
+            console.warn("[MediaStore] Background processing is not supported on this browser:", error.message);
+            warningMessageStore.addWarningMessage(get(LL).warning.backgroundProcessing.notSupportedOnThisBrowser());
+        } else {
+            console.warn("[MediaStore] Failed to transform stream:", error);
+            Sentry.captureException(error);
+            warningMessageStore.addWarningMessage(get(LL).warning.backgroundProcessing.failedToApply());
+        }
         backgroundConfigStore.reset();
         setIfCurrent({
             type: "error",
@@ -1274,6 +1420,97 @@ export const localVoiceIndicatorStore = derived<Readable<number[] | undefined>, 
     },
     false,
 );
+
+/**
+ * How long speech is held open across a silence before the period is closed. Longer
+ * than the gaps inside speech, shorter than the gaps between turns.
+ */
+const SPEECH_HOLD_MS = 1500;
+
+/**
+ * Time the microphone was actually open, and time the user was actually speaking.
+ *
+ * Both ride the same interval machinery as `status.dwell`: the front says when a
+ * period starts and stops, the pusher measures it on its own clock and emits one row
+ * when it closes.
+ *
+ * The two signals are deliberately the local, effective ones:
+ *
+ * - the microphone is `effectiveMicrophoneStateStore`, true only while a track is
+ *   really being captured. A denied permission, a privacy shutdown or an
+ *   energy-saving pause read as closed, so this measures time a microphone could be
+ *   heard rather than time a toggle was left on.
+ * - speech is this user's OWN volume analyser, not a remote "who is speaking" signal.
+ *   That keeps it independent of the meeting engine, and it means one speaker is
+ *   reported once rather than once per listener. It is loudness, not recognition: no
+ *   audio is inspected, transmitted or stored.
+ */
+let endMicrophoneDwell: EndTimedAnalyticsEvent | undefined;
+let unsubscribeEffectiveMicrophone: Unsubscriber | undefined;
+let unsubscribeVoiceIndicator: Unsubscriber | undefined;
+
+// Both periods are opened once per meeting that hears them and cut at every meeting
+// boundary — half of a period that straddles one happened in the meeting and half did
+// not, and a row can only name one meeting. See CurrentMeeting.
+const speechIntervals = createHeldIntervalTracker(
+    () =>
+        openTimedEventPerMeeting((context) =>
+            analyticsClient.openTimedEvent("media.speech.dwell", context, { reopenOnReconnect: true }),
+        ),
+    SPEECH_HOLD_MS,
+);
+
+const closeMicrophoneDwell = (): void => {
+    speechIntervals.stop();
+    unsubscribeVoiceIndicator?.();
+    unsubscribeVoiceIndicator = undefined;
+    endMicrophoneDwell?.();
+    endMicrophoneDwell = undefined;
+};
+
+const openMicrophoneDwell = (): void => {
+    endMicrophoneDwell ??= openTimedEventPerMeeting((context) =>
+        analyticsClient.openTimedEvent(
+            "media.microphone.dwell",
+            context,
+            // The microphone did not close because the socket did: after a reconnect it
+            // is still open, and nothing will say so again.
+            { reopenOnReconnect: true },
+        ),
+    );
+
+    // Same reasoning one level down: subscribing is what starts the SoundMeter, so
+    // it runs only while there is actually something to hear.
+    unsubscribeVoiceIndicator ??= localVoiceIndicatorStore.subscribe((speaking: boolean) =>
+        speechIntervals.set(speaking),
+    );
+};
+
+// Nothing here may be watched from module scope. `effectiveMicrophoneStateStore` is
+// derived off the getUserMedia chain, so subscribing to it is what STARTS that chain:
+// doing it at import time reaches for the microphone before the user has even reached
+// a room, which changes when permission is asked for and when devices are held.
+// `gameSceneIsLoadedStore` is a plain writable and costs nothing to watch, and it is
+// true exactly while the user is in a room — which is also the only time an analytics
+// row has a room to belong to.
+// eslint-disable-next-line svelte/no-ignored-unsubscribe
+gameSceneIsLoadedStore.subscribe((inRoom: boolean) => {
+    if (!inRoom) {
+        unsubscribeEffectiveMicrophone?.();
+        unsubscribeEffectiveMicrophone = undefined;
+        closeMicrophoneDwell();
+        return;
+    }
+
+    unsubscribeEffectiveMicrophone ??= effectiveMicrophoneStateStore.subscribe((microphoneOpen: boolean) => {
+        if (!microphoneOpen) {
+            closeMicrophoneDwell();
+            return;
+        }
+
+        openMicrophoneDwell();
+    });
+});
 
 /**
  * Device list
@@ -1557,6 +1794,5 @@ backgroundConfigStore.subscribe(($config) => {
         mode: $config.mode,
         blurAmount: $config.blurAmount,
         backgroundImage: $config.backgroundImage,
-        backgroundVideo: $config.backgroundVideo,
     });
 });

@@ -33,7 +33,7 @@
     }
 
     function goToLoginPage() {
-        analyticsClient.login();
+        analyticsClient.trackAdminEvent("auth.login_clicked");
         window.location.href = "/login";
     }
 
@@ -158,7 +158,7 @@
                     class="text-center text-xs text-gray-400 italic hover:underline cursor-pointer mt-5"
                     onclick={closeTodoList}
                 >
-                    ${$LL.externalModule.todoList.sentence()}
+                    {$LL.externalModule.todoList.sentence()}
                 </p>
             {/if}
         </div>

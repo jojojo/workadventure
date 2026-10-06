@@ -21,7 +21,7 @@
                 return;
             }
 
-            analyticsClient.validationWoka("SelectWoka");
+            analyticsClient.trackAdminEvent("onboarding.woka_validated", { scene: "SelectWoka" });
             gameManager.setCharacterTextureIds(texturesId);
             await connectionManager.saveTextures(texturesId);
 

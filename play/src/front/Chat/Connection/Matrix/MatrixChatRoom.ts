@@ -1563,7 +1563,7 @@ export class MatrixChatRoom
             if (existingMessageWithReactions) {
                 const existingMessageReaction = existingMessageWithReactions.reactions.get(reactionKey);
                 if (existingMessageReaction) {
-                    existingMessageReaction.addUser(event.getSender(), event.getId());
+                    existingMessageReaction.addUser(event);
                     return;
                 }
                 existingMessageWithReactions.reactions.set(
@@ -2052,6 +2052,7 @@ export class MatrixChatRoom
                 formatted_body: file.name,
                 info: {
                     size: file.size,
+                    mimetype: file.type,
                 },
                 msgtype: this.getMessageTypeFromFile(file),
                 url: uploadResponse.content_uri,

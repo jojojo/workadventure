@@ -1,11 +1,11 @@
 import * as Sentry from "@sentry/svelte";
-import type { FilterType } from "@workadventure/messages";
+import type { FilterType, SpaceKind } from "@workadventure/messages";
 import type { Subscription } from "rxjs";
 import { z } from "zod";
 import { MapStore } from "@workadventure/store-utils";
 import type { Readable } from "svelte/store";
 import { derived } from "svelte/store";
-import type { SpaceInterface } from "../SpaceInterface";
+import type { RaisedHandSection, SpaceInterface } from "../SpaceInterface";
 import { SpaceAlreadyExistError, SpaceDoesNotExistError } from "../Errors/SpaceError";
 import type { VideoBox } from "../VideoBox";
 import { Space } from "../Space";
@@ -32,8 +32,8 @@ export type RoomConnectionForSpacesInterface = Pick<
     | "emitAddSpaceFilter"
     | "emitLeaveSpace"
     | "emitJoinSpace"
-    | "startRecording"
-    | "stopRecording"
+    | "alterSpaceState"
+    | "spaceStatePatchMessageStream"
     | "emitUpdateSpaceMetadata"
     | "emitUpdateSpaceUserMessage"
     | "spaceDestroyedMessage"
@@ -48,6 +48,8 @@ export type RoomConnectionForSpacesInterface = Pick<
 export class SpaceRegistry implements SpaceRegistryInterface {
     private spaces: MapStore<string, Space> = new MapStore<string, Space>();
     public readonly spacesEligibleForRecording: Readable<Space[]>;
+    // Spaces the local user currently syncs their media (and raised hand) with: the candidates for raising a hand.
+    public readonly spacesSynchronizingMedia: Readable<Space[]>;
     private leavingSpacesPromises: Map<string, Promise<void>> = new Map<string, Promise<void>>();
     private joiningSpacesPromises: Map<string, Promise<Space>> = new Map<string, Promise<Space>>();
     private initSpaceUsersMessageStreamSubscription: Subscription;
@@ -55,6 +57,7 @@ export class SpaceRegistry implements SpaceRegistryInterface {
     private updateSpaceUserMessageStreamSubscription: Subscription;
     private removeSpaceUserMessageStreamSubscription: Subscription;
     private updateSpaceMetadataMessageStreamSubscription: Subscription;
+    private spaceStatePatchMessageStreamSubscription: Subscription;
     private proximityPublicMessageEventSubscription: Subscription;
     private proximityPrivateMessageEventSubscription: Subscription;
     private spaceDestroyedMessageSubscription: Subscription;
@@ -123,6 +126,50 @@ export class SpaceRegistry implements SpaceRegistryInterface {
         return derived(stores, (list) => list.some(Boolean)).subscribe(set);
     });
 
+    // The raised hands and floor holders of each space that has any, one section per space. They are never merged:
+    // a bubble member who also listens to the room megaphone must not see the megaphone's queue as the bubble's.
+    public readonly raisedHandSectionsStore: Readable<RaisedHandSection[]> = derived(this.spaces, ($spaces, set) => {
+        const spaces = Array.from($spaces.values());
+        if (spaces.length === 0) {
+            set([]);
+            return () => {};
+        }
+
+        const sectionStores = spaces.map((space) =>
+            derived(
+                [
+                    space.state.raisedHandsStore,
+                    space.state.speakingUsersStore,
+                    space.state.observe("floorHolders"),
+                    space.isStreamingAudioStore,
+                ],
+                ([hands, speakers, floorHolders, isStreaming]): RaisedHandSection => ({
+                    space,
+                    hands,
+                    speakers,
+                    onAirHere: isStreaming && !floorHolders.some((entry) => entry.spaceUserId === space.mySpaceUserId),
+                }),
+            ),
+        );
+        return derived(sectionStores, (sections) =>
+            sections.filter((section) => section.hands.length > 0 || section.speakers.length > 0),
+        ).subscribe(set);
+    });
+
+    /** The joined spaces for which `select` currently holds, kept up to date as spaces come and go. */
+    private spacesWhere(select: (space: Space) => Readable<boolean>): Readable<Space[]> {
+        return derived(this.spaces, ($spaces, set) => {
+            const spaces = Array.from($spaces.values());
+
+            if (spaces.length === 0) {
+                set([]);
+                return () => {};
+            }
+
+            return derived(spaces.map(select), (holds) => spaces.filter((_, index) => holds[index])).subscribe(set);
+        });
+    }
+
     public readonly isLiveStreamingAudioStore: Readable<boolean> = derived(this.spaces, ($spaces, set) => {
         if ($spaces.size === 0) {
             set(false);
@@ -166,19 +213,8 @@ export class SpaceRegistry implements SpaceRegistryInterface {
             },
         );
 
-        this.spacesEligibleForRecording = derived(this.spaces, ($spaces, set) => {
-            const spaces = Array.from($spaces.values());
-
-            if (spaces.length === 0) {
-                set([]);
-                return () => {};
-            }
-
-            return derived(
-                spaces.map((space) => space.shouldDisplayRecordButton),
-                (eligibilityBySpace) => spaces.filter((_, index) => eligibilityBySpace[index]),
-            ).subscribe(set);
-        });
+        this.spacesEligibleForRecording = this.spacesWhere((space) => space.shouldDisplayRecordButton);
+        this.spacesSynchronizingMedia = this.spacesWhere((space) => space.spacePeerManager.mediaSynchronizedStore);
 
         this.addSpaceUserMessageStreamSubscription = roomConnection.addSpaceUserMessageStream.subscribe((message) => {
             if (!message.user) {
@@ -235,6 +271,12 @@ export class SpaceRegistry implements SpaceRegistryInterface {
             },
         );
 
+        this.spaceStatePatchMessageStreamSubscription = roomConnection.spaceStatePatchMessageStream.subscribe(
+            (message) => {
+                this.spaces.get(message.spaceName)?.state.applyPatch(message.patch);
+            },
+        );
+
         this.proximityPublicMessageEventSubscription = roomConnection.spacePublicMessageEvent.subscribe((message) => {
             const space = this.spaces.get(message.spaceName);
             if (!space) {
@@ -279,6 +321,12 @@ export class SpaceRegistry implements SpaceRegistryInterface {
             metadata?: Map<string, unknown>;
             // True if the user is allowed to start/stop recording in the space. Defaults to false.
             canRecord?: boolean;
+            /**
+             * What the space is, told to the back as well as kept here: a space that
+             * declares nothing is nobody's meeting and nobody's broadcast, so the back
+             * measures nothing in it.
+             */
+            spaceKind?: SpaceKind;
         },
     ): Promise<SpaceInterface> {
         const leavingPromise = this.leavingSpacesPromises.get(spaceName);
@@ -311,6 +359,9 @@ export class SpaceRegistry implements SpaceRegistryInterface {
                 options,
             );
             this.spaces.set(newSpace.getName(), newSpace);
+            if (options?.spaceKind) {
+                newSpace.state.setKind(options.spaceKind);
+            }
             return newSpace;
         })();
         this.joiningSpacesPromises.set(spaceName, creationPromise);
@@ -362,6 +413,7 @@ export class SpaceRegistry implements SpaceRegistryInterface {
         this.updateSpaceUserMessageStreamSubscription.unsubscribe();
         this.removeSpaceUserMessageStreamSubscription.unsubscribe();
         this.updateSpaceMetadataMessageStreamSubscription.unsubscribe();
+        this.spaceStatePatchMessageStreamSubscription.unsubscribe();
         this.proximityPublicMessageEventSubscription.unsubscribe();
         this.proximityPrivateMessageEventSubscription.unsubscribe();
         this.spaceDestroyedMessageSubscription.unsubscribe();

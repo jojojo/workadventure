@@ -93,6 +93,8 @@ const camera: DeepPartial<Translation["camera"]> = {
         closeMenu: "메뉴 닫기",
         senPrivateMessage: "비공개 메시지 보내기(곧 제공 예정)",
         kickoffUser: "사용자 내보내기",
+        giveFloor: "발언권 주기",
+        revokeFloor: "발언권 회수",
         muteAudioUser: "해당 사용자 오디오 음소거",
         askToMuteAudioUser: "오디오 음소거 요청",
         muteAudioEveryBody: "모든 사용자 오디오 음소거",
@@ -103,7 +105,6 @@ const camera: DeepPartial<Translation["camera"]> = {
     },
     backgroundEffects: {
         imageTitle: "배경 이미지",
-        videoTitle: "배경 비디오",
         blurTitle: "배경 흐림 효과",
         resetTitle: "배경 효과 끄기",
         title: "배경 효과",

@@ -46,6 +46,9 @@ export const LivekitRoomConfigData = z
         startWithAudioMuted: z.boolean(),
         startWithVideoMuted: z.boolean(),
         disableChat: z.boolean().optional().default(false),
+        // Whether attendees may raise their hand to ask for the floor. On by default, and absent from
+        // maps built before the option existed, hence `.optional()` on top of the default.
+        raiseHandEnabled: z.boolean().optional().default(true),
     })
     .optional();
 
@@ -82,6 +85,17 @@ export const PlayAudioPropertyData = PropertyBase.extend({
     audioLink: z.string(),
     volume: z.number().default(1).optional(),
     triggerMessage: z.string().optional(),
+    /**
+     * Broadcast the sound to every player of the map instead of only the one who activates it.
+     * Entities only: on an area this would fire for anyone walking in.
+     */
+    playForAllUsers: z.boolean().optional(),
+    /**
+     * Distance in pixels beyond which a broadcast sound is not heard, the volume decreasing as it
+     * is approached. Null or undefined means the sound is heard at full volume anywhere on the map
+     * (an emptied number input is bound to null).
+     */
+    audibleRadius: z.number().min(0).nullable().optional(),
 });
 
 export const OpenWebsitePropertyData = PropertyBase.extend({
@@ -144,6 +158,9 @@ export const ListenerMegaphonePropertyData = PropertyBase.extend({
     speakerZoneName: z.string(),
     chatEnabled: z.boolean().default(false),
     allowTalking: z.boolean().optional().default(false),
+    // Whether listeners may raise their hand to ask the speaker for the floor. On by default, and absent
+    // from maps built before the option existed, hence `.optional()` on top of the default.
+    raiseHandEnabled: z.boolean().optional().default(true),
     waitingLink: z.string().optional(),
 });
 

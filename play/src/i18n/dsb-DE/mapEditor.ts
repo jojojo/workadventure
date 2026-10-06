@@ -87,6 +87,9 @@ const mapEditor: DeepPartial<Translation["mapEditor"]> = {
             volumeLabel: "Głosnosć",
             error: "Zuk njedajo se zacytaś",
             actionButtonLabel: "Muziku wótegraś",
+            playForAllUsersLabel: "Za wšykne wužywarje na kórśe wótegraś",
+            audibleRadiusLabel: "Radius słyšanja (w pikselach)",
+            audibleRadiusPlaceholder: "Wšuźi słyšobny, jolic prozny",
         },
         openWebsite: {
             label: "Link wótcyniś",
@@ -140,6 +143,7 @@ const mapEditor: DeepPartial<Translation["mapEditor"]> = {
         },
         chatEnabled: "Chat jo aktiwěrowany",
         allowTalking: "Powědanje a twórjenje pucherow dowóliś",
+        raiseHandEnabled: "Zwignjenje ruki dowóliś",
         seeAttendees: "Wobźělnikow pokazaś",
         start: {
             label: "Startowy wobceŕk",
@@ -309,6 +313,7 @@ const mapEditor: DeepPartial<Translation["mapEditor"]> = {
                 startWithAudioMuted: "Startowaś z deaktiwěrowanym mikrofonom",
                 startWithVideoMuted: "Startowaś z deaktiwěrowaneju kameru",
                 disableChat: "Chat deaktiwěrowaś",
+                raiseHandEnabled: "Zwignjenje ruki dowóliś",
                 livekitRoomAdminTag: "Moderatorowa toflicka za konferencnu śpu",
                 cancel: "Pśetergnuś",
                 validate: "Waliděrowaś",

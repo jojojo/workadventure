@@ -1,7 +1,7 @@
 import * as Sentry from "@sentry/svelte";
 import { get } from "svelte/store";
 import type { ErrorApiErrorData, ErrorApiRetryData, ErrorApiUnauthorizedData } from "@workadventure/messages";
-import { isRegisterData, MeResponse, ErrorScreenMessage } from "@workadventure/messages";
+import { MeResponse, ErrorScreenMessage } from "@workadventure/messages";
 import axios, { AxiosError, isAxiosError } from "axios";
 import { Subject } from "rxjs";
 import { asError } from "catch-unknown";
@@ -87,11 +87,11 @@ class ConnectionManager {
         externalPresenceSync.stop();
         localUserStore.setAuthToken(null);
         if (!ENABLE_OPENID || !this._currentRoom) {
-            analyticsClient.loggedWithToken();
+            analyticsClient.trackAdminEvent("auth.logged_token");
             loginSceneVisibleIframeStore.set(false);
             return null;
         }
-        analyticsClient.loggedWithSso();
+        analyticsClient.trackAdminEvent("auth.logged_sso");
         const redirectUrl = new URL("login-screen", ABSOLUTE_PUSHER_URL);
         redirectUrl.searchParams.append("playUri", this._currentRoom.key);
         if (manuallyTriggered) {
@@ -202,42 +202,6 @@ class ConnectionManager {
         } else if (this.connexionType === GameConnexionTypes.jwt) {
             /** @deprecated */
             throw new Error("This endpoint is deprecated");
-        }
-
-        //@deprecated
-        else if (this.connexionType === GameConnexionTypes.register) {
-            const organizationMemberToken = urlManager.getOrganizationToken();
-            const result = await axiosToPusher.post("register", { organizationMemberToken }).then((res) => res.data);
-
-            const registerDataChecking = isRegisterData.safeParse(result);
-
-            if (!registerDataChecking.success) {
-                console.error("Invalid data received from /register route. Data: ", result);
-                throw new Error("Invalid data received from /register route.");
-            }
-
-            const data = registerDataChecking.data;
-
-            this.localUser = new LocalUser(data.userUuid, data.email);
-            this.authToken = data.authToken;
-            localUserStore.saveUser(this.localUser);
-            localUserStore.setAuthToken(this.authToken);
-            analyticsClient.loggedWithToken();
-
-            const roomUrl = data.roomUrl;
-
-            const query = urlParams.toString();
-            this._currentRoom = await Room.createRoom(
-                new URL(
-                    window.location.protocol +
-                        "//" +
-                        window.location.host +
-                        roomUrl +
-                        (query ? "?" + query : "") + //use urlParams because the token param must be deleted
-                        window.location.hash,
-                ),
-            );
-            urlManager.pushRoomIdToUrl(this._currentRoom);
         } else if (this.connexionType === GameConnexionTypes.room || this.connexionType === GameConnexionTypes.empty) {
             this.authToken = localUserStore.getAuthToken();
 
@@ -449,6 +413,12 @@ class ConnectionManager {
                     // Set the default application integration for the room
 
                     this.bindWebsocketReconnectingToast(connection);
+                    analyticsClient.setAdminAnalyticsSender((message) => connection.emitAnalyticsEventReport(message));
+                    analyticsClient.trackAdminEvent("session.started", { roomId: roomUrl, schemaVersion: 1 });
+                    connection.onCleanup(() =>
+                        analyticsClient.trackAdminEvent("session.ended", { roomId: roomUrl, schemaVersion: 1 }),
+                    );
+                    connection.onCleanup(() => analyticsClient.setAdminAnalyticsSender(undefined));
                     this._roomConnectionStream.next(connection);
                     errorScreenStore.delete();
                     resolve(connect);

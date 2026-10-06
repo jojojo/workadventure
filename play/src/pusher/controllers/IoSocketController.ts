@@ -29,7 +29,8 @@ import {
     SpaceDestroyedError,
     UserAlreadyAddedInSpaceError,
 } from "../models/SpaceValidationErrors";
-import { videoQualityAnalyticsQueue } from "../services/VideoQualityAnalyticsQueue";
+import { analyticsEventsQueue } from "../services/AnalyticsEventsQueue";
+import { processAnalyticsReportMessage } from "../services/AnalyticsReportMessageHandler";
 import { PusherRoomSocketController } from "../services/PusherRoomSocketController";
 import { AdminWebSocketBackpressureWriter } from "../services/AdminWebSocketBackpressureWriter";
 import type { PusherWebSocket } from "../services/PusherWebSocket";
@@ -83,6 +84,11 @@ export class IoSocketController {
 
     adminRoomSocket(): void {
         this.app.ws<AdminSocketData>("/ws/admin/rooms", {
+            // The "listen" message carries the admin JWT (which embeds every authorized room URL)
+            // plus the same room list again, so a large organization goes over uWS' 16kB default.
+            // uWS then drops such a message by closing the socket with no close frame at all, so
+            // the admin only sees a bare 1006 and silently loses its "users connected" counters.
+            maxPayloadLength: 16 * 1024 * 1024,
             maxBackpressure: PUSHER_ADMIN_WS_MAX_BACKPRESSURE_BYTES,
             upgrade: (res, req, context) => {
                 const websocketKey = req.getHeader("sec-websocket-key");
@@ -204,35 +210,20 @@ export class IoSocketController {
                                 Sentry.captureException(e);
                             });
                         }
-                    } else if (message.event === "user-message") {
-                        const messageToEmit = message.message;
+                    } else if (message.event === "banned") {
+                        const bannedUser = message.message;
                         // Get roomIds of the world where we want broadcast the message
                         const roomIds = authorizedRoomIds.filter(
                             (authorizeRoomId) => authorizeRoomId.split("/")[5] === message.world,
                         );
 
                         for (const roomId of roomIds) {
-                            if (messageToEmit.type === "banned") {
-                                socketManager
-                                    .emitBan(messageToEmit.userUuid, messageToEmit.message, messageToEmit.type, roomId)
-                                    .catch((error) => {
-                                        Sentry.captureException(error);
-                                        console.error(error);
-                                    });
-                            } else if (messageToEmit.type === "ban") {
-                                socketManager
-                                    .emitSendUserMessage(
-                                        messageToEmit.userUuid,
-                                        messageToEmit.message,
-                                        messageToEmit.type,
-                                        roomId,
-                                        messageToEmit.id !== undefined ? String(messageToEmit.id) : "",
-                                    )
-                                    .catch((error) => {
-                                        Sentry.captureException(error);
-                                        console.error(error);
-                                    });
-                            }
+                            socketManager
+                                .emitBan(bannedUser.userUuid, bannedUser.message, "banned", roomId)
+                                .catch((error) => {
+                                    Sentry.captureException(error);
+                                    console.error(error);
+                                });
                         }
                     }
                 } catch (err) {
@@ -274,7 +265,7 @@ export class IoSocketController {
                 roomName: z.string(),
                 cameraState: z.string().transform((val) => val === "true"),
                 microphoneState: z.string().transform((val) => val === "true"),
-                tabId: z.string(),
+                tabId: z.string().min(1),
                 connectionId: z.string().optional(),
             }),
             upgrade: async ({ query, request, isAborted, upgrade, reject }) => {
@@ -349,13 +340,16 @@ export class IoSocketController {
                         characterTextures: [],
                         isCompanionTextureValid: true,
                         companionTexture: undefined,
-                        messages: [],
                         userRoomToken: undefined,
                         activatedInviteUser: true,
                         canEdit: false,
                         world: "",
                         chatID,
                         canRecord: false,
+                        // No admin, so there is nobody to report analytics to. This
+                        // placeholder is only used until fetchMemberDataByUuid answers;
+                        // when it never does, denying is the right default.
+                        analyticsEventsEnabled: false,
                     };
 
                     let characterTextures: WokaDetail[];
@@ -450,7 +444,6 @@ export class IoSocketController {
                         tags: memberTags,
                         visitCardUrl: memberVisitCardUrl,
                         userRoomToken: memberUserRoomToken,
-                        loginMessages: userData.messages,
                         activatedInviteUser: userData.activatedInviteUser ?? undefined,
                         applications: userData.applications,
                         canEdit: userData.canEdit ?? false,
@@ -466,9 +459,11 @@ export class IoSocketController {
                         roomName,
                         microphoneState,
                         cameraState,
+                        lastActivityAtMs: Date.now(),
                         tabId: query.tabId,
                         connectionId: query.connectionId,
                         attendeesState: false,
+                        analyticsEventsEnabled: userData.analyticsEventsEnabled ?? true,
                         queryAbortControllers: new Map<number, AbortController>(),
                         canRecord: userData.canRecord ?? false,
                     };
@@ -511,25 +506,9 @@ export class IoSocketController {
                 }
             },
             open: async (socket) => {
-                const socketData = socket.getUserData();
                 debug("WebSocket connection established");
 
                 await socketManager.handleConnectToRoom(socket);
-
-                for (const loginMessage of socketData.loginMessages) {
-                    socket.send({
-                        message: {
-                            $case: "sendUserMessage",
-                            sendUserMessage: {
-                                type: loginMessage.type,
-                                message: loginMessage.message,
-                                // The admin identifies its messages with an integer: normalize it,
-                                // the client sends it back as-is to acknowledge the message.
-                                id: loginMessage.id !== undefined ? String(loginMessage.id) : "",
-                            },
-                        },
-                    });
-                }
 
                 // Performance test
                 /*
@@ -612,6 +591,10 @@ export class IoSocketController {
             message: (socket, message): void => {
                 Sentry.withIsolationScope(() => {
                     const userData = socket.getUserData();
+                    // Before anything can reject or throw: this is a liveness stamp, not a
+                    // record of what the message did. A malformed frame still proves the tab
+                    // was there.
+                    userData.lastActivityAtMs = Date.now();
                     Sentry.setTag("userUuid", userData.userUuid);
                     Sentry.setTag("roomId", userData.roomId);
                     Sentry.setTag("world", userData.world);
@@ -756,6 +739,18 @@ export class IoSocketController {
                                             answerMessage.answer = {
                                                 $case: "searchMemberAnswer",
                                                 searchMemberAnswer: searchMemberAnswer,
+                                            };
+                                            this.sendAnswerMessage(socket, answerMessage);
+                                            break;
+                                        }
+                                        case "banIpPreviewQuery": {
+                                            const banIpPreviewAnswer = await socketManager.handleBanIpPreviewQuery(
+                                                socket,
+                                                message.message.queryMessage.query.banIpPreviewQuery,
+                                            );
+                                            answerMessage.answer = {
+                                                $case: "banIpPreviewAnswer",
+                                                banIpPreviewAnswer,
                                             };
                                             this.sendAnswerMessage(socket, answerMessage);
                                             break;
@@ -919,36 +914,22 @@ export class IoSocketController {
                                             }
                                             break;
                                         }
-                                        case "startRecordingQuery": {
-                                            const localSpaceName =
-                                                message.message.queryMessage.query.startRecordingQuery.spaceName;
+                                        case "spaceStateQuery": {
+                                            const { spaceName: localSpaceName, query } =
+                                                message.message.queryMessage.query.spaceStateQuery;
                                             const worldSpaceName = `${userData.world}.${localSpaceName}`;
 
-                                            await socketManager.handleStartRecording(socket, worldSpaceName, {
+                                            await socketManager.handleSpaceStateQuery(socket, worldSpaceName, query, {
                                                 signal: abortController.signal,
                                             });
 
                                             answerMessage.answer = {
-                                                $case: "startRecordingAnswer",
-                                                startRecordingAnswer: {},
+                                                $case: "spaceStateAnswer",
+                                                spaceStateAnswer: {},
                                             };
-                                            this.sendAnswerMessage(socket, answerMessage);
-                                            userData.queryAbortControllers.delete(message.message.queryMessage.id);
-                                            break;
-                                        }
-                                        case "stopRecordingQuery": {
-                                            const localSpaceName =
-                                                message.message.queryMessage.query.stopRecordingQuery.spaceName;
-                                            const worldSpaceName = `${userData.world}.${localSpaceName}`;
-
-                                            await socketManager.handleStopRecording(socket, worldSpaceName, {
-                                                signal: abortController.signal,
-                                            });
-
-                                            answerMessage.answer = {
-                                                $case: "stopRecordingAnswer",
-                                                stopRecordingAnswer: {},
-                                            };
+                                            // The patch the query caused sits in the batch: it must reach the front
+                                            // before the answer does.
+                                            socket.flushBatch();
                                             this.sendAnswerMessage(socket, answerMessage);
                                             userData.queryAbortControllers.delete(message.message.queryMessage.id);
                                             break;
@@ -975,6 +956,11 @@ export class IoSocketController {
                                                 },
                                             };
                                             this.sendAnswerMessage(socket, answerMessage);
+                                            // After the answer: the front only knows the space once it got it.
+                                            await socketManager.sendSpaceState(
+                                                socket,
+                                                message.message.queryMessage.query.joinSpaceQuery.spaceName,
+                                            );
 
                                             break;
                                         }
@@ -1076,6 +1062,7 @@ export class IoSocketController {
                             case "itemEventMessage":
                             case "variableMessage":
                             case "setAreaPropertyVariableMessage":
+                            case "entityMessage":
                             case "emotePromptMessage":
                             case "followRequestMessage":
                             case "followConfirmationMessage":
@@ -1119,21 +1106,18 @@ export class IoSocketController {
                                 await socketManager.handleBackEvent(socket, message.message.backEvent);
                                 break;
                             }
-                            case "userMessageReadMessage": {
-                                await socketManager.handleUserMessageRead(
-                                    socket,
-                                    message.message.userMessageReadMessage,
+                            case "videoQualityReportMessage": {
+                                analyticsEventsQueue.enqueueVideoQualityReport(
+                                    message.message.videoQualityReportMessage,
+                                    socket.getUserData(),
                                 );
                                 break;
                             }
-                            case "videoQualityReportMessage": {
-                                /*debug(
-                                    "Received video quality report with %d samples",
-                                    message.message.videoQualityReportMessage.samples.length,
-                                );*/
-                                videoQualityAnalyticsQueue.enqueueReport(
-                                    message.message.videoQualityReportMessage,
+                            case "analyticsEventReportMessage": {
+                                processAnalyticsReportMessage(
+                                    message.message.analyticsEventReportMessage,
                                     socket.getUserData(),
+                                    analyticsEventsQueue,
                                 );
                                 break;
                             }

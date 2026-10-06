@@ -87,6 +87,9 @@ const mapEditor: DeepPartial<Translation["mapEditor"]> = {
             defaultButtonLabel: "Speel muziek af",
             error: "Kon geluid niet laden",
             actionButtonLabel: "Speel muziek",
+            playForAllUsersLabel: "Afspelen voor alle gebruikers op de kaart",
+            audibleRadiusLabel: "Hoorbare straal (in pixels)",
+            audibleRadiusPlaceholder: "Overal hoorbaar indien leeg",
         },
         openWebsite: {
             label: "Open Link",
@@ -142,6 +145,7 @@ const mapEditor: DeepPartial<Translation["mapEditor"]> = {
 
         chatEnabled: "Koppel een speciale chatkanaal",
         allowTalking: "Praten en bubbels vormen toestaan",
+        raiseHandEnabled: "Handopsteken toestaan",
         seeAttendees: "Deelnemers zien",
         start: {
             label: "Startgebied",
@@ -311,6 +315,7 @@ const mapEditor: DeepPartial<Translation["mapEditor"]> = {
                 startWithAudioMuted: "Start met microfoon gedempt",
                 startWithVideoMuted: "Start met video gesloten",
                 disableChat: "Chat uitschakelen",
+                raiseHandEnabled: "Handopsteken toestaan",
                 livekitRoomAdminTag: "Moderatortag voor de vergaderruimte",
                 cancel: "Annuleren",
                 validate: "Valideren",

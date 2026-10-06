@@ -17,6 +17,7 @@ import type {
     SpaceIsTyping,
     SpaceMessage,
     InitSpaceUsersMessage,
+    SpaceStatePatchMessage,
 } from "@workadventure/messages";
 import { SpaceUser, FilterType } from "@workadventure/messages";
 import { Subject } from "rxjs";
@@ -40,8 +41,8 @@ class MockRoomConnection implements RoomConnectionForSpacesInterface {
     public emitRemoveSpaceFilter = vi.fn();
     public emitJoinSpace = vi.fn();
     public emitLeaveSpace = vi.fn();
-    public startRecording = vi.fn();
-    public stopRecording = vi.fn();
+    public alterSpaceState = vi.fn().mockResolvedValue(undefined);
+    public spaceStatePatchMessageStream = new Subject<SpaceStatePatchMessage>();
     public spacePublicMessageEvent = new Subject<PublicEvent>();
     public spacePrivateMessageEvent = new Subject<PrivateEventPusherToFront>();
     public spaceDestroyedMessage = new Subject<SpaceDestroyedMessage>();
@@ -285,6 +286,7 @@ describe("", () => {
             chatID: undefined,
             showVoiceIndicator: false,
             attendeesState: false,
+            cpuLimited: false,
         } satisfies SpaceUser;
 
         const addSpaceUserMessage: AddSpaceUserMessage = {
@@ -341,6 +343,7 @@ describe("", () => {
             chatID: "chat@id.fr",
             showVoiceIndicator: false,
             attendeesState: false,
+            cpuLimited: false,
         } satisfies SpaceUser;
 
         const addSpaceUserMessage: AddSpaceUserMessage = {
@@ -392,6 +395,7 @@ describe("", () => {
             chatID: "chat@id.fr",
             showVoiceIndicator: false,
             attendeesState: false,
+            cpuLimited: false,
         } satisfies SpaceUser;
 
         const addSpaceUserMessage: AddSpaceUserMessage = {
@@ -537,6 +541,7 @@ describe("", () => {
                 tags: [],
                 jitsiParticipantId: undefined,
                 attendeesState: false,
+                cpuLimited: false,
             },
             $case: "muteVideo",
             muteVideo: {

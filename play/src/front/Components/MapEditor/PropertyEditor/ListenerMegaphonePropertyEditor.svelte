@@ -59,7 +59,8 @@
         }
         try {
             const embedLink = await getEmbedLink(property.waitingLink);
-            if (property.waitingLink != embedLink) property.waitingLink = embedLink;
+            if (embedLink === undefined) linkError = true;
+            else if (property.waitingLink != embedLink) property.waitingLink = embedLink;
         } catch {
             linkError = true;
         } finally {
@@ -120,6 +121,14 @@
                     id="allowTalking"
                     label={$LL.mapEditor.properties.allowTalking()}
                     bind:value={property.allowTalking}
+                    onchange={onValueChange}
+                />
+            </div>
+            <div class="value-switch">
+                <InputSwitch
+                    id="raiseHandEnabled"
+                    label={$LL.mapEditor.properties.raiseHandEnabled()}
+                    bind:value={property.raiseHandEnabled}
                     onchange={onValueChange}
                 />
             </div>

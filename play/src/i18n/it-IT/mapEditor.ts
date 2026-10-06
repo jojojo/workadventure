@@ -88,6 +88,9 @@ const mapEditor: DeepPartial<Translation["mapEditor"]> = {
             defaultButtonLabel: "Riproduci musica",
             error: "Impossibile caricare il suono",
             actionButtonLabel: "Riproduci musica",
+            playForAllUsersLabel: "Riproduci per tutti gli utenti della mappa",
+            audibleRadiusLabel: "Raggio udibile (in pixel)",
+            audibleRadiusPlaceholder: "Udibile ovunque se vuoto",
         },
         openWebsite: {
             hideUrlLabel: "Hide URL",
@@ -141,6 +144,7 @@ const mapEditor: DeepPartial<Translation["mapEditor"]> = {
         },
         chatEnabled: "Associa un canale di chat dedicato",
         allowTalking: "Consentire di parlare e formare bolle",
+        raiseHandEnabled: "Consentire di alzare la mano",
         seeAttendees: "Vedi partecipanti",
         start: {
             label: "Area di Partenza",
@@ -303,6 +307,7 @@ const mapEditor: DeepPartial<Translation["mapEditor"]> = {
                 startWithAudioMuted: "Avvia con microfono disattivato",
                 startWithVideoMuted: "Avvia con video disattivato",
                 disableChat: "Disabilita chat",
+                raiseHandEnabled: "Consentire di alzare la mano",
                 livekitRoomAdminTag: "Tag moderatore per la sala riunioni",
                 cancel: "Annulla",
                 validate: "Convalida",

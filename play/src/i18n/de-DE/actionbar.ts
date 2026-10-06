@@ -92,7 +92,6 @@ const actionbar: DeepPartial<Translation["actionbar"]> = {
         blurMiddle: "Mittlere Unschärfe",
         blurHigh: "Starke Unschärfe",
         images: "Bilder",
-        videos: "Videos",
     },
     help: {
         chat: {
@@ -106,6 +105,10 @@ const actionbar: DeepPartial<Translation["actionbar"]> = {
         emoji: {
             title: "Ein Emoji anzeigen",
             desc: "Drücken Sie mit nur einem Klick Ihre Gefühle mit Emoji-Reaktionen aus. Einfach tippen und los!",
+        },
+        raiseHand: {
+            title: "Hand heben",
+            desc: "Signalisiere, dass du sprechen möchtest. Deine erhobene Hand wird auf der Karte und in deinem Video angezeigt, damit alle wissen, wer als Nächstes dran ist.",
         },
         audioManager: {
             title: "Lautstärke der Umgebungsgeräusche",
@@ -132,6 +135,10 @@ const actionbar: DeepPartial<Translation["actionbar"]> = {
             areaPickerTitle: "Bereich zum Sperren/Entsperren wählen",
             bubbleLabel: "Diskussionsblase",
             unnamedArea: "Unbenannter Bereich",
+        },
+        giveBackFloor: {
+            title: "Wort zurückgeben",
+            desc: "Dir wurde das Wort erteilt. Klicke, um aufzuhören zu sprechen und es zurückzugeben.",
         },
         megaphone: {
             title: "Megafon stoppen",
@@ -180,6 +187,14 @@ const actionbar: DeepPartial<Translation["actionbar"]> = {
             desc: "Sie können die Bild-im-Bild-Funktion verwenden, um ein Video oder eine Präsentation anzusehen, während Sie sich in einer Unterhaltung befinden. Klicken Sie einfach auf das Bild-im-Bild-Symbol und genießen Sie Ihren Inhalt.",
         },
         videoNotSupported: "Ihr Browser unterstützt das Video-Tag nicht.",
+    },
+    raisedHands: {
+        speaking: "Am Wort",
+        title: "Erhobene Hände",
+        empty: "Niemand hat die Hand gehoben",
+        help: "Sieh, wer sich in welcher Reihenfolge gemeldet hat, und erteile das Wort.",
+        lowerHand: "Hand senken",
+        lowerAllHands: "Alle senken",
     },
     listStatusTitle: {
         enable: "Ändern Sie Ihren Status",

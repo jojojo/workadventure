@@ -8,6 +8,7 @@ import { mapFetcher } from "@workadventure/map-editor/src/MapFetcher";
 import type {
     EditMapCommandMessage,
     EmoteEventMessage,
+    EntityEvent,
     JoinRoomMessage,
     MapBbbData,
     MapDetailsData,
@@ -430,9 +431,13 @@ export class GameRoom implements BrothersFinder {
     }
 
     updatePlayerDetails(user: User, playerDetailsMessage: SetPlayerDetailsMessage) {
+        const wasSilent = user.silent;
         user.updateDetails(playerDetailsMessage);
         if (user.group !== undefined && user.silent) {
             this.leaveGroup(user);
+        } else if (wasSilent && !user.silent) {
+            // Back from a silent status (DND, sound blocked...): join whoever is next to us, without waiting for a move.
+            this.updateUserGroup(user);
         }
     }
 
@@ -825,6 +830,24 @@ export class GameRoom implements BrothersFinder {
         });
 
         return true;
+    }
+
+    /**
+     * Broadcasts an entity event to every player of the room.
+     *
+     * Room-wide rather than zone-scoped on purpose: a sound carries further than the viewport, and
+     * the receiving client decides for itself whether it is close enough to hear it.
+     */
+    public dispatchEntityEvent(entityId: string, entityEvent: EntityEvent): void {
+        this.sendSubMessageToRoom({
+            message: {
+                $case: "entityMessage",
+                entityMessage: {
+                    entityId,
+                    entityEvent,
+                },
+            },
+        });
     }
 
     /**

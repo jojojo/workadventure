@@ -1,7 +1,6 @@
 import { clearInterval } from "timers";
 import type {
     AdminGlobalMessage,
-    AdminMessage,
     AdminPusherToBackMessage,
     AdminRoomMessage,
     BanMessage,
@@ -16,6 +15,8 @@ import type {
     PusherToBackRoomMessage,
     RefreshRoomPromptMessage,
     RoomsList,
+    WorldUsersAnswer,
+    WorldUsersQuery,
     ServerToAdminClientMessage,
     ServerToClientMessage,
     VariableRequest,
@@ -175,14 +176,6 @@ const roomManager = {
                             room.forwardEditMapCommandMessage(user, message.message.editMapCommandMessage);
                             break;
                         }
-                        case "sendUserMessage": {
-                            socketManager.handleSendUserMessage(user, message.message.sendUserMessage);
-                            break;
-                        }
-                        case "banUserMessage": {
-                            socketManager.handleBanUserMessage(room, user, message.message.banUserMessage);
-                            break;
-                        }
                         case "setPlayerDetailsMessage": {
                             socketManager.handleSetPlayerDetails(room, user, message.message.setPlayerDetailsMessage);
                             break;
@@ -221,6 +214,10 @@ const roomManager = {
                                 user,
                                 message.message.setAreaPropertyVariableMessage,
                             );
+                            break;
+                        }
+                        case "entityMessage": {
+                            socketManager.handleEntityMessage(room, message.message.entityMessage);
                             break;
                         }
                         default: {
@@ -542,23 +539,6 @@ const roomManager = {
             Sentry.captureException(err);
         });
     },
-    sendAdminMessage(call: ServerUnaryCall<AdminMessage, Empty>, callback: sendUnaryData<Empty>): void {
-        const adminMessage = call.request;
-        socketManager
-            .sendAdminMessage(
-                adminMessage.roomId,
-                adminMessage.recipientUuid,
-                adminMessage.message,
-                adminMessage.type,
-                adminMessage.id,
-            )
-            .catch((e) => {
-                console.error(e);
-                Sentry.captureException(e);
-            });
-
-        callback(null, {});
-    },
     sendGlobalAdminMessage(call: ServerUnaryCall<AdminGlobalMessage, Empty>, callback: sendUnaryData<Empty>): void {
         throw new Error("Not implemented yet");
         // TODO
@@ -566,10 +546,18 @@ const roomManager = {
     },
     ban(call: ServerUnaryCall<BanMessage, Empty>, callback: sendUnaryData<Empty>): void {
         // FIXME Work in progress
-        socketManager.banUser(call.request.roomId, call.request.recipientUuid, call.request.message).catch((e) => {
-            console.error(e);
-            Sentry.captureException(e);
-        });
+        socketManager
+            .banUser(
+                call.request.roomId,
+                call.request.recipientUuid,
+                call.request.message,
+                // The type ends up in the ejected user's client: only let through the two it knows.
+                call.request.type === "kicked" ? "kicked" : "banned",
+            )
+            .catch((e) => {
+                console.error(e);
+                Sentry.captureException(e);
+            });
 
         callback(null, {});
     },
@@ -605,6 +593,9 @@ const roomManager = {
     },
     getRooms(call: ServerUnaryCall<Empty, Empty>, callback: sendUnaryData<RoomsList>): void {
         callback(null, socketManager.getAllRooms());
+    },
+    getWorldUsers(call: ServerUnaryCall<WorldUsersQuery, Empty>, callback: sendUnaryData<WorldUsersAnswer>): void {
+        callback(null, socketManager.getWorldUsers(call.request.world));
     },
     ping(call: ServerUnaryCall<PingMessage, Empty>, callback: sendUnaryData<PingMessage>): void {
         callback(null, call.request);

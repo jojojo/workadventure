@@ -96,6 +96,8 @@ const camera: DeepPartial<Translation["camera"]> = {
         closeMenu: "Chiudi menu",
         senPrivateMessage: "Invia un messaggio privato (prossimamente)",
         kickoffUser: "Espelli utente",
+        giveFloor: "Dare la parola",
+        revokeFloor: "Togliere la parola",
         muteAudioUser: "Disattiva audio",
         askToMuteAudioUser: "Chiedi di disattivare l'audio",
         muteAudioEveryBody: "Disattiva audio per tutti",
@@ -106,7 +108,6 @@ const camera: DeepPartial<Translation["camera"]> = {
     },
     backgroundEffects: {
         imageTitle: "Immagini di sfondo",
-        videoTitle: "Video di sfondo",
         blurTitle: "Sfocatura di sfondo",
         resetTitle: "Disattiva effetti di sfondo",
         title: "Effetti di sfondo",

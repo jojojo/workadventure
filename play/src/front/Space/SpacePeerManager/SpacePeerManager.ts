@@ -6,16 +6,20 @@ import type { Subscription } from "rxjs";
 import { Subject } from "rxjs";
 import * as Sentry from "@sentry/svelte";
 import type { Readable, Unsubscriber } from "svelte/store";
-import { get } from "svelte/store";
+import { get, writable } from "svelte/store";
+import { cpuLimitedStore } from "../../WebRtc/CpuLimitationDetector";
 import type { SpaceInterface } from "../SpaceInterface";
 import type { LocalStreamStoreValue } from "../../Stores/MediaStore";
 import { effectiveCameraStateStore, effectiveMicrophoneStateStore } from "../../Stores/MediaStore";
+import { requestedHandRaiseState } from "../../Stores/RaiseHandStore";
+import { givenFloorSpaceStore } from "../../Stores/MegaphoneStore";
 import { recordingStore } from "../../Stores/RecordingStore";
 import { screenSharingLocalStreamStore } from "../../Stores/ScreenSharingStore";
 import { nbSoundPlayedInBubbleStore } from "../../Stores/ApparentMediaContraintStore";
-import { bindMuteEventsToSpace } from "../Utils/BindMuteEvents";
-import { recordingSchema } from "../SpaceMetadataValidator";
+import { bindMuteEventsToSpace, watchRaiseHandState } from "../Utils/BindMuteEvents";
 import { CommunicationType } from "../../Livekit/LivekitConnection";
+import { meetingEnded, meetingStarted } from "../../Administration/CurrentMeeting";
+import { isMeetingSpace } from "../../Rules/MeetingRules";
 import { microphoneValidatedForDeviceIdStore } from "../../Stores/MicrophoneValidatedForDeviceIdStore";
 import { notificationPlayingStore } from "../../Stores/NotificationStore";
 import { audioContextManager } from "../../WebRtc/AudioContextManager";
@@ -131,10 +135,10 @@ export interface PeerFactoryInterface {
 }
 export class SpacePeerManager {
     private unsubscribes: Unsubscriber[] = [];
+    private readonly _mediaSynchronizedStore = writable(false);
 
     private _communicationState: ICommunicationState;
     private _toFinalizeState: ICommunicationState | undefined;
-
     private readonly _effectiveScreenSharingLocalStreamStore: Readable<LocalStreamStoreValue | undefined>;
 
     private readonly _videoPeerAdded = new Subject<Streamable>();
@@ -162,7 +166,8 @@ export class SpacePeerManager {
         screenSharingPeerRemoved: this._screenSharingPeerRemoved,
     };
 
-    private metadataSubscription: Subscription;
+    private recordingStateUnsubscriber: Unsubscriber;
+    private readonly raiseHandStateUnsubscriber: Unsubscriber;
     private pendingRecorderNameResolutionBySpace = new Map<string, PendingRecorderNameResolution>();
     private nextRecorderNameResolutionToken = 0;
 
@@ -200,6 +205,7 @@ export class SpacePeerManager {
 
                 // create factory for the new state instead of creating the state directly ?
                 if (message.switchMessage.strategy === CommunicationType.WEBRTC) {
+                    this.recordCurrentMeeting();
                     this._communicationState = new WebRTCState(
                         this.space,
                         this._streamableSubjects,
@@ -207,6 +213,7 @@ export class SpacePeerManager {
                         this._effectiveScreenSharingLocalStreamStore,
                     );
                 } else if (message.switchMessage.strategy === CommunicationType.LIVEKIT) {
+                    this.recordCurrentMeeting();
                     this._communicationState = new LivekitState(
                         this.space,
                         this._streamableSubjects,
@@ -214,6 +221,7 @@ export class SpacePeerManager {
                         this._effectiveScreenSharingLocalStreamStore,
                     );
                 } else {
+                    this.forgetCurrentMeeting();
                     console.error("Unknown communication strategy: " + message.switchMessage.strategy);
                     Sentry.captureMessage("Unknown communication strategy: " + message.switchMessage.strategy);
                 }
@@ -289,22 +297,24 @@ export class SpacePeerManager {
         );
 
         _bindMuteEventsToSpace(this.space);
+        this.raiseHandStateUnsubscriber = watchRaiseHandState(this.space);
 
-        this.metadataSubscription = this.space.observeMetadataProperty("recording").subscribe((value) => {
-            const recording = recordingSchema.safeParse(value);
-            const spaceName = this.space.getName();
-
-            if (!recording.success) {
-                console.error("Invalid recording metadata", recording.error);
+        // The state store re-emits on every change of the space state: only react when the recording changed.
+        // Starting from "idle" also skips the initial idle state, which is not an event worth reacting to.
+        let lastRecording: { status: string; recorder: string | null } = { status: "idle", recorder: null };
+        this.recordingStateUnsubscriber = this.space.state.observe("recording").subscribe((value) => {
+            if (value.status === lastRecording.status && value.recorder === lastRecording.recorder) {
                 return;
             }
+            lastRecording = { status: value.status, recorder: value.recorder };
+            const spaceName = this.space.getName();
 
             // Read enableSounds from WAM file settings (default to true if not specified)
             const enableSounds = gameManager.getCurrentGameScene().wamFile?.settings?.recording?.enableSounds ?? true;
             const currentRecordingState = get(this._recordingStore).recordingsBySpace[spaceName];
             const previousStatus = currentRecordingState?.status ?? "idle";
 
-            if (recording.data.status === "idle") {
+            if (value.status === "idle") {
                 this.cancelPendingRecorderNameResolution(spaceName);
                 this._recordingStore.setRecordingState(spaceName, "idle", false, null, null);
                 this._recordingStore.syncInfoPopup();
@@ -333,26 +343,24 @@ export class SpacePeerManager {
                 return;
             }
 
-            if (recording.data.status !== "recording") {
+            if (value.status !== "recording") {
                 this.cancelPendingRecorderNameResolution(spaceName);
             }
 
-            const isRecorder = recording.data.recorder === this.space.mySpaceUserId;
-            const recorderSpaceUserId = recording.data.recorder ?? null;
+            const isRecorder = value.recorder === this.space.mySpaceUserId;
+            const recorderSpaceUserId = value.recorder;
             const recorderName = this.getRecorderName(recorderSpaceUserId);
 
             this._recordingStore.setRecordingState(
                 spaceName,
-                recording.data.status,
+                value.status,
                 isRecorder,
                 recorderSpaceUserId,
                 recorderName,
             );
 
             const enteredConfirmedRecording =
-                recording.data.status === "recording" &&
-                previousStatus !== "recording" &&
-                previousStatus !== "stopping";
+                value.status === "recording" && previousStatus !== "recording" && previousStatus !== "stopping";
 
             if (enteredConfirmedRecording) {
                 if (isRecorder) {
@@ -503,6 +511,14 @@ export class SpacePeerManager {
                 });
             }),
         );
+        // The back moves the bubble to LiveKit for a member whose encoders cannot keep up (see CpuLimitationDetector)
+        this.unsubscribes.push(
+            cpuLimitedStore.subscribe((state) => {
+                this.space.emitUpdateUser({
+                    cpuLimited: state,
+                });
+            }),
+        );
 
         this.unsubscribes.push(
             this._effectiveScreenSharingLocalStreamStore.subscribe((state) => {
@@ -517,6 +533,38 @@ export class SpacePeerManager {
                 }
             }),
         );
+
+        // Raise-hand state lives in the space state, not in SpaceUser, so it reaches every meeting participant —
+        // including a megaphone speaker without seeAttendees, who does not receive the listeners' SpaceUser.
+        // requestedHandRaiseState is the local user's intent, per space; only a difference with this space is sent.
+        this.unsubscribes.push(
+            requestedHandRaiseState.subscribe((raisedIn) => {
+                const wantsRaised = raisedIn.has(this.space.getName());
+                const isRaisedHere = get(this.space.state.raisedHandsStore).some(
+                    (entry) => entry.spaceUserId === this.space.mySpaceUserId,
+                );
+                if (wantsRaised !== isRaisedHere) {
+                    this.space.state.raiseHand(wantsRaised).catch((error) => console.error(error));
+                }
+            }),
+        );
+
+        // Handing a granted floor back (the raise-hand button, or entering a podium as a real speaker) clears
+        // givenFloorSpaceStore: take our entry out of the floor holders so the host panel stops offering it.
+        let grantedHere = get(givenFloorSpaceStore) === this.space;
+        this.unsubscribes.push(
+            givenFloorSpaceStore.subscribe((grantedSpace) => {
+                const wasGrantedHere = grantedHere;
+                grantedHere = grantedSpace === this.space;
+                const isFloorHolder = get(this.space.state.observe("floorHolders")).some(
+                    (entry) => entry.spaceUserId === this.space.mySpaceUserId,
+                );
+                if (wasGrantedHere && !grantedHere && isFloorHolder) {
+                    this.space.state.revokeFloor(this.space.mySpaceUserId).catch((error) => console.error(error));
+                }
+            }),
+        );
+        this._mediaSynchronizedStore.set(true);
     }
 
     private desynchronizeMediaState(): void {
@@ -526,6 +574,12 @@ export class SpacePeerManager {
             unsubscribe();
         });
         this.unsubscribes = [];
+        this._mediaSynchronizedStore.set(false);
+    }
+
+    /** Whether the local user's media state (and raised hand) is currently synchronized with this space. */
+    get mediaSynchronizedStore(): Readable<boolean> {
+        return this._mediaSynchronizedStore;
     }
 
     private isMediaStateSynchronized(): boolean {
@@ -543,13 +597,44 @@ export class SpacePeerManager {
         for (const unsubscribe of this.unsubscribes) {
             unsubscribe();
         }
+        this._mediaSynchronizedStore.set(false);
+        // Leaving the space drops the hand raised in it, so coming back to a space of the same name (a meeting
+        // room) does not raise it again on its own.
+        requestedHandRaiseState.lower(this.space.getName());
         for (const subscription of this.rxJsUnsubscribers) {
             subscription.unsubscribe();
         }
 
-        this.metadataSubscription.unsubscribe();
+        this.recordingStateUnsubscriber();
+        this.raiseHandStateUnsubscriber();
         this.cancelPendingRecorderNameResolution(this.space.getName());
         this._recordingStore.removeSpace(this.space.getName());
+        this.forgetCurrentMeeting();
+    }
+
+    /**
+     * Records which meeting this tab is in. It does not REPORT the meeting — the back
+     * does, once per meeting — but the periods this client does report, the microphone
+     * it held open and the times it was speaking, have to say which meeting they
+     * happened in, and nobody else can: they are measured from the local analyser.
+     *
+     * Gated on this tab sending its audio into a conversation: the back sends the same
+     * strategy switch to whoever merely joins a media-syncing space, the megaphone
+     * space and the listener zones included, and a speaking period belongs only to the
+     * meetings that hear it — a bubble formed inside a listener zone reports to the
+     * bubble alone.
+     */
+    private recordCurrentMeeting(): void {
+        this.forgetCurrentMeeting();
+        if (!isMeetingSpace(this.space.filterType) || !get(this.space.isStreamingAudioStore)) {
+            return;
+        }
+        meetingStarted(this.space.getName());
+    }
+
+    /** Guarded on the id by the store itself, so this is safe to call for any space. */
+    private forgetCurrentMeeting(): void {
+        meetingEnded(this.space.getName());
     }
 
     getPeer(): SimplePeerConnectionInterface | undefined {

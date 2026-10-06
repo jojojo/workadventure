@@ -38,7 +38,6 @@ export interface FrontConfigurationInterface {
     SENTRY_RELEASE: string | undefined;
     SENTRY_TRACES_SAMPLE_RATE: number | undefined;
     WOKA_SPEED: number;
-    FEATURE_FLAG_BROADCAST_AREAS: boolean;
     KLAXOON_ENABLED: boolean;
     KLAXOON_CLIENT_ID: string | undefined;
     YOUTUBE_ENABLED: boolean;
@@ -66,7 +65,6 @@ export interface FrontConfigurationInterface {
     ENABLE_ISSUE_REPORT: boolean | undefined;
     GRPC_MAX_MESSAGE_SIZE: number;
     TURN_CREDENTIALS_RENEWAL_TIME: number;
-    BACKGROUND_TRANSFORMER_ENGINE: "tasks-vision" | "selfie-segmentation" | undefined;
     // Woka settings
     DEFAULT_WOKA_NAME: string | undefined;
     DEFAULT_WOKA_TEXTURE: string | undefined;

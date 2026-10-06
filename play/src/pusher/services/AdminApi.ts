@@ -1,19 +1,11 @@
 import type { AxiosResponse } from "axios";
 import axios, { isAxiosError } from "axios";
-import type {
-    AdminApiData,
-    MapDetailsData,
-    OauthRefreshToken,
-    RoomRedirect,
-    Capabilities,
-    IceServer,
-} from "@workadventure/messages";
+import type { MapDetailsData, OauthRefreshToken, RoomRedirect, Capabilities, IceServer } from "@workadventure/messages";
 import {
     isOauthRefreshToken,
     MemberData,
     CompanionDetail,
     ErrorApiData,
-    isAdminApiData,
     isApplicationDefinitionInterface,
     isCapabilities,
     isErrorApiErrorData,
@@ -40,24 +32,6 @@ import { jwtTokenManager } from "./JWTTokenManager";
 import { ShortMapDescriptionList } from "./ShortMapDescription";
 import { WorldChatMembersData } from "./WorldChatMembersData";
 import { iceServersService } from "./IceServersService";
-
-export const AdminBannedData = z.object({
-    is_banned: z.boolean(),
-    message: z.string(),
-});
-
-export type AdminBannedData = z.infer<typeof AdminBannedData>;
-
-export const AdminLoginMessage = z.object({
-    type: z.string(),
-    message: z.string(),
-    // Identifier of the message on the admin side. Sent back to the admin once the user read the
-    // message, so it is not displayed again on the next connection. Optional: an admin that does
-    // not provide it simply gets no read receipt.
-    id: z.union([z.string(), z.number()]).optional(),
-});
-
-export type AdminLoginMessage = z.infer<typeof AdminLoginMessage>;
 
 export const isFetchMemberDataByUuidSuccessResponse = z.object({
     status: extendApi(z.literal("ok"), {
@@ -101,10 +75,6 @@ export const isFetchMemberDataByUuidSuccessResponse = z.object({
     companionTexture: extendApi(CompanionDetail.nullable().optional(), {
         description: "This data represents the companion texture that will be use.",
     }),
-    messages: extendApi(z.array(AdminLoginMessage), {
-        description:
-            "Sets messages that will be displayed when the user logs in to the WA room. These messages are used for ban or ban warning.",
-    }),
     /*anonymous: extendApi(z.boolean().optional(), {
         description: "Defines whether it is possible to login as anonymous on a WorkAdventure room.",
         example: false,
@@ -120,7 +90,8 @@ export const isFetchMemberDataByUuidSuccessResponse = z.object({
         description: "True if the user can edit the map",
     }),
     world: extendApi(z.string(), {
-        description: "name of the world",
+        description:
+            "URL of the world. Every room of the world has a URL starting with it, e.g. https://play.example.com/@/org/world/",
     }),
     chatID: extendApi(z.string().optional(), {
         description: "ChatId of user",
@@ -128,6 +99,9 @@ export const isFetchMemberDataByUuidSuccessResponse = z.object({
     canRecord: extendApi(z.boolean().optional(), {
         description:
             "True if the user can record the room. In addition to this, the user still needs to have the correct tags as defined in the WAM settings.",
+    }),
+    analyticsEventsEnabled: extendApi(z.boolean().optional(), {
+        description: "True if admin analytics events can be sent for this world.",
     }),
 });
 
@@ -479,66 +453,6 @@ class AdminApi implements AdminInterface {
         }
     }
 
-    async fetchMemberDataByToken(
-        organizationMemberToken: string,
-        playUri: string | null,
-        locale?: string,
-    ): Promise<AdminApiData> {
-        /**
-         * @openapi
-         * /api/login-url/{organizationMemberToken}:
-         *   get:
-         *     tags: ["AdminAPI"]
-         *     description: Returns a member from the token
-         *     security:
-         *      - Bearer: []
-         *     produces:
-         *      - "application/json"
-         *     parameters:
-         *      - name: "organizationMemberToken"
-         *        in: "path"
-         *        description: "The token of member in the organization"
-         *        type: "string"
-         *      - name: "playUri"
-         *        in: "query"
-         *        description: "The full URL of WorkAdventure"
-         *        required: true
-         *        type: "string"
-         *        example: "http://play.workadventure.localhost/@/teamSlug/worldSlug/roomSlug"
-         *     responses:
-         *       200:
-         *         description: The details of the member
-         *         schema:
-         *             $ref: "#/definitions/AdminApiData"
-         *       401:
-         *         description: Error while retrieving the data because you are not authorized
-         *         schema:
-         *             $ref: '#/definitions/ErrorApiRedirectData'
-         *       404:
-         *         description: Error while retrieving the data
-         *         schema:
-         *             $ref: '#/definitions/ErrorApiErrorData'
-         *
-         */
-        //todo: this call can fail if the corresponding world is not activated or if the token is invalid. Handle that case.
-        const res = await axios.get(ADMIN_API_URL + "/api/login-url/" + organizationMemberToken, {
-            params: { playUri },
-            headers: { Authorization: `${ADMIN_API_TOKEN}`, "Accept-Language": locale ?? "en" },
-        });
-
-        const adminApiData = isAdminApiData.safeParse(res.data);
-
-        if (adminApiData.success) {
-            return adminApiData.data;
-        }
-
-        console.error(adminApiData.error.issues);
-        Sentry.captureException(adminApiData.error.issues);
-        console.error("Message received from /api/login-url is not in the expected format. Message: ", res.data);
-
-        throw new Error("Message received from /api/login-url is not in the expected format.");
-    }
-
     async fetchWellKnownChallenge(host: string): Promise<string> {
         const res = await axios.get(`${ADMIN_API_URL}/white-label/cf-challenge`, {
             params: { host },
@@ -601,116 +515,6 @@ class AdminApi implements AdminInterface {
                 headers: { Authorization: `${ADMIN_API_TOKEN}`, "Accept-Language": locale ?? "en" },
             },
         );
-    }
-
-    /**
-     * Tells the admin that the user read a message previously sent through SendUserMessage, so it
-     * is not sent again on the next connection.
-     */
-    async markUserMessageAsRead(messageId: string, userIdentifier: string): Promise<void> {
-        /**
-         * @openapi
-         * /api/room/message/{messageId}/read:
-         *   post:
-         *     tags: ["AdminAPI"]
-         *     description: Flags a message sent to a user as read, so it is never displayed again
-         *     security:
-         *      - Bearer: []
-         *     parameters:
-         *      - name: "messageId"
-         *        in: "path"
-         *        required: true
-         *        description: "The identifier of the message, as returned by /api/room/access"
-         *        type: "string"
-         *      - name: "userIdentifier"
-         *        in: "body"
-         *        required: true
-         *        description: "The identifier of the user who read the message"
-         *        type: "string"
-         *     responses:
-         *       200:
-         *         description: The message has been flagged as read
-         */
-        await axios.post(
-            `${ADMIN_API_URL}/api/room/message/${encodeURIComponent(messageId)}/read`,
-            {
-                userIdentifier,
-            },
-            {
-                headers: { Authorization: `${ADMIN_API_TOKEN}` },
-            },
-        );
-    }
-
-    async verifyBanUser(
-        userUuid: string,
-        ipAddress: string,
-        roomUrl: string,
-        locale?: string,
-    ): Promise<AdminBannedData> {
-        /**
-         * @openapi
-         * /api/ban:
-         *   get:
-         *     tags: ["AdminAPI"]
-         *     description: Check if user is banned or not
-         *     security:
-         *      - Bearer: []
-         *     produces:
-         *      - "application/json"
-         *     parameters:
-         *      - name: "ipAddress"
-         *        in: "query"
-         *        type: "string"
-         *        required: true
-         *        example: "127.0.0.1"
-         *      - name: "token"
-         *        in: "query"
-         *        description: "The uuid of the user \n It can be an uuid or an email"
-         *        type: "string"
-         *        required: true
-         *        example: "998ce839-3dea-4698-8b41-ebbdf7688ad8"
-         *      - name: "roomUrl"
-         *        in: "query"
-         *        description: "The slug of the world where to check if the user is banned"
-         *        type: "string"
-         *        required: true
-         *        example: "/@/teamSlug/worldSlug/roomSlug"
-         *     responses:
-         *       200:
-         *         description: The user is banned or not
-         *         content:
-         *             application/json:
-         *                 schema:
-         *                     type: array
-         *                     required:
-         *                         - is_banned
-         *                 properties:
-         *                     is_banned:
-         *                         type: boolean
-         *                         description: Whether the user is banned or not
-         *                         example: true
-         *       404:
-         *         description: Error while retrieving the data
-         *         schema:
-         *             $ref: '#/definitions/ErrorApiErrorData'
-         */
-        //todo: this call can fail if the corresponding world is not activated or if the token is invalid. Handle that case.
-        return axios
-            .get(
-                ADMIN_API_URL +
-                    "/api/ban" +
-                    "?ipAddress=" +
-                    encodeURIComponent(ipAddress) +
-                    "&token=" +
-                    encodeURIComponent(userUuid) +
-                    "&roomUrl=" +
-                    encodeURIComponent(roomUrl),
-                { headers: { Authorization: `${ADMIN_API_TOKEN}`, "Accept-Language": locale ?? "en" } },
-            )
-            .then((data) => {
-                return AdminBannedData.parse(data.data);
-            });
     }
 
     async getUrlRoomsFromSameWorld(
@@ -797,172 +601,88 @@ class AdminApi implements AdminInterface {
         name: string,
         message: string,
         byUserUuid: string,
-    ): Promise<boolean> {
-        return axios.post(
+        ipAddress: string | undefined,
+    ): Promise<void> {
+        /**
+         * @openapi
+         * /api/ban:
+         *   post:
+         *     tags: ["AdminAPI"]
+         *     description: |
+         *       Bans a user from the world of the room, when an admin of the world bans them from inside the game.
+         *       The ban must be persisted: /api/room/access must then deny the user.
+         *       On an error, the pusher still ejects the user from the room, but as a simple kick.
+         *     security:
+         *      - Bearer: []
+         *     requestBody:
+         *       required: true
+         *       content:
+         *         application/json:
+         *           schema:
+         *             type: "object"
+         *             properties:
+         *               uuidToBan:
+         *                 type: string
+         *                 required: true
+         *                 description: "The identifier of the user to ban. It can be an uuid or an email"
+         *                 example: "998ce839-3dea-4698-8b41-ebbdf7688ad9"
+         *               playUri:
+         *                 type: string
+         *                 required: true
+         *                 description: The full URL of the room the user is banned from
+         *                 example: "https://play.workadventu.re/@/teamSlug/worldSlug/roomSlug"
+         *               name:
+         *                 type: string
+         *                 required: true
+         *                 description: The name of the banned user
+         *                 example: "Alice"
+         *               message:
+         *                 type: string
+         *                 required: true
+         *                 description: "The reason given by the admin, or a default text if they gave none"
+         *                 example: "Spamming the chat"
+         *               byUserUuid:
+         *                 type: string
+         *                 required: true
+         *                 description: "The uuid of the admin who bans the user"
+         *                 example: "998ce839-3dea-4698-8b41-ebbdf7688ad8"
+         *               ipAddress:
+         *                 type: string
+         *                 required: false
+         *                 description: |
+         *                   The IP address the user connects from, as the back sees it. Ban it too, so the user cannot
+         *                   come back with another account. Absent when only the account must be banned.
+         *                 example: "203.0.113.42"
+         *     responses:
+         *       200:
+         *         description: |
+         *           The ban has been saved, or it was refused. A refused ban is answered with an error body, whose
+         *           `status` is `error`: ErrorApiErrorData when the room or the admin is not found,
+         *           ErrorApiUnauthorizedData when the admin is not an admin of the world of the room.
+         *         schema:
+         *           oneOf:
+         *            - type: object
+         *            - $ref: '#/definitions/ErrorApiErrorData'
+         *            - $ref: '#/definitions/ErrorApiUnauthorizedData'
+         */
+        const response = await axios.post<unknown>(
             ADMIN_API_URL + "/api/ban",
-            { uuidToBan, playUri, name, message, byUserUuid },
+            { uuidToBan, playUri, name, message, byUserUuid, ipAddress },
             {
                 headers: { Authorization: `${ADMIN_API_TOKEN}` },
             },
         );
+        // The admin answers a refused ban with a 200 and an error body. Only its status is checked: a full
+        // ErrorApiData parse failing on an unexpected field would take the refused ban as recorded.
+        if (z.object({ status: z.literal("error") }).safeParse(response.data).success) {
+            throw new Error(`The admin refused to ban the user: ${JSON.stringify(response.data)}`);
+        }
     }
 
     public getCapabilities(): Promise<Capabilities> {
         return this.capabilitiesDeferred.promise;
     }
 
-    /**
-     * @openapi
-     * /api/analytics/video-quality-batch:
-     *   post:
-     *     tags: ["AdminAPI"]
-     *     description: Accepts best-effort WebRTC video quality samples sent by pusher.
-     *     security:
-     *      - Bearer: []
-     *     consumes:
-     *      - "application/json"
-     *     produces:
-     *      - "application/json"
-     *     parameters:
-     *      - name: "payload"
-     *        in: "body"
-     *        required: true
-     *        schema:
-     *          type: object
-     *          required:
-     *            - schemaVersion
-     *            - sentAt
-     *            - pusherInstanceId
-     *            - samples
-     *          properties:
-     *            schemaVersion:
-     *              type: integer
-     *              example: 1
-     *            sentAt:
-     *              type: string
-     *              format: date-time
-     *            pusherInstanceId:
-     *              type: string
-     *              example: "pusher-0"
-     *            samples:
-     *              type: array
-     *              items:
-     *                type: object
-     *                required:
-     *                  - clientEventTime
-     *                  - pusherReceivedAt
-     *                  - reporterUserUuid
-     *                  - reporterSpaceUserId
-     *                  - remoteSpaceUserId
-     *                  - spaceName
-     *                  - world
-     *                  - roomId
-     *                  - streamId
-     *                  - streamCategory
-     *                  - transportType
-     *                  - fps
-     *                  - jitter
-     *                  - bandwidthBytesPerSecond
-     *                  - frameWidth
-     *                  - frameHeight
-     *                properties:
-     *                  clientEventTime:
-     *                    type: string
-     *                    format: date-time
-     *                  pusherReceivedAt:
-     *                    type: string
-     *                    format: date-time
-     *                  reporterUserUuid:
-     *                    type: string
-     *                    example: "reporter-uuid"
-     *                  remoteUserUuid:
-     *                    type: string
-     *                  reporterUserId:
-     *                    type: integer
-     *                  reporterSpaceUserId:
-     *                    type: string
-     *                    example: "reporter-space-user"
-     *                  remoteSpaceUserId:
-     *                    type: string
-     *                    example: "remote-space-user"
-     *                  spaceName:
-     *                    type: string
-     *                    example: "world.space"
-     *                  world:
-     *                    type: string
-     *                    example: "world"
-     *                  roomId:
-     *                    type: string
-     *                    example: "https://play.example/@/team/world/room"
-     *                  tabId:
-     *                    type: string
-     *                  reporterClientIp:
-     *                    type: string
-     *                    example: "203.0.113.10"
-     *                  streamId:
-     *                    type: string
-     *                    example: "stream-id"
-     *                  streamCategory:
-     *                    type: string
-     *                    enum: ["video", "screenSharing"]
-     *                  transportType:
-     *                    type: string
-     *                    enum: ["P2P", "Livekit"]
-     *                  relay:
-     *                    type: boolean
-     *                  relayProtocol:
-     *                    type: string
-     *                    enum: ["udp", "tcp", "tls"]
-     *                  livekitServerUrl:
-     *                    type: string
-     *                  fps:
-     *                    type: number
-     *                    format: float
-     *                    example: 24.5
-     *                  fpsStdDev:
-     *                    type: number
-     *                    format: float
-     *                  jitter:
-     *                    type: number
-     *                    format: float
-     *                    example: 0.07
-     *                  bandwidthBytesPerSecond:
-     *                    type: number
-     *                    format: float
-     *                  frameWidth:
-     *                    type: integer
-     *                    example: 1280
-     *                  frameHeight:
-     *                    type: integer
-     *                    example: 720
-     *                  mimeType:
-     *                    type: string
-     *                    example: "video/VP8"
-     *                  sampleSeq:
-     *                    type: integer
-     *                  connectionId:
-     *                    type: string
-     *                  sessionId:
-     *                    type: string
-     *     responses:
-     *       202:
-     *         description: Batch accepted
-     *         schema:
-     *           type: object
-     *           properties:
-     *             status:
-     *               type: string
-     *               example: "accepted"
-     *             acceptedSamples:
-     *               type: integer
-     *               example: 1
-     *       401:
-     *         description: Unauthorized
-     *       413:
-     *         description: Batch too large
-     *       422:
-     *         description: Invalid payload
-     */
     async getTagsList(roomUrl: string): Promise<string[]> {
         /**
          * @openapi
@@ -1464,4 +1184,117 @@ class AdminApi implements AdminInterface {
     }
 }
 
+/**
+ * Not called by the pusher: the back POSTs this one when a LiveKit recording egress ends
+ * (see back/src/Services/AdminApi.ts). The annotation lives here because Swagger is served
+ * by the pusher and only scans ./src/pusher/services/*.ts.
+ *
+ * @openapi
+ * /api/recordings/events:
+ *   post:
+ *     tags: ["AdminAPI"]
+ *     description: |
+ *       Notifies the admin that a recording egress ended, so it can be turned into a
+ *       customer-facing webhook. Only the end of an egress is reported, whether it succeeded
+ *       or not: read `status` to tell a usable recording from a failed one.
+ *       Retried 3 times on transport or 5xx errors; a 4xx is taken as a definitive rejection
+ *       and is not retried. Never called when ADMIN_API_URL is unset.
+ *     security:
+ *      - Bearer: []
+ *     consumes:
+ *      - "application/json"
+ *     parameters:
+ *      - name: "body"
+ *        in: "body"
+ *        required: true
+ *        schema:
+ *          type: "object"
+ *          required:
+ *            - phase
+ *            - status
+ *            - egressId
+ *            - recordingSessionId
+ *            - playUri
+ *            - recorder
+ *            - files
+ *          properties:
+ *            phase:
+ *              type: "string"
+ *              enum: ["ended"]
+ *              description: "Always `ended`. Nothing is sent when an egress starts."
+ *              example: "ended"
+ *            status:
+ *              type: "string"
+ *              description: "The LiveKit egress status. `EGRESS_COMPLETE` means the recording is usable."
+ *              example: "EGRESS_COMPLETE"
+ *            egressId:
+ *              type: "string"
+ *              description: "The LiveKit egress identifier."
+ *              example: "EG_ftzDC3TLqcHR"
+ *            recordingSessionId:
+ *              type: "string"
+ *              description: "The WorkAdventure recording session this egress belongs to."
+ *              example: "01J8Z7K3QW9V0000000000"
+ *            playUri:
+ *              type: "string"
+ *              description: "The full URL of the room that was recorded."
+ *              example: "http://play.workadventure.localhost/@/teamSlug/worldSlug/roomSlug"
+ *            recorder:
+ *              type: "object"
+ *              description: "The user who started the recording."
+ *              required:
+ *                - uuid
+ *                - spaceUserId
+ *              properties:
+ *                uuid:
+ *                  type: "string"
+ *                  example: "998ce839-3dea-4698-8b41-ebbdf7688ad9"
+ *                spaceUserId:
+ *                  type: "string"
+ *                  example: "998ce839-3dea-4698-8b41-ebbdf7688ad9_0"
+ *            startedAt:
+ *              type: "string"
+ *              format: "date-time"
+ *              description: "When the egress started, ISO 8601. Null when LiveKit did not report it."
+ *              example: "2025-09-18T09:12:04.000Z"
+ *            endedAt:
+ *              type: "string"
+ *              format: "date-time"
+ *              description: "When the egress ended, ISO 8601. Null when LiveKit did not report it."
+ *              example: "2025-09-18T09:47:31.000Z"
+ *            error:
+ *              type: "string"
+ *              description: "The LiveKit error message when the egress failed, null otherwise."
+ *              example: null
+ *            files:
+ *              type: "array"
+ *              description: "The files LiveKit wrote. Empty when the egress failed."
+ *              items:
+ *                type: "object"
+ *                required:
+ *                  - filename
+ *                  - sizeBytes
+ *                  - durationSeconds
+ *                properties:
+ *                  filename:
+ *                    type: "string"
+ *                    description: "The object key LiveKit wrote in the configured storage."
+ *                    example: "recordings/teamSlug/worldSlug/roomSlug/2025-09-18T09-12-04.mp4"
+ *                  sizeBytes:
+ *                    type: "integer"
+ *                    example: 148283392
+ *                  durationSeconds:
+ *                    type: "integer"
+ *                    description: "The recording duration, rounded to the second."
+ *                    example: 2127
+ *     responses:
+ *       200:
+ *         description: The event has been taken into account.
+ *       4XX:
+ *         description: |
+ *           The event is rejected. The back does not retry, and the notification is lost:
+ *           only answer a 4xx for a payload you will never accept.
+ *       5XX:
+ *         description: Transient failure. The back retries 3 times (250 ms, 1 s, 4 s) before giving up.
+ */
 export const adminApi = new AdminApi();

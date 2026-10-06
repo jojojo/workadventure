@@ -33,9 +33,7 @@ import { MatrixRoomAreaController } from "./controllers/MatrixRoomAreaController
 import { LocalScriptController } from "./controllers/LocalScriptController";
 import { ExternalPresenceController } from "./controllers/ExternalPresenceController";
 import { LivekitWebhookController } from "./controllers/LivekitWebhookController";
-import { videoQualityAnalyticsQueue } from "./services/VideoQualityAnalyticsQueue";
-
-const VIDEO_QUALITY_ANALYTICS_CAPABILITY = "api/analytics/video-quality-batch";
+import { analyticsEventsQueue } from "./services/AnalyticsEventsQueue";
 
 class App {
     private readonly app: Application;
@@ -140,7 +138,9 @@ class App {
             "assets",
             express.static(path + "/assets", {
                 ...staticOptions,
+                // Vite content-hashes everything under /assets, so the CDN edge may keep it forever.
                 maxAge: "1y",
+                immutable: true,
             }),
         );
 
@@ -195,7 +195,7 @@ class App {
             const capabilities = await adminApi.initialise();
             companionListController.setCompanionService(CompanionService.get(capabilities));
             wokaListController.setWokaService(WokaService.get(capabilities));
-            videoQualityAnalyticsQueue.setEnabled(capabilities[VIDEO_QUALITY_ANALYTICS_CAPABILITY] === "v1");
+            analyticsEventsQueue.setEnabled(capabilities["api/analytics/events-batch"] === "v1");
         } catch (error) {
             console.error("Failed to initialize: problem getting AdminAPI capabilities", error);
             Sentry.captureException(`Failed to initialized companion and woka services : ${error}`);

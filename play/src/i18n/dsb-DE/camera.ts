@@ -94,6 +94,8 @@ const camera: DeepPartial<Translation["camera"]> = {
         closeMenu: "Meny zacyniś",
         senPrivateMessage: "Pśewatne powěsće posłaś (Pśichadźe)",
         kickoffUser: "Wužiwarja wotmětowaś",
+        giveFloor: "Słowo daś",
+        revokeFloor: "Słowo wótewześ",
         muteAudioUser: "Audio stummschalten",
         askToMuteAudioUser: "Pšosyś, aby audio stummschalten",
         muteAudioEveryBody: "Audio za wšěch stummschalten",
@@ -104,7 +106,6 @@ const camera: DeepPartial<Translation["camera"]> = {
     },
     backgroundEffects: {
         imageTitle: "Wobrazki slězynka",
-        videoTitle: "Wideja slězynka",
         blurTitle: "Slězynk njewjasnosć",
         resetTitle: "Slězynk efekty deaktiwěrowaś",
         title: "Slězynk efekty",

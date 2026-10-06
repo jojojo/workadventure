@@ -15,7 +15,7 @@
     import { v4 as uuid } from "uuid";
     import { LL } from "../../../../i18n/i18n-svelte";
     import { mapEditorSelectedAreaPreviewStore } from "../../../Stores/MapEditorStore";
-    import { FEATURE_FLAG_BROADCAST_AREAS, MATRIX_PUBLIC_URI, PUSHER_URL } from "../../../Enum/EnvironmentVariable";
+    import { MATRIX_PUBLIC_URI, PUSHER_URL } from "../../../Enum/EnvironmentVariable";
     import { analyticsClient } from "../../../Administration/AnalyticsClient";
     import JitsiRoomPropertyEditor from "../PropertyEditor/JitsiRoomPropertyEditor.svelte";
     import PlayAudioPropertyEditor from "../PropertyEditor/PlayAudioPropertyEditor.svelte";
@@ -32,7 +32,6 @@
     import RightsPropertyEditor from "../PropertyEditor/RightsPropertyEditor.svelte";
     import { IconChevronDown, IconChevronRight, IconInfoCircle } from "../../Icons";
     import { extensionModuleStore } from "../../../Stores/GameSceneStore";
-    import type { ExtensionModule, ExtensionModuleAreaProperty } from "../../../ExternalModule/ExtensionModule";
     import MatrixRoomPropertyEditor from "../PropertyEditor/MatrixRoomPropertyEditor.svelte";
     import TooltipPropertyButton from "../PropertyEditor/TooltipPropertyButton.svelte";
     import LivekitRoomPropertyEditor from "../PropertyEditor/LivekitRoomPropertyEditor.svelte";
@@ -44,6 +43,7 @@
     import { gameManager } from "../../../Phaser/Game/GameManager";
     import MaxUsersInAreaPropertyEditor from "../PropertyEditor/MaxUsersInAreaPropertyEditor.svelte";
     import LockableAreaPropertyEditor from "../PropertyEditor/LockableAreaPropertyEditor.svelte";
+    import { getAreaMapEditors, hasMeetingProperty } from "../../../Rules/MeetingRules";
 
     let properties: AreaDataProperties = $state([]);
     let areaName = $state("");
@@ -182,6 +182,7 @@
                     jitsiRoomConfig: {},
                     hideButtonLabel: true,
                     roomName: $LL.mapEditor.properties.jitsiRoomProperty.label(),
+                    width: 50,
                     trigger: ON_ACTION_TRIGGER_ENTER,
                 };
             }
@@ -209,6 +210,7 @@
                         startWithAudioMuted: false,
                         startWithVideoMuted: false,
                         disableChat: false,
+                        raiseHandEnabled: true,
                     },
                     livekitRoomAdminTag: "",
                 };
@@ -320,6 +322,7 @@
                     speakerZoneName: areasName.size == 1 ? [...areasName.keys()][0] : "",
                     chatEnabled: false,
                     allowTalking: false,
+                    raiseHandEnabled: true,
                 };
             }
             case "exit":
@@ -410,7 +413,7 @@
 
     function onAddProperty(type: AreaDataPropertiesKeys, subtype?: string) {
         if ($mapEditorSelectedAreaPreviewStore) {
-            analyticsClient.addMapEditorProperty("area", type || "unknown");
+            analyticsClient.trackAdminEvent("map_editor.property.added", { name: type || "unknown", type: "area" });
             const property = getPropertyFromType(type, subtype);
             $mapEditorSelectedAreaPreviewStore.addProperty(property);
 
@@ -427,7 +430,7 @@
 
     function onAddSpecificProperty(app: ApplicationDefinitionInterface) {
         if (!$mapEditorSelectedAreaPreviewStore) return;
-        analyticsClient.addMapEditorProperty("entity", app.name);
+        analyticsClient.trackAdminEvent("map_editor.property.added", { name: app.name, type: "area" });
         const property: OpenWebsitePropertyData = {
             id: uuid(),
             type: "openWebsite",
@@ -455,10 +458,10 @@
 
     function onDeleteProperty(id: string, removeAreaEntities?: boolean) {
         if ($mapEditorSelectedAreaPreviewStore) {
-            analyticsClient.removeMapEditorProperty(
-                "area",
-                properties.find((property) => property.id === id)?.type || "unknown",
-            );
+            analyticsClient.trackAdminEvent("map_editor.property.removed", {
+                name: properties.find((property) => property.id === id)?.type || "unknown",
+                type: "area",
+            });
             $mapEditorSelectedAreaPreviewStore.deleteProperty(id, removeAreaEntities);
             // refresh properties
             properties = $mapEditorSelectedAreaPreviewStore.getProperties();
@@ -549,16 +552,9 @@
         showDescriptionField = !showDescriptionField;
     }
 
-    let extensionModulesAreaMapEditor = $extensionModuleStore.reduce(
-        (acc: { [key: string]: ExtensionModuleAreaProperty }[], module: ExtensionModule) => {
-            const areaProperty = module.areaMapEditor?.();
-            if (areaProperty != undefined) {
-                acc.push(areaProperty);
-            }
-            return acc;
-        },
-        [],
-    );
+    let extensionModulesAreaMapEditor = getAreaMapEditors($extensionModuleStore);
+
+    let hasMeeting = $derived(hasMeetingProperty(properties, extensionModulesAreaMapEditor));
 </script>
 
 {#if $mapEditorSelectedAreaPreviewStore === undefined}
@@ -594,28 +590,26 @@
                     onclick={() => {
                         onAddProperty("livekitRoomProperty");
                     }}
-                    disabled={hasSpeakerMegaphoneProperty || hasListenerMegaphoneProperty}
+                    disabled={hasMeeting}
                 />
             {/if}
-            {#if FEATURE_FLAG_BROADCAST_AREAS}
-                {#if !hasSpeakerMegaphoneProperty}
-                    <AddPropertyButtonWrapper
-                        property="speakerMegaphone"
-                        onclick={() => {
-                            onAddProperty("speakerMegaphone");
-                        }}
-                        disabled={hasListenerMegaphoneProperty || hasLivekitRoomProperty}
-                    />
-                {/if}
-                {#if !hasListenerMegaphoneProperty}
-                    <AddPropertyButtonWrapper
-                        property="listenerMegaphone"
-                        onclick={() => {
-                            onAddProperty("listenerMegaphone");
-                        }}
-                        disabled={hasSpeakerMegaphoneProperty || hasLivekitRoomProperty}
-                    />
-                {/if}
+            {#if !hasSpeakerMegaphoneProperty}
+                <AddPropertyButtonWrapper
+                    property="speakerMegaphone"
+                    onclick={() => {
+                        onAddProperty("speakerMegaphone");
+                    }}
+                    disabled={hasMeeting}
+                />
+            {/if}
+            {#if !hasListenerMegaphoneProperty}
+                <AddPropertyButtonWrapper
+                    property="listenerMegaphone"
+                    onclick={() => {
+                        onAddProperty("listenerMegaphone");
+                    }}
+                    disabled={hasMeeting}
+                />
             {/if}
             {#if !hasStartProperty}
                 <AddPropertyButtonWrapper
@@ -656,6 +650,7 @@
                                     startWithAudioMuted: false,
                                     startWithVideoMuted: false,
                                     disableChat: false,
+                                    raiseHandEnabled: true,
                                 };
 
                                 config.disableChat = true;
@@ -712,7 +707,7 @@
             <div class="properties-buttons flex flex-row flex-wrap mt-2">
                 {#each extensionModulesAreaMapEditor as extensionModuleAreaMapEditor, index (`extensionModulesAreaMapEditor-${index}`)}
                     {#each Object.entries(extensionModuleAreaMapEditor) as [subtype, areaProperty] (`extensionModuleAreaMapEditor-${subtype}`)}
-                        {#if areaProperty.shouldDisplayButton(properties)}
+                        {#if areaProperty.shouldDisplayButton(properties) && !(areaProperty.isMeeting && hasMeeting)}
                             <AddPropertyButtonWrapper
                                 property="extensionModule"
                                 subProperty={subtype}
@@ -729,7 +724,7 @@
                         onclick={() => {
                             onAddProperty("jitsiRoomProperty");
                         }}
-                        disabled={hasLivekitRoomProperty || hasSpeakerMegaphoneProperty || hasListenerMegaphoneProperty}
+                        disabled={hasMeeting}
                     />
                 {/if}
             </div>

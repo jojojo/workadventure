@@ -20,17 +20,18 @@ import type {
     PrivateEventPusherToFront,
     BackEventFrontToPusherMessage,
     InitSpaceUsersMessage,
+    SpaceKind,
     VideoQualityReportMessage,
 } from "@workadventure/messages";
 import { FilterType } from "@workadventure/messages";
 import { raceAbort } from "@workadventure/shared-utils/src/Abort/raceAbort";
-import z from "zod";
 import { CharacterLayerManager } from "../Phaser/Entity/CharacterLayerManager";
 
 import type { BlackListManager } from "../WebRtc/BlackListManager";
 import { blackListManager } from "../WebRtc/BlackListManager";
 import { ConnectionClosedError } from "../Connection/ConnectionClosedError";
 import { highlightedEmbedScreen } from "../Stores/HighlightedEmbedScreenStore";
+import { triggerReorderStore } from "../Stores/OrderedStreamableCollectionStore";
 
 import type {
     PrivateEventsObservables,
@@ -42,12 +43,14 @@ import type {
     SpaceUserExtended,
 } from "./SpaceInterface";
 import { SpaceNameIsEmptyError } from "./Errors/SpaceError";
+import { SpaceStateManager } from "./SpaceStateManager";
 import type { RoomConnectionForSpacesInterface } from "./SpaceRegistry/SpaceRegistry";
 import type { SimplePeerConnectionInterface } from "./SpacePeerManager/SpacePeerManager";
 import { SpacePeerManager } from "./SpacePeerManager/SpacePeerManager";
 import { lookupUserById } from "./Utils/UserLookup";
-import { recordingSchema, spaceMetadataValidator } from "./SpaceMetadataValidator";
 import { VideoBox } from "./VideoBox";
+import { idleVideoBoxPriority, VIDEO_STARTING_PRIORITY } from "./VideoBoxPriorities";
+import { LOCAL_SCREEN_SHARING_STREAM_ID } from "./Streamable";
 import type { Streamable } from "./Streamable";
 
 export class Space implements SpaceInterface {
@@ -65,6 +68,7 @@ export class Space implements SpaceInterface {
     public allScreenShareStreamStore: MapStore<string, VideoBox> = new MapStore<string, VideoBox>();
     public readonly videoStreamStore: Readable<Map<string, VideoBox>>;
     public readonly screenShareStreamStore: Readable<Map<string, VideoBox>>;
+    public readonly state: SpaceStateManager;
     // private readonly blockedUsersVideoBox: Map<string, VideoBox> = new Map<string, VideoBox>();
     // private readonly blockedUsersScreenShareVideoBox: Map<string, VideoBox> = new Map<string, VideoBox>();
     private readonly _blockedUsersStore: Writable<Set<string>> = writable(new Set<string>());
@@ -85,6 +89,9 @@ export class Space implements SpaceInterface {
     private _registerRefCount = 0;
     private isDestroyed = false;
     public readonly usersStore: Readable<Map<string, Readonly<SpaceUserExtended>>>;
+    private _setHasRemoteSpeaker: ((value: boolean) => void) | undefined;
+    private _hasRemoteSpeaker = false;
+    public readonly hasRemoteSpeakerStore: Readable<boolean>;
     public readonly observeUserJoined: Observable<SpaceUserExtended>;
     public readonly observeUserLeft: Observable<SpaceUserExtended>;
     public readonly observeUserUpdated: Observable<UpdateSpaceUserEvent>;
@@ -104,12 +111,14 @@ export class Space implements SpaceInterface {
     private readonly _isStreamingVideoStore: Readable<boolean>;
     private readonly _isStreamingAudioStore: Readable<boolean>;
     private readonly _canRecordStore: Writable<boolean>;
-    private readonly _isRecordingStore: Writable<boolean> = writable(false);
+    private readonly _isRecordingStore: Readable<boolean>;
     public readonly shouldPublishScreenShareStore: Readable<boolean>;
     private readonly observeSyncBlockUser: Subscription;
     private readonly observeSyncUnblockUser: Subscription;
     private readonly onBlockSubscribe: Subscription;
     private readonly onUnBlockSubscribe: Subscription;
+    // spaceUserIds of the users currently speaking, most active first
+    private activeSpeakerIds: SpaceUser["spaceUserId"][] = [];
 
     public readonly shouldDisplayRecordButton: Readable<boolean>;
 
@@ -129,6 +138,7 @@ export class Space implements SpaceInterface {
         private _mySpaceUserId: SpaceUser["spaceUserId"],
         // True if the user has the right to start recording in this space
         canRecord: boolean,
+        public readonly kind: SpaceKind | undefined,
         private _blackListManager: BlackListManager = blackListManager,
         private _highlightedEmbedScreenStore = highlightedEmbedScreen,
     ) {
@@ -137,11 +147,26 @@ export class Space implements SpaceInterface {
         }
         this.name = name;
         this._canRecordStore = writable(canRecord);
+        this.state = new SpaceStateManager(name, _connection, _mySpaceUserId);
 
         this.usersStore = readable(new Map<string, SpaceUserExtended>(), (set) => {
             this.registerSpaceFilter();
             this._setUsers = set;
             set(this._users);
+
+            return () => {
+                if (!this.isDestroyed) {
+                    this.unregisterSpaceFilter();
+                }
+            };
+        });
+
+        // Same shape as usersStore, and for the same reason: subscribing is what asks the
+        // pusher for this space's users in the first place.
+        this.hasRemoteSpeakerStore = readable(false, (set) => {
+            this.registerSpaceFilter();
+            this._setHasRemoteSpeaker = set;
+            set(this._hasRemoteSpeaker);
 
             return () => {
                 if (!this.isDestroyed) {
@@ -222,6 +247,8 @@ export class Space implements SpaceInterface {
                 return newScreenShareStreamStore;
             },
         );
+
+        this._isRecordingStore = derived(this.state.observe("recording"), ($recording) => $recording.status !== "idle");
 
         this.onBlockSubscribe = this._blackListManager.onBlockStream.subscribe((userUuid) => {
             const spaceUser = this.getSpaceUserByUuid(userUuid);
@@ -349,6 +376,7 @@ export class Space implements SpaceInterface {
             metadata?: Map<string, unknown>;
             // True if the user is allowed to start/stop recording in the space
             canRecord?: boolean;
+            spaceKind?: SpaceKind;
         },
     ): Promise<Space> {
         const spaceUserId = await connection.emitJoinSpace(name, filterType, propertiesToSync, {
@@ -362,6 +390,7 @@ export class Space implements SpaceInterface {
             propertiesToSync,
             spaceUserId,
             options?.canRecord ?? false,
+            options?.spaceKind,
         );
     }
 
@@ -378,7 +407,6 @@ export class Space implements SpaceInterface {
     setMetadata(metadata: Map<string, unknown>): void {
         metadata.forEach((value, key) => {
             this._metadata.set(key, value);
-            this.updateRecordingStore(key, value);
             const observable = this.metadataObservables[key];
             if (observable) {
                 observable.next(value);
@@ -404,14 +432,6 @@ export class Space implements SpaceInterface {
             return;
         }
         this._connection.emitUpdateSpaceMetadata(this.name, Object.fromEntries(metadata.entries()));
-    }
-
-    public async startRecording(): Promise<void> {
-        await this._connection.startRecording(this.name);
-    }
-
-    public async stopRecording(): Promise<void> {
-        await this._connection.stopRecording(this.name);
     }
 
     public observePublicEvent<K extends keyof PublicEventsObservables>(
@@ -441,20 +461,6 @@ export class Space implements SpaceInterface {
             return newObservable;
         }
         return observable;
-    }
-
-    private updateRecordingStore(key: string, value: unknown): void {
-        if (key !== "recording") {
-            return;
-        }
-
-        const recording = recordingSchema.safeParse(value);
-
-        if (!recording.success) {
-            return;
-        }
-
-        this._isRecordingStore.set(recording.data.status !== "idle");
     }
 
     /**
@@ -551,6 +557,7 @@ export class Space implements SpaceInterface {
      */
     async destroy() {
         this._isDestroyed = true;
+        this.state.destroy();
 
         this.retryAbortController?.abort();
         if (this.retryTimeout) {
@@ -647,12 +654,6 @@ export class Space implements SpaceInterface {
         const metadataMap = new Map(Object.entries(JSON.parse(metadata)));
         for (const [key, value] of metadataMap.entries()) {
             this._metadata.set(key, value);
-            this.updateRecordingStore(key, value);
-
-            const validator = spaceMetadataValidator.get(key);
-            if (validator && validator.shouldSkipInitialValueFunction(value)) {
-                continue;
-            }
 
             const observable = this.metadataObservables[key];
             if (observable) {
@@ -705,7 +706,30 @@ export class Space implements SpaceInterface {
         }
 
         this._setUsers?.(this._users);
+        this.refreshHasRemoteSpeaker();
         this.initPromise?.resolve();
+    }
+
+    /**
+     * Recomputed rather than counted incrementally: the three call sites below are the only
+     * ways `_users` changes, and a scan of a handful of users is cheaper than a tally that
+     * can drift. Silent when the answer is unchanged, so subscribers see edges only.
+     */
+    private refreshHasRemoteSpeaker(): void {
+        let hasRemoteSpeaker = false;
+        for (const user of this._users.values()) {
+            if (user.megaphoneState && user.spaceUserId !== this._mySpaceUserId) {
+                hasRemoteSpeaker = true;
+                break;
+            }
+        }
+
+        if (hasRemoteSpeaker === this._hasRemoteSpeaker) {
+            return;
+        }
+
+        this._hasRemoteSpeaker = hasRemoteSpeaker;
+        this._setHasRemoteSpeaker?.(hasRemoteSpeaker);
     }
 
     addUser(user: SpaceUser): SpaceUserExtended {
@@ -736,6 +760,7 @@ export class Space implements SpaceInterface {
             if (this._setUsers) {
                 this._setUsers(this._users);
             }
+            this.refreshHasRemoteSpeaker();
 
             if (this._addUserSubject) {
                 this._addUserSubject.next(extendSpaceUser);
@@ -752,6 +777,7 @@ export class Space implements SpaceInterface {
             if (this._setUsers) {
                 this._setUsers(this._users);
             }
+            this.refreshHasRemoteSpeaker();
             if (this._leftUserSubject) {
                 this._leftUserSubject.next(user);
             }
@@ -774,6 +800,12 @@ export class Space implements SpaceInterface {
         const maskedNewData = applyFieldMask(newData, updateMask) as unknown as Partial<SpaceUser>;
 
         deepmergeInto(userToUpdate, maskedNewData);
+
+        // Guarded because this one runs on every position and state update of every user,
+        // unlike the add/remove paths.
+        if (maskedNewData.megaphoneState !== undefined) {
+            this.refreshHasRemoteSpeaker();
+        }
 
         for (const key in maskedNewData) {
             // We allow ourselves a not 100% exact type cast here.
@@ -815,6 +847,10 @@ export class Space implements SpaceInterface {
                     this.applyMuteAudioToStreamable(streamable, userToUpdate);
                 });
             }
+        }
+
+        if (maskedNewData.cameraState !== undefined && userToUpdate.spaceUserId !== this._mySpaceUserId) {
+            this.updateVideoBoxPriorities();
         }
 
         if (maskedNewData.screenSharingState !== undefined && userToUpdate.spaceUserId !== this._mySpaceUserId) {
@@ -966,6 +1002,43 @@ export class Space implements SpaceInterface {
         return videoBox;
     }
 
+    public setActiveSpeakers(spaceUserIds: SpaceUser["spaceUserId"][]): void {
+        const now = Date.now();
+        const stillSpeaking = new Set(spaceUserIds);
+        for (const previousSpeakerId of this.activeSpeakerIds) {
+            if (!stillSpeaking.has(previousSpeakerId)) {
+                const videoBox = this.allVideoStreamStore.get(previousSpeakerId);
+                if (videoBox) {
+                    videoBox.lastSpeakTimestamp = now;
+                }
+            }
+        }
+        this.activeSpeakerIds = spaceUserIds;
+        this.updateVideoBoxPriorities();
+    }
+
+    /**
+     * Active speakers come first, in speaking order. The other users are ranked by how recently they spoke
+     * and whether their camera is on (see idleVideoBoxPriority). Screen shares keep their fixed priority.
+     */
+    private updateVideoBoxPriorities(): void {
+        const now = Date.now();
+        for (const videoBox of this.allVideoStreamStore.values()) {
+            videoBox.priority = idleVideoBoxPriority(videoBox.spaceUser.cameraState, videoBox.lastSpeakTimestamp, now);
+        }
+
+        let rank = 0;
+        for (const speakerId of this.activeSpeakerIds) {
+            const videoBox = this.allVideoStreamStore.get(speakerId);
+            if (videoBox) {
+                videoBox.priority = VIDEO_STARTING_PRIORITY + rank++;
+            }
+        }
+
+        // The value is meaningless: changing it makes orderedStreamableCollectionStore sort again.
+        triggerReorderStore.update((value) => value + 1);
+    }
+
     public async dispatchSound(url: URL): Promise<void> {
         await this.spacePeerManager.dispatchSound(url);
     }
@@ -1084,14 +1157,7 @@ export class Space implements SpaceInterface {
     }
 
     private getEmptyVideoBox(user: SpaceUserExtended, isScreenSharing: boolean = false): VideoBox {
-        // Use zod to parse the metadata
-        const metadata = z
-            .object({
-                isMegaphoneSpace: z.boolean().default(false),
-            })
-            .parse(Object.fromEntries(this.getMetadata().entries()));
-
-        return VideoBox.fromRemoteSpaceUser(user, isScreenSharing, metadata.isMegaphoneSpace);
+        return VideoBox.fromRemoteSpaceUser(user, isScreenSharing, this.kind === "megaphone");
     }
 
     /**
@@ -1327,6 +1393,12 @@ export class Space implements SpaceInterface {
         this.observeScreenSharingPeerAdded?.unsubscribe();
         this.observeScreenSharingPeerRemoved?.unsubscribe();
         this.observeScreenSharingPeerAdded = this._peerManager.screenSharingPeerAdded.subscribe((peer) => {
+            // Peers sending our own screen carry the recipient's spaceUserId, not ours. Nothing to
+            // attach: they aren't sharing yet; updateUserData attaches this same peer when they do.
+            if (peer.uniqueId === LOCAL_SCREEN_SHARING_STREAM_ID) {
+                return;
+            }
+
             const spaceUserId = peer.spaceUserId;
 
             if (spaceUserId === this._mySpaceUserId) {
@@ -1334,7 +1406,7 @@ export class Space implements SpaceInterface {
             }
 
             if (!spaceUserId) {
-                console.error("observeVideoPeerAdded : peer has no spaceUserId");
+                console.error("observeScreenSharingPeerAdded : peer has no spaceUserId");
                 return;
             }
 

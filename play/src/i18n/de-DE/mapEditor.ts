@@ -87,6 +87,9 @@ const mapEditor: DeepPartial<Translation["mapEditor"]> = {
             defaultButtonLabel: "Musik abspielen",
             error: "Sound konnte nicht geladen werden",
             actionButtonLabel: "Musik abspielen",
+            playForAllUsersLabel: "Für alle Benutzer der Karte abspielen",
+            audibleRadiusLabel: "Hörradius (in Pixeln)",
+            audibleRadiusPlaceholder: "Überall hörbar, wenn leer",
         },
         openWebsite: {
             label: "Link öffnen",
@@ -141,6 +144,7 @@ const mapEditor: DeepPartial<Translation["mapEditor"]> = {
 
         chatEnabled: "Chat aktiviert",
         allowTalking: "Sprechen und Blasenbildung erlauben",
+        raiseHandEnabled: "Handheben erlauben",
         seeAttendees: "Teilnehmer anzeigen",
         start: {
             label: "Startbereich",
@@ -304,6 +308,7 @@ const mapEditor: DeepPartial<Translation["mapEditor"]> = {
                 startWithAudioMuted: "Mit deaktiviertem Mikrofon starten",
                 startWithVideoMuted: "Mit deaktivierter Kamera starten",
                 disableChat: "Chat deaktivieren",
+                raiseHandEnabled: "Handheben erlauben",
                 livekitRoomAdminTag: "Moderator-Tag für den Besprechungsraum",
                 cancel: "Abbrechen",
                 validate: "Validieren",

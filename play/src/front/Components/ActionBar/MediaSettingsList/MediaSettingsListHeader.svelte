@@ -1,5 +1,6 @@
 <script lang="ts">
     import { LL } from "../../../../i18n/i18n-svelte";
+    import { analyticsClient } from "../../../Administration/AnalyticsClient";
     import Button from "../../UI/Button.svelte";
 
     interface Props {
@@ -36,8 +37,10 @@
                 appearance="ghost"
                 size="sm"
                 class="w-full rounded text-nowrap {mode === 'background' ? '!bg-white/10' : ''}"
+                dataTestId="background-settings-tab"
                 onclick={() => {
                     mode = "background";
+                    analyticsClient.trackAdminEvent("settings.background.opened");
                 }}
             >
                 {$LL.actionbar.background.cameraBackground()}

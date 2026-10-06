@@ -1,6 +1,5 @@
 import path from "path";
 import type {
-    AdminApiData,
     CompanionDetail,
     ErrorApiData,
     IceServer,
@@ -22,6 +21,8 @@ import {
     DEFAULT_WOKA_NAME,
     DEFAULT_WOKA_TEXTURE,
     SKIP_CAMERA_PAGE,
+    DEFAULT_CAMERA_PRIVACY_SETTINGS,
+    DEFAULT_MICROPHONE_PRIVACY_SETTINGS,
     BYPASS_PWA,
     PROVIDE_DEFAULT_WOKA_NAME,
     PROVIDE_DEFAULT_WOKA_TEXTURE,
@@ -56,7 +57,7 @@ import {
     MATRIX_ADMIN_PASSWORD,
     MATRIX_DOMAIN,
 } from "../enums/EnvironmentVariable";
-import type { AdminBannedData, FetchMemberDataByUuidResponse } from "./AdminApi";
+import type { FetchMemberDataByUuidResponse } from "./AdminApi";
 import type { AdminInterface } from "./AdminInterface";
 import { localWokaService } from "./LocalWokaService";
 import { MetaTagsDefaultValue } from "./MetaTagsBuilder";
@@ -239,7 +240,6 @@ class LocalAdmin implements AdminInterface {
             email: userIdentifier,
             userUuid: userIdentifier,
             tags: tags ?? [],
-            messages: [],
             visitCardUrl: null,
             isCharacterTexturesValid,
             characterTextures: characterTextures ?? [],
@@ -248,9 +248,15 @@ class LocalAdmin implements AdminInterface {
             userRoomToken: undefined,
             activatedInviteUser: true,
             canEdit,
-            world: "localWorld",
+            world: roomUrl.origin,
             applications,
             canRecord,
+            // LocalAdmin is the no-admin-backoffice path, so there is nothing to
+            // report analytics to. Deny explicitly rather than omitting it: the
+            // field is optional and the queue gates on `=== false`, so leaving it
+            // undefined would fail *open* the day LocalAdmin advertises the
+            // analytics capability.
+            analyticsEventsEnabled: false,
         };
     }
 
@@ -324,6 +330,8 @@ class LocalAdmin implements AdminInterface {
             defaultWokaName: DEFAULT_WOKA_NAME || undefined,
             defaultWokaTexture: DEFAULT_WOKA_TEXTURE || undefined,
             skipCameraPage: SKIP_CAMERA_PAGE,
+            defaultCameraPrivacySettings: DEFAULT_CAMERA_PRIVACY_SETTINGS,
+            defaultMicrophonePrivacySettings: DEFAULT_MICROPHONE_PRIVACY_SETTINGS,
             bypassPwa: BYPASS_PWA,
             provideDefaultWokaName: PROVIDE_DEFAULT_WOKA_NAME,
             provideDefaultWokaTexture: PROVIDE_DEFAULT_WOKA_TEXTURE,
@@ -340,14 +348,6 @@ class LocalAdmin implements AdminInterface {
         });
     }
 
-    async fetchMemberDataByToken(
-        organizationMemberToken: string,
-        playUri: string | null,
-        locale?: string,
-    ): Promise<AdminApiData> {
-        return Promise.reject(new Error("No admin backoffice set!"));
-    }
-
     fetchWellKnownChallenge(host: string): Promise<string> {
         return Promise.reject(new Error("No admin backoffice set!"));
     }
@@ -359,20 +359,6 @@ class LocalAdmin implements AdminInterface {
         roomUrl: string,
         locale?: string,
     ): Promise<unknown> {
-        return Promise.reject(new Error("No admin backoffice set!"));
-    }
-
-    markUserMessageAsRead(messageId: string, userIdentifier: string): Promise<void> {
-        // Without an admin backoffice there is no message to flag as read.
-        return Promise.resolve();
-    }
-
-    async verifyBanUser(
-        userUuid: string,
-        ipAddress: string,
-        roomUrl: string,
-        locale?: string,
-    ): Promise<AdminBannedData> {
         return Promise.reject(new Error("No admin backoffice set!"));
     }
 
@@ -419,7 +405,8 @@ class LocalAdmin implements AdminInterface {
         name: string,
         message: string,
         byUserUuid: string,
-    ): Promise<boolean> {
+        ipAddress: string | undefined,
+    ): Promise<void> {
         return Promise.reject(new Error("No admin backoffice set!"));
     }
 

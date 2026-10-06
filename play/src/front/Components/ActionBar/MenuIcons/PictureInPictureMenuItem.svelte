@@ -21,7 +21,9 @@
 
     function pictureInPictureClick() {
         // Analytics
-        analyticsClient.clickPictureInPicture(!$askPictureInPictureActivatingStore);
+        analyticsClient.trackAdminEvent("meeting.picture_in_picture.toggled", {
+            open: !$askPictureInPictureActivatingStore,
+        });
 
         // Create request to the navigateur to enter picture in picture mode
         onclick?.();
@@ -38,7 +40,7 @@
 <ActionBarButton
     classList="group/btn-picture-in-picture"
     disabledHelp={$openedMenuStore !== undefined}
-    state={$pictureInPictureSupportedStore ? ($activePictureInPictureStore ? "active" : "normal") : "disabled"}
+    state={$activePictureInPictureStore ? "active" : "normal"}
     dataTestId={$pictureInPictureSupportedStore ? "pictureInPictureButton" : "pictureInPictureButtonDisabled"}
     tooltipTitle={$LL.actionbar.help.pictureInPicture.title()}
     desc={$pictureInPictureSupportedStore

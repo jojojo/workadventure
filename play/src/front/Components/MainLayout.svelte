@@ -6,8 +6,6 @@
     import { helpNotificationSettingsVisibleStore, helpWebRtcSettingsVisibleStore } from "../Stores/HelpSettingsStore";
     import { helpSettingsPopupBlockedStore } from "../Stores/HelpSettingsPopupBlockedStore";
     import { menuVisiblilityStore, warningBannerStore } from "../Stores/MenuStore";
-    import { showReportScreenStore, userReportEmpty } from "../Stores/ShowReportScreenStore";
-    import { banMessageStore } from "../Stores/TypeMessageStore/BanMessageStore";
     import { textMessageStore } from "../Stores/TypeMessageStore/TextMessageStore";
     import { soundPlayingStore } from "../Stores/SoundPlayingStore";
     import { modalVisibilityStore, roomListVisibilityStore, showLimitRoomModalStore } from "../Stores/ModalStore";
@@ -51,10 +49,8 @@
     import HelpWebRtcSettingsPopup from "./HelpSettings/HelpWebRtcSettingsPopup.svelte";
     import HelpNotificationSettingsPopup from "./HelpSettings/HelpNotificationSettingPopup.svelte";
     import Menu from "./Menu/Menu.svelte";
-    import ReportMenu from "./ReportMenu/ReportMenu.svelte";
     import VisitCard from "./VisitCard/VisitCard.svelte";
     import WarningBanner from "./WarningContainer/WarningBanner.svelte";
-    import BanMessageContainer from "./TypeMessage/BanMessageContainer.svelte";
     import TextMessageContainer from "./TypeMessage/TextMessageContainer.svelte";
     import AudioPlaying from "./UI/AudioPlaying.svelte";
     import LimitRoomModal from "./Modal/LimitRoomModal.svelte";
@@ -75,6 +71,7 @@
     import ExternalComponents from "./ExternalModules/ExternalComponents.svelte";
     import PictureInPicture from "./Video/PictureInPicture.svelte";
     import AudioStreamWrapper from "./Video/PictureInPicture/AudioStreamWrapper.svelte";
+    import RaisedHandsDock from "./Video/RaisedHandsDock.svelte";
     import ExplorerMenu from "./ActionsMenu/ExplorerMenu.svelte";
     import RecordingsListModal from "./PopUp/Recording/RecordingsListModal.svelte";
     import ProximityNotificationContainer from "./ProximityNotification/ProximityNotificationContainer.svelte";
@@ -213,7 +210,7 @@
         proximityChatRoom.unreadMessagesCount.set(0);
         chatNotificationStore.clearRoom(proximityChatRoom.id);
         proximityChatRoom.unreadNotificationCount.set(0);
-        analyticsClient.openedChat();
+        analyticsClient.trackAdminEvent("chat.opened");
     }
 
     function onHighlightFullscreenInviteUser() {
@@ -229,7 +226,6 @@
         selectedRoomStore.set(proximityChatRoom);
         navChat.switchToUserList();
         chatVisibilityStore.set(true);
-        analyticsClient.openUserList();
     }
 
     function exitHighlightFullscreen() {
@@ -349,9 +345,7 @@
                 <Menu />
             {/if}
 
-            {#if $banMessageStore.length > 0}
-                <BanMessageContainer />
-            {:else if $textMessageStore.length > 0}
+            {#if $textMessageStore.length > 0}
                 <TextMessageContainer />
             {/if}
             <ProximityNotificationContainer />
@@ -365,10 +359,6 @@
 
             {#if $warningBannerStore}
                 <WarningBanner />
-            {/if}
-
-            {#if $showReportScreenStore !== userReportEmpty}
-                <ReportMenu />
             {/if}
 
             {#if $helpNotificationSettingsVisibleStore}
@@ -391,15 +381,16 @@
                 <LimitRoomModal />
             {/if}
 
-            {#if $toastStore.size > 0}
-                <div class="absolute top-0 right-2 z-[999] flex flex-col gap-2 items-end">
-                    {#each [...$toastStore.entries()] as toastEntry (toastEntry[0])}
-                        {@const toast = toastEntry[1]}
-                        {@const ToastComponent = toast.component}
-                        <ToastComponent {...toast.props} />
-                    {/each}
-                </div>
-            {/if}
+            <!-- Toast stack, with the host-side raised-hands dock stacked below it so a toast never covers the
+                 dock's buttons (the dock self-gates on visibleRaisedHandSectionsStore). -->
+            <div class="absolute top-0 right-2 z-[999] flex flex-col gap-2 items-end">
+                {#each [...$toastStore.entries()] as toastEntry (toastEntry[0])}
+                    {@const toast = toastEntry[1]}
+                    {@const ToastComponent = toast.component}
+                    <ToastComponent {...toast.props} />
+                {/each}
+                <RaisedHandsDock />
+            </div>
 
             {#if $showRecordingList}
                 <RecordingsListModal />

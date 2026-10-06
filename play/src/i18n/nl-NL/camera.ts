@@ -96,6 +96,8 @@ const camera: DeepPartial<Translation["camera"]> = {
         closeMenu: "Sluit menu",
         senPrivateMessage: "Stuur een privébericht (binnenkort beschikbaar)",
         kickoffUser: "Gebruiker verwijderen",
+        giveFloor: "Het woord geven",
+        revokeFloor: "Het woord ontnemen",
         muteAudioUser: "Audio dempen",
         askToMuteAudioUser: "Vragen om audio te dempen",
         muteAudioEveryBody: "Audio dempen voor iedereen",
@@ -106,7 +108,6 @@ const camera: DeepPartial<Translation["camera"]> = {
     },
     backgroundEffects: {
         imageTitle: "Achtergrondafbeeldingen",
-        videoTitle: "Achtergrondvideo's",
         blurTitle: "Achtergrondvervaging",
         resetTitle: "Achtergrondeffecten uitschakelen",
         title: "Achtergrondeffecten",

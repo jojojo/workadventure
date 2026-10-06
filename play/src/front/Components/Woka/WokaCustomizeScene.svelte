@@ -5,6 +5,7 @@
     import { ABSOLUTE_PUSHER_URL } from "../../Enum/ComputedConst";
     import { MATRIX_AUTO_SYNC } from "../../Enum/EnvironmentVariable";
     import { areCharacterTexturesValid } from "../../Connection/LocalUserUtils";
+    import { analyticsClient } from "../../Administration/AnalyticsClient";
     import BodyIcon from "../Icons/BodyIcon.svelte";
     import EyesIcon from "../Icons/EyesIcon.svelte";
     import HairIcon from "../Icons/HairIcon.svelte";
@@ -120,6 +121,7 @@
                 return;
             }
 
+            analyticsClient.trackAdminEvent("onboarding.custom_woka_selected");
             saveAndContinue(textureIds);
         } catch (err) {
             console.error("Error saving textures:", err);
@@ -409,7 +411,9 @@
                     <button
                         class="w-full px-4 py-3 bg-primary text-white rounded hover:opacity-90"
                         onclick={() => {
-                            const textureIds = bodyPartOrder.map((bodyPart) => selectedTextures[bodyPart]).filter(Boolean);
+                            const textureIds = bodyPartOrder
+                                .map((bodyPart) => selectedTextures[bodyPart])
+                                .filter(Boolean);
                             saveAndContinue(textureIds, true);
                         }}
                     >

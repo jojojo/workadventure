@@ -27,6 +27,7 @@ import { get } from "svelte/store";
 import type { Member } from "@workadventure/messages";
 import { FilterType } from "@workadventure/messages";
 import { AbortError } from "@workadventure/shared-utils/src/Abort/AbortError";
+import type { SpaceInterface } from "../../../Space/SpaceInterface";
 import { LL } from "../../../../i18n/i18n-svelte";
 import { analyticsClient } from "../../../Administration/AnalyticsClient";
 import { scriptUtils } from "../../../Api/ScriptUtils";
@@ -55,7 +56,10 @@ import {
     requestedMicrophoneState,
     silentStore,
 } from "../../../Stores/MediaStore";
-import { currentLiveStreamingSpaceStore } from "../../../Stores/MegaphoneStore";
+import { externalMeetingEnded, externalMeetingStarted } from "../../../ExternalModule/ExternalMeetingAnalytics";
+import { jitsiMeetingEnded, jitsiMeetingStarted } from "../../../WebRtc/JitsiMeetingAnalytics";
+import { currentLiveStreamingSpaceStore, givenFloorSpaceStore } from "../../../Stores/MegaphoneStore";
+import { meetingRaiseHandStore, megaphoneRaiseHandSpacesStore } from "../../../Stores/RaiseHandZoneSettingsStore";
 import { notificationPlayingStore } from "../../../Stores/NotificationStore";
 import type { CoWebsite } from "../../../WebRtc/CoWebsite/CoWebsite";
 import { getImageCoWebsiteTitle, ImageCoWebsite, isImageCoWebsiteUrl } from "../../../WebRtc/CoWebsite/ImageCoWebsite";
@@ -109,6 +113,7 @@ interface MegaphoneZoneState {
     seeAttendees: boolean;
     chatEnabled: boolean;
     allowTalking: boolean;
+    raiseHandEnabled: boolean;
     waitingLink: string | undefined;
 }
 
@@ -185,9 +190,6 @@ export class AreasPropertiesListener {
 
     public onEnterAreasHandler(areasData: AreaData[], areas?: Area[]): void {
         for (const areaData of areasData) {
-            // analytics event for area
-            analyticsClient.enterAreaMapEditor(areaData.id, areaData.name);
-
             if (!areaData.properties) {
                 continue;
             }
@@ -324,9 +326,6 @@ export class AreasPropertiesListener {
 
     public onLeaveAreasHandler(areasData: AreaData[], areas?: Area[]): void {
         for (const areaData of areasData) {
-            // analytics event for area
-            analyticsClient.leaveAreaMapEditor(areaData.id, areaData.name);
-
             if (!areaData.properties) {
                 continue;
             }
@@ -372,7 +371,7 @@ export class AreasPropertiesListener {
         this.abortControllers.set(property.id, abortController);
         switch (property.type) {
             case "openWebsite": {
-                this.handleOpenWebsitePropertyOnEnter(property);
+                this.handleOpenWebsitePropertyOnEnter(property, areaData);
                 break;
             }
             case "playAudio": {
@@ -454,7 +453,7 @@ export class AreasPropertiesListener {
                 break;
             }
             case "openFile": {
-                this.handleOpenFileOnEnter(property, abortController.signal).catch((error) =>
+                this.handleOpenFileOnEnter(property, areaData, abortController.signal).catch((error) =>
                     console.error("Error opening File:", error),
                 );
                 break;
@@ -487,7 +486,7 @@ export class AreasPropertiesListener {
         switch (type) {
             case "openWebsite": {
                 this.handleOpenWebsitePropertiesOnLeave(oldProperty);
-                this.handleOpenWebsitePropertyOnEnter(newProperty);
+                this.handleOpenWebsitePropertyOnEnter(newProperty, area);
                 break;
             }
             case "playAudio": {
@@ -573,7 +572,7 @@ export class AreasPropertiesListener {
             }
             case "openFile": {
                 this.handleOpenFileOnLeave(oldProperty);
-                this.handleOpenFileOnEnter(newProperty, newAbortController.signal).catch((error) =>
+                this.handleOpenFileOnEnter(newProperty, area, newAbortController.signal).catch((error) =>
                     console.error("Error opening file:", error),
                 );
                 break;
@@ -677,7 +676,7 @@ export class AreasPropertiesListener {
         audioManagerVisibilityStore.set("visible");
     }
 
-    private handleOpenWebsitePropertyOnEnter(property: OpenWebsitePropertyData): void {
+    private handleOpenWebsitePropertyOnEnter(property: OpenWebsitePropertyData, areaData?: AreaData): void {
         if (!property.link) {
             return;
         }
@@ -763,7 +762,12 @@ export class AreasPropertiesListener {
                 {
                     message: message,
                     click: () => {
-                        this.openCoWebsiteFunction(property, coWebsiteOpen, actionId);
+                        this.openCoWebsiteFunction(property, coWebsiteOpen, actionId, {
+                            targetUrl: this.toCanonicalCowebsiteTargetUrl(property.link ?? ""),
+                            triggerProperty: "openWebsite",
+                            areaId: areaData?.id,
+                            areaName: areaData?.name,
+                        });
                     },
                     userInputManager: this.scene.userInputManager,
                 },
@@ -813,13 +817,23 @@ export class AreasPropertiesListener {
 
             coWebsiteOpen.coWebsite = coWebsite;
 
-            coWebsites.add(coWebsite);
+            coWebsites.add(coWebsite, undefined, {
+                targetUrl: this.toCanonicalCowebsiteTargetUrl(property.link ?? ""),
+                triggerProperty: "openWebsite",
+                areaId: areaData?.id,
+                areaName: areaData?.name,
+            });
 
             //user in zone to open cowesite with only icon
             inOpenWebsite.set(true);
         }
         if (property.trigger == undefined || property.trigger === ON_ACTION_TRIGGER_ENTER) {
-            this.openCoWebsiteFunction(property, coWebsiteOpen, actionId);
+            this.openCoWebsiteFunction(property, coWebsiteOpen, actionId, {
+                targetUrl: this.toCanonicalCowebsiteTargetUrl(property.link ?? ""),
+                triggerProperty: "openWebsite",
+                areaId: areaData?.id,
+                areaName: areaData?.name,
+            });
         }
     }
 
@@ -960,6 +974,7 @@ export class AreasPropertiesListener {
             }
 
             inJitsiStore.set(true);
+            jitsiMeetingStarted(roomName);
 
             const coWebsite = new JitsiCoWebsite(
                 parsedUrl,
@@ -975,7 +990,10 @@ export class AreasPropertiesListener {
 
             coWebsites.add(coWebsite);
 
-            analyticsClient.enteredJitsi(roomName, this.scene.roomUrl);
+            analyticsClient.trackAdminEvent("meeting.area_entered", {
+                roomId: this.scene.roomUrl,
+                meetingProvider: "jitsi",
+            });
 
             popupStore.removePopup("jitsi");
             // TODO: this is the code to remove the new design popup before the "new design"
@@ -1046,6 +1064,9 @@ export class AreasPropertiesListener {
         abortSignal: AbortSignal,
     ): Promise<void> {
         inLivekitStore.set(true);
+        // Attendees of a meeting room may raise their hand, unless the map builder turned the option off.
+        // Maps built before the option existed have no such key, hence the `?? true`.
+        meetingRaiseHandStore.set(property.livekitRoomConfig?.raiseHandEnabled ?? true);
 
         const roomID = property.roomName.trim().length === 0 ? property.id : property.roomName;
 
@@ -1095,7 +1116,7 @@ export class AreasPropertiesListener {
             "meeting",
         );
 
-        analyticsClient.enteredMeetingRoom(roomName, this.scene.roomUrl);
+        analyticsClient.trackAdminEvent("meeting.area_entered", { roomId: this.scene.roomUrl });
     }
 
     private handleMatrixRoomAreaOnEnter(property: MatrixRoomPropertyData) {
@@ -1315,6 +1336,7 @@ export class AreasPropertiesListener {
          */
         coWebsites.keepOnly((coWebsite) => !(coWebsite instanceof JitsiCoWebsite));
         inJitsiStore.set(false);
+        jitsiMeetingEnded();
     }
 
     private handlePersonalAreaPropertyOnLeave(property: PersonalAreaPropertyData, area?: Area): void {
@@ -1351,6 +1373,7 @@ export class AreasPropertiesListener {
         this._isVideoActiveBeforeLivekitRoom = false;
         this._isMicrophoneActiveBeforeLivekitRoom = false;
         inLivekitStore.set(false);
+        meetingRaiseHandStore.set(false);
     }
 
     private handleExtensionModuleAreaPropertyOnLeave(subtype: string, area?: AreaData): void {
@@ -1368,6 +1391,7 @@ export class AreasPropertiesListener {
 
             areaMapEditor[subtype].handleAreaPropertyOnLeave(area);
             inJitsiStore.set(false);
+            externalMeetingEnded(subtype);
         }
     }
 
@@ -1382,6 +1406,12 @@ export class AreasPropertiesListener {
             }
             areaMapEditor[subtype].handleAreaPropertyOnEnter(area, signal);
             inJitsiStore.set(true);
+            // Only the modules that declare their area a meeting — the same flag the
+            // editor and the pathfinder read, so a todo-list panel is not a meeting
+            // here either.
+            if (areaMapEditor[subtype].isMeeting) {
+                externalMeetingStarted(subtype, area.id, this.scene.roomUrl);
+            }
         }
     }
 
@@ -1414,6 +1444,12 @@ export class AreasPropertiesListener {
         property: OpenWebsitePropertyData | OpenFilePropertyData,
         coWebsiteOpen: OpenCoWebsite,
         actionId: string,
+        analyticsContext: {
+            targetUrl?: string;
+            triggerProperty?: "openLink" | "openWebsite" | "other";
+            areaId?: string;
+            areaName?: string;
+        } = {},
     ): void {
         // Check URl and get the correct one
         let urlStr = property.link ?? "";
@@ -1450,15 +1486,29 @@ export class AreasPropertiesListener {
 
         coWebsiteOpen.coWebsite = coWebsite;
 
-        coWebsites.add(coWebsite);
+        coWebsites.add(coWebsite, undefined, {
+            targetUrl: analyticsContext.targetUrl ?? url.toString(),
+            triggerProperty:
+                analyticsContext.triggerProperty ?? (property.type === "openFile" ? "openLink" : "openWebsite"),
+            areaId: analyticsContext.areaId,
+            areaName: analyticsContext.areaName,
+        });
 
         this.loadCoWebsiteFunction(coWebsite, actionId);
 
         //user in a zone with cowebsite opened or pressed SPACE to enter is a zone
         inOpenWebsite.set(true);
+    }
 
-        // analytics event for open website
-        analyticsClient.openedWebsite(url);
+    private toCanonicalCowebsiteTargetUrl(link: string): string {
+        let normalizedLink = link;
+        try {
+            normalizedLink = scriptUtils.getWebsiteUrl(link);
+        } catch (error) {
+            console.error("Error on getWebsiteUrl: ", error);
+        }
+
+        return new URL(normalizedLink, this.scene.mapUrlFile).toString();
     }
 
     private loadCoWebsiteFunction(coWebsite: CoWebsite, actionId: string): void {
@@ -1527,6 +1577,8 @@ export class AreasPropertiesListener {
                 space.startStreaming();
                 currentLiveStreamingSpaceStore.set(space);
                 isSpeakerStore.set(true);
+                // Join succeeded: a granted raise-hand floor is superseded by the zone speaker role.
+                this.supersedeGrantedFloor(space);
 
                 // Track this zone
                 this.activeMegaphoneZones.set(property.id, {
@@ -1536,6 +1588,8 @@ export class AreasPropertiesListener {
                     seeAttendees: property.seeAttendees,
                     chatEnabled: property.chatEnabled,
                     allowTalking: false,
+                    // The speaker is the one raised hands are addressed to, never a hand raiser.
+                    raiseHandEnabled: false,
                     waitingLink: undefined,
                 });
                 this.refreshMegaphoneGlobalStores(uniqRoomName);
@@ -1638,6 +1692,7 @@ export class AreasPropertiesListener {
                         seeAttendees,
                         chatEnabled: property.chatEnabled,
                         allowTalking: property.allowTalking,
+                        raiseHandEnabled: property.raiseHandEnabled ?? true,
                         waitingLink: property.waitingLink,
                     });
                     this.refreshMegaphoneGlobalStores(uniqRoomName);
@@ -1682,6 +1737,7 @@ export class AreasPropertiesListener {
                     seeAttendees,
                     chatEnabled: property.chatEnabled,
                     allowTalking: property.allowTalking,
+                    raiseHandEnabled: property.raiseHandEnabled ?? true,
                     waitingLink: property.waitingLink,
                 });
                 isListenerStore.set(!property.allowTalking);
@@ -1743,6 +1799,17 @@ export class AreasPropertiesListener {
         isListenerStore.set(
             speakerZone === undefined && zones.some((zone) => zone.role === "listener" && !zone.allowTalking),
         );
+        // Listeners may ask the speaker for the floor, as long as one of the listener zones they stand in
+        // allows it. A speaker of the same space is the host, so they never raise a hand.
+        megaphoneRaiseHandSpacesStore.set(
+            new Set(
+                speakerZone === undefined
+                    ? zones
+                          .filter((zone) => zone.role === "listener" && zone.raiseHandEnabled)
+                          .map((zone) => zone.spaceName)
+                    : [],
+            ),
+        );
 
         const activeZone = speakerZone ?? listenerZone;
         if (!activeZone) {
@@ -1799,6 +1866,26 @@ export class AreasPropertiesListener {
         return undefined;
     }
 
+    /**
+     * Called when the local user becomes a speaker in `newSpace` through a megaphone zone. If they were holding a
+     * floor granted through a raised hand in a DIFFERENT space — typically the global (room-level) megaphone, which
+     * is NOT tracked by activeMegaphoneZones — that space would keep streaming forever once they leave this zone,
+     * because the zone-leave logic only ever tears down zone spaces. So stop the granted stream here before dropping
+     * the grant (dropping the grant also hides the "give back the floor" control).
+     */
+    private supersedeGrantedFloor(newSpace: SpaceInterface): void {
+        const grantedSpace = get(givenFloorSpaceStore);
+        if (grantedSpace && grantedSpace !== newSpace) {
+            try {
+                grantedSpace.stopStreaming();
+            } catch (e) {
+                console.error("An error occurred while stopping the previously granted floor stream", e);
+                Sentry.captureException(e);
+            }
+        }
+        givenFloorSpaceStore.set(undefined);
+    }
+
     private handleExitPropertyOnEnter(url: string): void {
         this.scene
             .onMapExit(Room.getRoomPathFromExitUrl(url, window.location.toString()))
@@ -1821,6 +1908,7 @@ export class AreasPropertiesListener {
 
     private async handleOpenFileOnEnter(
         initialProperty: OpenFilePropertyData,
+        areaData: AreaData,
         abortSignal: AbortSignal,
     ): Promise<void> {
         if (!initialProperty.link) {
@@ -1899,7 +1987,12 @@ export class AreasPropertiesListener {
                 {
                     message: message,
                     click: () => {
-                        this.openCoWebsiteFunction(property, coWebsiteOpen, actionId);
+                        this.openCoWebsiteFunction(property, coWebsiteOpen, actionId, {
+                            targetUrl: this.toCanonicalCowebsiteTargetUrl(initialProperty.link ?? ""),
+                            triggerProperty: "openLink",
+                            areaId: areaData.id,
+                            areaName: areaData.name,
+                        });
                     },
                     userInputManager: this.scene.userInputManager,
                 },
@@ -1932,13 +2025,23 @@ export class AreasPropertiesListener {
 
             coWebsiteOpen.coWebsite = coWebsite;
 
-            coWebsites.add(coWebsite);
+            coWebsites.add(coWebsite, undefined, {
+                targetUrl: this.toCanonicalCowebsiteTargetUrl(initialProperty.link ?? ""),
+                triggerProperty: "openLink",
+                areaId: areaData.id,
+                areaName: areaData.name,
+            });
 
             //user in zone to open cowesite with only icon
             inOpenWebsite.set(true);
         }
         if (property.trigger == undefined || property.trigger === ON_ACTION_TRIGGER_ENTER) {
-            this.openCoWebsiteFunction(property, coWebsiteOpen, actionId);
+            this.openCoWebsiteFunction(property, coWebsiteOpen, actionId, {
+                targetUrl: this.toCanonicalCowebsiteTargetUrl(initialProperty.link ?? ""),
+                triggerProperty: "openLink",
+                areaId: areaData.id,
+                areaName: areaData.name,
+            });
         }
     }
 

@@ -8,6 +8,7 @@
     import type { VideoBox } from "../../Space/VideoBox";
     import { LL } from "../../../i18n/i18n-svelte";
     import { analyticsClient } from "../../Administration/AnalyticsClient";
+    import { meetingOf } from "../../Administration/CurrentMeeting";
     import loaderImg from "../images/loader.svg";
     import { highlightFullScreen } from "../../Stores/ActionsCamStore";
     import { showFloatingUi } from "../../Utils/svelte-floatingui-show";
@@ -18,7 +19,10 @@
     import { blackListManager } from "../../WebRtc/BlackListManager";
     import { activePictureInPictureStore } from "../../Stores/PeerStore";
     import { blocker } from "../../Utils/screenBlocker";
+    import { findHandPosition, raisedHandsOrderStore } from "../../Stores/RaisedHandsStore";
+    import { gameManager } from "../../Phaser/Game/GameManager";
     import ActionMediaBox from "./ActionMediaBox.svelte";
+    import RaisedHandBadge from "./RaisedHandBadge.svelte";
     import UserName from "./UserName.svelte";
     import UpDownChevron from "./UpDownChevron.svelte";
     import CenteredVideo from "./CenteredVideo.svelte";
@@ -87,6 +91,15 @@
 
     // Check if this is the local user's video box
     let isLocalUser = $derived(videoBox.uniqueId === "-1" || extendedSpaceUser?.spaceUserId === "local");
+    // The local tile's space user is a placeholder ("local"): its raised hand is queued under our real spaceUserId.
+    let raisedHandSpaceUserId = $derived(
+        isLocalUser ? (gameManager.getCurrentGameScene().connection?.getSpaceUserId() ?? "") : videoBox.uniqueId,
+    );
+    // The local tile's space user is a placeholder: its hand is looked up in every queue (see findHandPosition).
+    let raisedHandSpaceName = $derived(isLocalUser ? undefined : extendedSpaceUser?.space.getName());
+    let isHandRaised = $derived(
+        findHandPosition($raisedHandsOrderStore, raisedHandSpaceName, raisedHandSpaceUserId) !== undefined,
+    );
     // Debugging aid for the rare case where the space says the remote microphone is enabled but this receiver has no audio.
     let audioStateMismatch = $derived(
         effectiveStatus === "connected" &&
@@ -95,6 +108,11 @@
             $isBlockedStore !== true &&
             $microphoneStateStore === true &&
             $hasAudioStore === false,
+    );
+    // A muted P2P peer keeps its audio track (paused sender, see RemotePeer): hasAudio alone would still show it as
+    // speaking. Only for remote cameras: the local user's space state is a constant, and a screen share carries tab audio.
+    let remoteMicrophoneMuted = $derived(
+        streamable?.videoType === "video" && !isLocalUser && $microphoneStateStore === false,
     );
     // Like audioStateMismatch, but with a 3 seconds delay.
     let showAudioStateMismatch = $state(false);
@@ -272,7 +290,7 @@
 
     function highlightPeer() {
         highlightedEmbedScreen.highlight(videoBox);
-        analyticsClient.pinMeetingAction();
+        analyticsClient.trackAdminEvent("meeting.participant.pinned", meetingOf(videoBox.spaceUser.space));
         window.focus();
     }
 
@@ -391,6 +409,7 @@
                                 name={name ?? "unknown"}
                                 picture={pictureStore}
                                 isPlayingAudio={showVoiceIndicator ?? false}
+                                {isHandRaised}
                                 isCameraDisabled={(!(videoEnabled ?? false) && !miniMode) ||
                                     effectiveStatus !== "connected"}
                                 isBlocked={$isBlockedStore ?? false}
@@ -399,6 +418,7 @@
                                     : "absolute top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2"}
                                 grayscale={effectiveStatus === "connecting" || effectiveStatus === "reconnecting"}
                             >
+                                <RaisedHandBadge spaceUserId={raisedHandSpaceUserId} spaceName={raisedHandSpaceName} />
                                 {#if extendedSpaceUser && extendedSpaceUser.spaceUserId !== "local"}
                                     <div
                                         class="flex items-center justify-center picture-in-picture:hidden"
@@ -417,7 +437,7 @@
                                     class:text-white={$activePictureInPictureStore}
                                     class:opacity-20={$activePictureInPictureStore}
                                 >
-                                    {#if $hasAudioStore && !audioStateMismatch}
+                                    {#if $hasAudioStore && !remoteMicrophoneMuted && !audioStateMismatch}
                                         <SoundMeterWidget
                                             volume={volumeMeter}
                                             cssClass="voice-meter-cam-off relative mr-0 ml-auto translate-x-0 transition-transform"

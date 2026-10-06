@@ -92,6 +92,8 @@ const camera: DeepPartial<Translation["camera"]> = {
         closeMenu: "关闭菜单",
         senPrivateMessage: "发送私信 (即将推出)",
         kickoffUser: "踢出用户",
+        giveFloor: "给予发言权",
+        revokeFloor: "收回发言权",
         muteAudioUser: "静音",
         askToMuteAudioUser: "请求静音",
         muteAudioEveryBody: "静音所有人",
@@ -102,7 +104,6 @@ const camera: DeepPartial<Translation["camera"]> = {
     },
     backgroundEffects: {
         imageTitle: "背景图片",
-        videoTitle: "背景视频",
         blurTitle: "背景模糊",
         resetTitle: "禁用背景效果",
         title: "背景效果",

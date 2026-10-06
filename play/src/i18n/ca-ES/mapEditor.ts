@@ -87,6 +87,9 @@ const mapEditor: DeepPartial<Translation["mapEditor"]> = {
             defaultButtonLabel: "Reproduir música",
             error: "No s'ha pogut carregar el so",
             actionButtonLabel: "Reproduir música",
+            playForAllUsersLabel: "Reproduir per a tots els usuaris del mapa",
+            audibleRadiusLabel: "Radi audible (en píxels)",
+            audibleRadiusPlaceholder: "Audible arreu si és buit",
         },
         openWebsite: {
             label: "Obrir enllaç",
@@ -306,6 +309,7 @@ const mapEditor: DeepPartial<Translation["mapEditor"]> = {
                 startWithAudioMuted: "Iniciar amb el micròfon silenciat",
                 startWithVideoMuted: "Iniciar amb el vídeo tancat",
                 disableChat: "Desactivar el xat",
+                raiseHandEnabled: "Permetre aixecar la mà",
                 livekitRoomAdminTag: "Etiqueta de moderador per a la sala de reunió",
                 cancel: "Cancel·lar",
                 validate: "Validar",
@@ -328,6 +332,7 @@ const mapEditor: DeepPartial<Translation["mapEditor"]> = {
         advancedOptions: "Opcions avançades",
         chatEnabled: "Associar un canal de xat dedicat",
         allowTalking: "Permetre parlar i formar bombolles",
+        raiseHandEnabled: "Permetre aixecar la mà",
         noProperties: "No s'han definit propietats",
     },
     areaEditor: {

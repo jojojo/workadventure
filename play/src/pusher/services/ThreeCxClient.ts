@@ -151,6 +151,9 @@ export class ThreeCxClient {
     }
 
     private url(path: string): string {
-        return new URL(path, this.config.baseUrl.endsWith("/") ? this.config.baseUrl : `${this.config.baseUrl}/`).toString();
+        return new URL(
+            path,
+            this.config.baseUrl.endsWith("/") ? this.config.baseUrl : `${this.config.baseUrl}/`,
+        ).toString();
     }
 }

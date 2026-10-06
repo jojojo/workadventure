@@ -17,6 +17,8 @@ import type {
     EditMapCommandMessage,
     EmbeddableWebsiteAnswer,
     EmoteEventMessage as EmoteEventMessageTsProto,
+    EntityMessage as EntityMessageTsProto,
+    BanUserMessage,
     ErrorMessage as ErrorMessageTsProto,
     ErrorScreenMessage as ErrorScreenMessageTsProto,
     FollowAbortMessage,
@@ -26,6 +28,7 @@ import type {
     GroupUpdateMessage as GroupUpdateMessageTsProto,
     JitsiJwtAnswer,
     JoinBBBMeetingAnswer,
+    BanIpPreviewAnswer,
     Member,
     ModifiyWAMMetadataMessage,
     ModifyCustomEntityMessage,
@@ -53,6 +56,7 @@ import type {
     PrivateSpaceEvent,
     UpdateSpaceUserPusherToFrontMessage,
     AddSpaceUserMessage,
+    AnalyticsEventReportMessage,
     RemoveSpaceUserPusherToFrontMessage,
     PublicEventFrontToPusher,
     PrivateEventFrontToPusher,
@@ -64,8 +68,8 @@ import type {
     UploadFileMessage,
     MapStorageJwtAnswer,
     DeleteRecordingAnswer,
-    StartRecordingAnswer,
-    StopRecordingAnswer,
+    SpaceStatePatchMessage,
+    SpaceStateQuery,
     PrivateEventPusherToFront,
     InitSpaceUsersMessage,
     NonUndefinedFields,
@@ -81,6 +85,7 @@ import type {
     VideoQualityReportMessage,
     ClientToServerMessage as ClientToServerMessageTsProto,
     ServerToClientMessage as ServerToClientMessageTsProto,
+    SendUserMessage,
 } from "@workadventure/messages";
 import {
     noUndefined,
@@ -102,6 +107,7 @@ import { abortTimeout } from "@workadventure/shared-utils/src/Abort/AbortTimeout
 import type { ReceiveEventEvent } from "../Api/Events/ReceiveEventEvent";
 import type { SetPlayerVariableEvent } from "../Api/Events/SetPlayerVariableEvent";
 import { iframeListener } from "../Api/IframeListener";
+import { analyticsClient } from "../Administration/AnalyticsClient";
 import { ABSOLUTE_PUSHER_URL } from "../Enum/ComputedConst";
 import { ENABLE_MAP_EDITOR, UPLOADER_URL, WOKA_SPEED } from "../Enum/EnvironmentVariable";
 import type { CompanionTextureDescriptionInterface } from "../Phaser/Companion/CompanionTextures";
@@ -115,6 +121,7 @@ import { duplicateUserConnectedStore, shouldShowDuplicateUserPopup } from "../St
 import { followRoleStore, followUsersStore } from "../Stores/FollowStore";
 import { isSpeakerStore, requestedMicrophoneState, requestedCameraState } from "../Stores/MediaStore";
 import { currentLiveStreamingSpaceStore } from "../Stores/MegaphoneStore";
+import { stopMegaphoneLive } from "../Components/ActionBar/MenuIcons/megaphoneActions";
 import {
     inviteUserActivated,
     mapEditorActivated,
@@ -125,7 +132,6 @@ import {
 import { requestedScreenSharingState } from "../Stores/ScreenSharingStore";
 import { selectCompanionSceneVisibleStore } from "../Stores/SelectCompanionStore";
 import { selectCharacterSceneVisibleStore } from "../Stores/SelectCharacterStore";
-import { adminMessagesService } from "./AdminMessagesService";
 import { connectionManager } from "./ConnectionManager";
 import type {
     GroupCreatedUpdatedMessageInterface,
@@ -142,13 +148,13 @@ import { WorkAdventureWebSocket } from "./WorkAdventureWebSocket";
 
 // This must be greater than RoomManager's PING_INTERVAL
 const manualPingDelay = 100_000;
-const recordingQueryTimeoutMs = 60_000;
 
 export class RoomConnection implements RoomConnection {
     public readonly socket: WorkAdventureWebSocket;
     public readonly websocketReconnectingStream: Observable<boolean>;
     private userId: number | null = null;
     private _closed = false;
+    private readonly cleanupCallbacks: Array<() => void> = [];
     private tags: string[] = [];
     private canEdit = false;
 
@@ -215,10 +221,17 @@ export class RoomConnection implements RoomConnection {
         value: unknown;
     }>();
     public readonly areaPropertyVariableMessageStream = this._areaPropertyVariableMessageStream.asObservable();
+    private readonly _entityMessageStream = new Subject<EntityMessageTsProto>();
+    public readonly entityMessageStream = this._entityMessageStream.asObservable();
     private readonly _editMapCommandMessageStream = new Subject<EditMapCommandMessage>();
     public readonly editMapCommandMessageStream = this._editMapCommandMessageStream.asObservable();
     private readonly _playerDetailsUpdatedMessageStream = new Subject<PlayerDetailsUpdatedMessageTsProto>();
     public readonly playerDetailsUpdatedMessageStream = this._playerDetailsUpdatedMessageStream.asObservable();
+
+    private readonly _sendUserMessageStream = new Subject<SendUserMessage>();
+    public readonly sendUserMessageStream = this._sendUserMessageStream.asObservable();
+    private readonly _banUserMessageStream = new Subject<BanUserMessage>();
+    public readonly banUserMessageStream = this._banUserMessageStream.asObservable();
 
     private readonly _websocketErrorStream = new Subject<Event>();
     public readonly websocketErrorStream = this._websocketErrorStream.asObservable();
@@ -249,6 +262,8 @@ export class RoomConnection implements RoomConnection {
     public readonly removeSpaceUserMessageStream = this._removeSpaceUserMessageStream.asObservable();
     private readonly _updateSpaceMetadataMessageStream = new Subject<UpdateSpaceMetadataMessage>();
     public readonly updateSpaceMetadataMessageStream = this._updateSpaceMetadataMessageStream.asObservable();
+    private readonly _spaceStatePatchMessageStream = new Subject<SpaceStatePatchMessage>();
+    public readonly spaceStatePatchMessageStream = this._spaceStatePatchMessageStream.asObservable();
     private readonly _receivedEventMessageStream = new Subject<ReceiveEventEvent>();
     public readonly receivedEventMessageStream = this._receivedEventMessageStream.asObservable();
     private readonly _spacePrivateMessageEvent = new Subject<PrivateEventPusherToFront>();
@@ -325,6 +340,10 @@ export class RoomConnection implements RoomConnection {
         }
 
         this.socket = new WorkAdventureWebSocket(url, subProtocols);
+        // The stream stays — ConnectionManager drives the reconnecting toast off it.
+        // What went is the analytics subscription: the socket reports its own retries
+        // now, so this no longer watches a stream to say a second time what the layer
+        // below already said.
         this.websocketReconnectingStream = this.socket.reconnectingStream;
 
         this.socket.onopen = () => {
@@ -417,6 +436,10 @@ export class RoomConnection implements RoomConnection {
                                     });
                                     break;
                                 }
+                                case "entityMessage": {
+                                    this._entityMessageStream.next(subMessage.entityMessage);
+                                    break;
+                                }
                                 case "pingMessage": {
                                     this.resetPingTimeout();
                                     this.sendPong();
@@ -443,6 +466,10 @@ export class RoomConnection implements RoomConnection {
                                     this._removeSpaceUserMessageStream.next(subMessage.removeSpaceUserMessage);
                                     break;
                                 }
+                                case "spaceStatePatchMessage": {
+                                    this._spaceStatePatchMessageStream.next(subMessage.spaceStatePatchMessage);
+                                    break;
+                                }
                                 case "updateSpaceMetadataMessage": {
                                     this._updateSpaceMetadataMessageStream.next(subMessage.updateSpaceMetadataMessage);
                                     break;
@@ -465,6 +492,18 @@ export class RoomConnection implements RoomConnection {
                                 case "kickOffMessage": {
                                     if (subMessage.kickOffMessage.userId !== this.userId?.toString()) break;
 
+                                    // Being kicked off the stage ends the broadcast, and
+                                    // only this path knows it — neither megaphone button
+                                    // is involved. Without going through the same stop,
+                                    // requestedMegaphoneStore stays true and the action
+                                    // bar keeps offering to stop a broadcast that is
+                                    // already over.
+                                    if (
+                                        get(currentLiveStreamingSpaceStore)?.getName() ===
+                                        subMessage.kickOffMessage.spaceName
+                                    ) {
+                                        stopMegaphoneLive();
+                                    }
                                     isSpeakerStore.set(false);
                                     currentLiveStreamingSpaceStore.set(undefined);
                                     const scene = gameManager.getCurrentGameScene();
@@ -635,11 +674,11 @@ export class RoomConnection implements RoomConnection {
                     break;
                 }
                 case "sendUserMessage": {
-                    adminMessagesService.onSendusermessage(message.sendUserMessage);
+                    this._sendUserMessageStream.next(message.sendUserMessage);
                     break;
                 }
                 case "banUserMessage": {
-                    adminMessagesService.onSendusermessage(message.banUserMessage);
+                    this._banUserMessageStream.next(message.banUserMessage);
                     break;
                 }
                 case "worldFullWarningMessage": {
@@ -788,6 +827,9 @@ export class RoomConnection implements RoomConnection {
             this._roomJoinedPromise.reject(event);
         }
         if (event.code !== 1000) {
+            analyticsClient.trackAdminEvent("websocket.connection_lost", {
+                reason: event.reason || String(event.code),
+            });
             Sentry.captureMessage(
                 "WebSocket closed by remote side. Code: " +
                     event.code +
@@ -801,10 +843,15 @@ export class RoomConnection implements RoomConnection {
     };
 
     private handleSocketError = (event: Event) => {
+        analyticsClient.trackAdminEvent("websocket.connection_lost", { reason: event.type });
         this._websocketErrorStream.next(event);
     };
 
     private cleanupConnection(isNormalClosure: boolean) {
+        for (const callback of this.cleanupCallbacks.splice(0)) {
+            callback();
+        }
+
         // Cleanup queries:
         for (const query of this.queries.values()) {
             query.reject(new ConnectionClosedError("Socket closed"));
@@ -954,9 +1001,27 @@ export class RoomConnection implements RoomConnection {
     }
 
     public closeConnection(): void {
-        this.socket?.close(1000, "Room connection closed");
-        this.cleanupConnection(true);
-        this._closed = true;
+        // Run cleanup BEFORE closing the socket. The cleanup callbacks flush the
+        // end-of-session analytics (session.ended),
+        // and WorkAdventureWebSocket.send() silently drops messages once the socket
+        // is manually closed (manuallyClosed=true / readyState !== OPEN). Emitting
+        // them while the socket is still OPEN lets the browser flush the frames
+        // ahead of the close handshake. `_closed` is set afterwards so send() is not
+        // blocked during this flush. (Remote/abnormal closes still can't deliver
+        // these — the pusher's timed-event tracker remains the source of truth
+        // there, and it is what closes any meeting, area or screen-share interval
+        // whose owner never got to.)
+        //
+        // The finally guarantees the socket is still closed (and `_closed` set) even
+        // if a cleanup callback throws — otherwise a throwing callback would leave a
+        // live, listener-attached socket behind that could auto-reconnect a room the
+        // user already left.
+        try {
+            this.cleanupConnection(true);
+        } finally {
+            this.socket?.close(1000, "Room connection closed");
+            this._closed = true;
+        }
     }
 
     public sharePosition(
@@ -1048,6 +1113,28 @@ export class RoomConnection implements RoomConnection {
         });
     }
 
+    /**
+     * Asks the server to play a sound carried by an entity for every player of the map. The server
+     * checks the URL against the entity before relaying it, and the sender hears the sound through
+     * the broadcast it gets back, like everybody else.
+     */
+    emitEntitySoundPlayed(entityId: string, soundUrl: string): void {
+        this.send({
+            message: {
+                $case: "entityMessage",
+                entityMessage: {
+                    entityId,
+                    entityEvent: {
+                        event: {
+                            $case: "entitySoundPlayed",
+                            entitySoundPlayed: { soundUrl },
+                        },
+                    },
+                },
+            },
+        });
+    }
+
     public async emitScriptableEvent(name: string, data: unknown, targetUserIds: number[] | undefined): Promise<void> {
         const answer = await this.query({
             $case: "sendEventQuery",
@@ -1101,29 +1188,42 @@ export class RoomConnection implements RoomConnection {
     }
 
     /**
-     * Acknowledges a message sent by a moderator, so the admin never displays it again.
+     * Ejects a user from the room. Reserved to the admins of the world (enforced by the pusher).
+     * @param kick true to only eject the user, false to also ban them from the world (permanent)
      */
-    public emitUserMessageRead(adminMessageId: string): void {
-        this.send({
-            message: {
-                $case: "userMessageReadMessage",
-                userMessageReadMessage: {
-                    id: adminMessageId,
-                },
-            },
-        });
-    }
-
-    public emitBanPlayerMessage(banUserUuid: string, banUserName: string): void {
+    public emitBanPlayerMessage(
+        banUserUuid: string,
+        banUserName: string,
+        kick = false,
+        reason = "",
+        byIp = false,
+    ): void {
         this.send({
             message: {
                 $case: "banPlayerMessage",
                 banPlayerMessage: {
                     banUserUuid,
                     banUserName,
+                    kick,
+                    reason,
+                    byIp,
                 },
             },
         });
+    }
+
+    /**
+     * Who else a ban by IP of this user would lock out. The pusher refuses it to anyone but the admins of the world.
+     */
+    public async queryBanIpPreview(banUserUuid: string): Promise<BanIpPreviewAnswer> {
+        const answer = await this.query({
+            $case: "banIpPreviewQuery",
+            banIpPreviewQuery: { banUserUuid },
+        });
+        if (answer.$case !== "banIpPreviewAnswer") {
+            throw new Error("Unexpected answer");
+        }
+        return answer.banIpPreviewAnswer;
     }
 
     public hasTag(tag: string): boolean {
@@ -1876,44 +1976,29 @@ export class RoomConnection implements RoomConnection {
         return answer.deleteRecordingAnswer;
     }
 
-    public async startRecording(spaceName: string): Promise<StartRecordingAnswer> {
+    /**
+     * Changes the state of a space. The back answers once the change is applied; by then the
+     * patch it caused has already been received (the pusher flushes it before answering).
+     */
+    public async alterSpaceState(
+        spaceName: string,
+        query: SpaceStateQuery["query"],
+        options?: { timeout?: number },
+    ): Promise<void> {
         const answer = await this.query(
             {
-                $case: "startRecordingQuery",
-                startRecordingQuery: {
+                $case: "spaceStateQuery",
+                spaceStateQuery: {
                     spaceName,
+                    query: { query },
                 },
             },
-            {
-                timeout: recordingQueryTimeoutMs,
-            },
+            options,
         );
 
-        if (answer.$case !== "startRecordingAnswer") {
+        if (answer.$case !== "spaceStateAnswer") {
             throw new Error("Unexpected answer");
         }
-
-        return answer.startRecordingAnswer;
-    }
-
-    public async stopRecording(spaceName: string): Promise<StopRecordingAnswer> {
-        const answer = await this.query(
-            {
-                $case: "stopRecordingQuery",
-                stopRecordingQuery: {
-                    spaceName,
-                },
-            },
-            {
-                timeout: recordingQueryTimeoutMs,
-            },
-        );
-
-        if (answer.$case !== "stopRecordingAnswer") {
-            throw new Error("Unexpected answer");
-        }
-
-        return answer.stopRecordingAnswer;
     }
 
     public async getOauthRefreshToken(
@@ -2175,8 +2260,11 @@ export class RoomConnection implements RoomConnection {
         this._emoteEventMessageStream.complete();
         this._variableMessageStream.complete();
         this._areaPropertyVariableMessageStream.complete();
+        this._entityMessageStream.complete();
         this._editMapCommandMessageStream.complete();
         this._playerDetailsUpdatedMessageStream.complete();
+        this._sendUserMessageStream.complete();
+        this._banUserMessageStream.complete();
         this._websocketErrorStream.complete();
         this._moveToPositionMessageStream.complete();
         this._meetingInvitationRequestReceivedStream.complete();
@@ -2185,6 +2273,7 @@ export class RoomConnection implements RoomConnection {
         this._updateSpaceUserMessageStream.complete();
         this._removeSpaceUserMessageStream.complete();
         this._updateSpaceMetadataMessageStream.complete();
+        this._spaceStatePatchMessageStream.complete();
         this._receivedEventMessageStream.complete();
         this._spacePrivateMessageEvent.complete();
         this._spacePublicMessageEvent.complete();
@@ -2215,6 +2304,19 @@ export class RoomConnection implements RoomConnection {
                 videoQualityReportMessage: message,
             },
         });
+    }
+
+    public emitAnalyticsEventReport(message: AnalyticsEventReportMessage): void {
+        this.send({
+            message: {
+                $case: "analyticsEventReportMessage",
+                analyticsEventReportMessage: message,
+            },
+        });
+    }
+
+    public onCleanup(callback: () => void): void {
+        this.cleanupCallbacks.push(callback);
     }
 
     // "force" bypasses pre-join queuing for messages that must be sent before the room is joined (e.g. joinRoomFrontMessage).

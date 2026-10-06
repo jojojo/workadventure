@@ -2,7 +2,6 @@ import crypto from "crypto";
 import type {
     ZoneMessage,
     AskPositionMessage,
-    BanUserMessage,
     MeetingInvitationRequestMessage,
     MeetingInvitationResponseMessage,
     BatchToPusherRoomMessage,
@@ -26,8 +25,9 @@ import type {
     QueryMessage,
     RoomDescription,
     RoomsList,
+    WorldUser,
+    WorldUsersAnswer,
     SendEventQuery,
-    SendUserMessage,
     SetPlayerDetailsMessage,
     SubToPusherRoomMessage,
     UpdateMapToNewestWithKeyMessage,
@@ -47,6 +47,7 @@ import type {
     DeleteSpaceUserToNotifyMessage,
     AbortQueryMessage,
     SetAreaPropertyVariableMessage,
+    EntityMessage,
     BackEventMessage,
     ConnectToRoomMessage,
     HandleLivekitWebhookRequest,
@@ -79,6 +80,7 @@ import type { Admin } from "../Model/Admin";
 import { Space } from "../Model/Space";
 import type { SpacesWatcher } from "../Model/SpacesWatcher";
 import { eventProcessor } from "../Model/EventProcessorInit";
+import type { SessionEndReason } from "../Model/SessionAnalytics";
 import { gaugeManager } from "./GaugeManager";
 import { clientEventsEmitter } from "./ClientEventsEmitter";
 import { getMapStorageClient } from "./MapStorageClient";
@@ -316,6 +318,12 @@ export class SocketManager {
             );
             // Note: We don't send an error back to the client as this is a security check
             // The client should have already verified permissions before allowing the action
+        }
+    }
+
+    handleEntityMessage(room: GameRoom, message: EntityMessage): void {
+        if (message.entityEvent) {
+            room.dispatchEntityEvent(message.entityId, message.entityEvent);
         }
     }
 
@@ -718,10 +726,10 @@ export class SocketManager {
                 case "mapStorageJwtQuery":
                 case "getRecordingsQuery":
                 case "getRecordingThumbnailsQuery":
+                case "banIpPreviewQuery":
                 case "deleteRecordingQuery":
                 case "getSignedUrlQuery":
-                case "startRecordingQuery":
-                case "stopRecordingQuery":
+                case "spaceStateQuery":
                 case "enterChatRoomAreaQuery": {
                     break;
                 }
@@ -895,26 +903,6 @@ export class SocketManager {
         };
     }
 
-    public handleSendUserMessage(user: User, sendUserMessageToSend: SendUserMessage) {
-        user.write({
-            $case: "sendUserMessage",
-            sendUserMessage: sendUserMessageToSend,
-        });
-    }
-
-    public handleBanUserMessage(room: GameRoom, user: User, banUserMessageToSend: BanUserMessage) {
-        user.write({
-            $case: "sendUserMessage",
-            sendUserMessage: banUserMessageToSend,
-        });
-
-        setTimeout(() => {
-            // Let's leave the room now.
-            room.leave(user);
-            endUserConnectionWithReason(user.socket, `User was banned: ${banUserMessageToSend.message}`);
-        }, 10000);
-    }
-
     public async addZoneListener(call: RoomSocket, roomId: string, x: number, y: number): Promise<void> {
         const room = await this.roomsPromises.get(roomId);
         if (!room) {
@@ -1077,56 +1065,16 @@ export class SocketManager {
         debug('Room "%s" was forcefully deleted from cache', roomId);
     }
 
-    public async sendAdminMessage(
+    /**
+     * Ejects a user from the room.
+     * @param type "banned" (permanent, persisted by the admin) or "kicked" (ejection only)
+     */
+    public async banUser(
         roomId: string,
         recipientUuid: string,
         message: string,
-        type: string,
-        id = "",
+        type: "banned" | "kicked" = "banned",
     ): Promise<void> {
-        const room = await this.roomsPromises.get(roomId);
-        if (!room) {
-            console.error(
-                "In sendAdminMessage, could not find room with id '" +
-                    roomId +
-                    "'. Maybe the room was closed a few milliseconds ago and there was a race condition?",
-            );
-            Sentry.captureException(
-                "In sendAdminMessage, could not find room with id '" +
-                    roomId +
-                    "'. Maybe the room was closed a few milliseconds ago and there was a race condition?",
-            );
-            return;
-        }
-
-        const recipients = room.getUsersByUuid(recipientUuid);
-        if (recipients.size === 0) {
-            console.error(
-                "In sendAdminMessage, could not find user with id '" +
-                    recipientUuid +
-                    "'. Maybe the user left the room a few milliseconds ago and there was a race condition?",
-            );
-            Sentry.captureException(
-                "In sendAdminMessage, could not find user with id '" +
-                    recipientUuid +
-                    "'. Maybe the user left the room a few milliseconds ago and there was a race condition?",
-            );
-            return;
-        }
-
-        for (const recipient of recipients) {
-            recipient.write({
-                $case: "sendUserMessage",
-                sendUserMessage: {
-                    message,
-                    type,
-                    id,
-                },
-            });
-        }
-    }
-
-    public async banUser(roomId: string, recipientUuid: string, message: string): Promise<void> {
         const room = await this.roomsPromises.get(roomId);
         if (!room) {
             console.error(
@@ -1166,12 +1114,10 @@ export class SocketManager {
                 $case: "banUserMessage",
                 banUserMessage: {
                     message,
-                    type: "banned",
-                    // The user is kicked right away, there is nothing to acknowledge.
-                    id: "",
+                    type,
                 },
             });
-            endUserConnectionWithReason(recipient.socket, `User was banned: ${message}`);
+            endUserConnectionWithReason(recipient.socket, `User was ${type}: ${message}`);
         }
     }
 
@@ -1198,8 +1144,6 @@ export class SocketManager {
                 sendUserMessage: {
                     message,
                     type,
-                    // A room-wide message is not stored per user: nothing to acknowledge.
-                    id: "",
                 },
             });
         });
@@ -1333,6 +1277,19 @@ export class SocketManager {
                 }
             },
         );
+    }
+
+    getWorldUsers(world: string): WorldUsersAnswer {
+        const users: WorldUser[] = [];
+        for (const room of this.resolvedRooms.values()) {
+            if (!room.roomUrl.startsWith(world)) {
+                continue;
+            }
+            for (const user of room.getUsers().values()) {
+                users.push({ uuid: user.uuid, name: user.name, ipAddress: user.IPAddress, roomUrl: room.roomUrl });
+            }
+        }
+        return { users };
     }
 
     getAllRooms(): RoomsList {
@@ -1570,12 +1527,9 @@ export class SocketManager {
             return;
         }
 
-        if (space) {
-            space.updateMetadata(isMetadata.data, updateSpaceMetadataMessage.senderId).catch((error) => {
-                console.error("Error updating metadata", error);
-                Sentry.captureException(error);
-            });
-        }
+        // Free-form metadata (scripting API, external modules): published as sent. Data the server is the
+        // authority on lives in the space state instead.
+        space?.publishMetadata(isMetadata.data);
     }
 
     handleKickSpaceUserMessage(pusher: SpacesWatcher, kickUserMessage: KickOffMessage) {
@@ -1729,6 +1683,23 @@ export class SocketManager {
                 externalModuleMessage: externalModuleMessage,
             });
         }
+    }
+
+    /**
+     * Ends every open meeting and broadcast, for a shutdown that is about to take the
+     * process with them. A session only exists once it has ended, so a deploy that kills
+     * the back without this loses every live conversation silently.
+     *
+     * Only enqueues — the caller drains afterwards. Returns how many were closed.
+     */
+    closeAllSpaceSessions(endReason: SessionEndReason): number {
+        let closed = 0;
+        for (const space of this.spaces.values()) {
+            if (space.closeSession(endReason)) {
+                closed += 1;
+            }
+        }
+        return closed;
     }
 
     /*

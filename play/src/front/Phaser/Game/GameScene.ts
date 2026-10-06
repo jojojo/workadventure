@@ -13,10 +13,12 @@ import { ChatMessageTypes, Deferred, SpatialMap } from "@workadventure/shared-ut
 import {
     AvailabilityStatus,
     availabilityStatusToJSON,
+    type BanUserMessage,
     ErrorScreenMessage,
     FilterType,
     type GroupUsersUpdateMessage,
     PositionMessage_Direction,
+    type SendUserMessage,
 } from "@workadventure/messages";
 import { z } from "zod";
 import type { ITiledMap, ITiledMapLayer, ITiledMapObject, ITiledMapTileset } from "@workadventure/tiled-map-type-guard";
@@ -34,7 +36,8 @@ import {
 import { wamFileMigration } from "@workadventure/map-editor/src/Migrations/WamFileMigration";
 import Debug from "debug";
 import { asError } from "catch-unknown";
-import { userMessageManager } from "../../Administration/UserMessageManager";
+import { textMessageStore } from "../../Stores/TypeMessageStore/TextMessageStore";
+import { soundPlayingStore } from "../../Stores/SoundPlayingStore";
 import { connectionManager } from "../../Connection/ConnectionManager";
 import { urlManager } from "../../Url/UrlManager";
 import { mediaManager } from "../../WebRtc/MediaManager";
@@ -56,6 +59,7 @@ import {
     MAX_PER_GROUP,
     POSITION_DELAY,
     PUBLIC_MAP_STORAGE_PREFIX,
+    UPLOADER_URL,
     WOKA_SPEED,
 } from "../../Enum/EnvironmentVariable";
 import { Room } from "../../Connection/Room";
@@ -72,6 +76,7 @@ import { TextUtils } from "../Components/TextUtils";
 import { joystickBaseImg, joystickBaseKey, joystickThumbImg, joystickThumbKey } from "../Components/MobileJoystick";
 import { PropertyUtils } from "../Map/PropertyUtils";
 import { analyticsClient } from "../../Administration/AnalyticsClient";
+import { stripUrlSensitiveParts } from "../../Administration/CowebsiteAnalyticsProperties";
 import { PathfindingManager, PathTileType } from "../../Utils/PathfindingManager";
 import type {
     GroupCreatedUpdatedMessageInterface,
@@ -87,6 +92,9 @@ import type { ItemFactoryInterface } from "../Items/ItemFactoryInterface";
 import { biggestAvailableAreaStore } from "../../Stores/BiggestAvailableAreaStore";
 import { playersStore } from "../../Stores/PlayersStore";
 import { emoteStore } from "../../Stores/EmoteStore";
+import { isHandRaisedStore, requestedHandRaiseState } from "../../Stores/RaiseHandStore";
+import { raisedHandPlayerIdsStore } from "../../Stores/RaisedHandsStore";
+import { isInRemoteConversation } from "../../Stores/StreamableCollectionStore";
 import {
     jitsiParticipantsCountStore,
     userIsAdminStore,
@@ -151,7 +159,13 @@ import { SpaceScriptingBridgeService } from "../../Space/Utils/SpaceScriptingBri
 import { debugAddPlayer, debugRemovePlayer, debugUpdatePlayer, debugZoom } from "../../Utils/Debuggers";
 import { checkCoturnServer } from "../../Components/Video/utils";
 import { BroadcastService } from "../../Streaming/BroadcastService";
-import { megaphoneCanBeUsedStore, megaphoneSpaceSettingsStore, megaphoneSpaceStore } from "../../Stores/MegaphoneStore";
+import {
+    megaphoneCanBeUsedStore,
+    megaphoneSpaceSettingsStore,
+    megaphoneSpaceStore,
+    requestedMegaphoneStore,
+} from "../../Stores/MegaphoneStore";
+import { stopMegaphoneLive } from "../../Components/ActionBar/MenuIcons/megaphoneActions";
 import { CompanionTextureError } from "../../Exception/CompanionTextureError";
 import { SelectCompanionScene, SelectCompanionSceneName } from "../Login/SelectCompanionScene";
 import { scriptUtils } from "../../Api/ScriptUtils";
@@ -189,7 +203,12 @@ import PopUpMapEditorNotEnabled from "../../Components/PopUp/PopUpMapEditorNotEn
 import PopUpMapEditorShortcut from "../../Components/PopUp/PopUpMapEditorShortcut.svelte";
 import { enableUserInputsStore } from "../../Stores/UserInputStore";
 import { ScriptLoadedError } from "../../Api/ScriptLoadedError";
-import { screenShareStreamStore, videoStreamStore } from "../../Stores/PeerStore";
+import {
+    mediaSynchronizedSpacesStore,
+    raisedHandSectionsStore,
+    screenShareStreamStore,
+    videoStreamStore,
+} from "../../Stores/PeerStore";
 import type { ChatConnectionInterface, ChatUser } from "../../Chat/Connection/ChatConnection";
 import { selectedRoomStore } from "../../Chat/Stores/SelectRoomStore";
 import { raceTimeout } from "../../Utils/PromiseUtils";
@@ -205,6 +224,7 @@ import { EnterLeaveScriptingService } from "../Helpers/EnterLeaveScriptingServic
 import { GameMapFrontWrapper } from "./GameMap/GameMapFrontWrapper";
 import { gameManager } from "./GameManager";
 import { EmoteManager } from "./EmoteManager";
+import { EntityAudioManager } from "./EntityAudioManager";
 import { OutlineManager } from "./UI/OutlineManager";
 import { soundManager } from "./SoundManager";
 import { SharedVariablesManager } from "./SharedVariablesManager";
@@ -333,6 +353,8 @@ export class GameScene extends DirtyScene {
     private tileAnimationRefreshEvent: Phaser.Time.TimerEvent | undefined;
     private messageSubscription: Subscription | null = null;
     private rxJsSubscriptions: Array<Subscription> = [];
+    // Player ids of remote players whose raised hand is currently shown above their woka (to diff on store updates).
+    private previousRaisedHandPlayerIds = new Set<number>();
     private localVolumeStoreUnsubscriber: Unsubscriber | undefined;
     private unsubscribers: Unsubscriber[] = [];
     private storesSubscribed = false;
@@ -349,6 +371,7 @@ export class GameScene extends DirtyScene {
     private outlineManager!: OutlineManager;
     private mapTransitioning = false; //used to prevent transitions happening at the same time.
     private emoteManager!: EmoteManager;
+    private entityAudioManager!: EntityAudioManager;
     private cameraManager!: CameraManager;
     private mapEditorModeManager: MapEditorModeManager | undefined;
     private entitiesCollectionsManager!: EntitiesCollectionsManager;
@@ -378,6 +401,9 @@ export class GameScene extends DirtyScene {
     private showVoiceIndicatorChangeMessageSent = false;
     private jitsiDominantSpeaker = false;
     private jitsiParticipantsCount = 0;
+    private readonly worldLoadStartedAt = performance.now();
+    private mapLoadSucceededAnalyticsSent = false;
+    private mapLoadFailedAnalyticsSent = false;
     private cleanupDone = false;
     private playersEventDispatcher = new IframeEventDispatcher();
     private playersMovementEventDispatcher = new IframeEventDispatcher();
@@ -446,6 +472,9 @@ export class GameScene extends DirtyScene {
             this.wamUrlFile = _room.wamUrl;
         }
         this.roomUrl = _room.key;
+        analyticsClient.trackAdminEvent("map_loading.started", {
+            mapUrl: stripUrlSensitiveParts(this.mapUrlFile || this.wamUrlFile || this.roomUrl),
+        });
 
         this.entitiesCollectionsManager = new EntitiesCollectionsManager();
 
@@ -491,7 +520,6 @@ export class GameScene extends DirtyScene {
             `audio-webrtc-out-${selectedBubbleSound}`,
             `/resources/objects/webrtc-out-${selectedBubbleSound}.mp3`,
         );
-        this.load.audio("audio-report-message", "/resources/objects/report-message.mp3");
         this.load.audio("audio-cloud", "/resources/objects/cloud.mp3");
         this.load.audio("new-message", "/resources/objects/new-message.mp3");
         this.load.audio("meeting-in", "/resources/objects/meeting-in.wav");
@@ -552,6 +580,10 @@ export class GameScene extends DirtyScene {
             //once preloading is over, we don't want loading errors to crash the game, so we need to disable this behavior after preloading.
             //if SpriteSheetFile (WOKA file) don't display error and give an access for user
             if (this.preloading && !(file instanceof Phaser.Loader.FileTypes.SpriteSheetFile)) {
+                analyticsClient.trackAdminEvent("asset.error", {
+                    kind: "asset",
+                    reason: stripUrlSensitiveParts(file?.src ?? this.originalMapUrl),
+                });
                 //remove loader in progress
                 this.handleErrorAndCleanup(
                     new Error('Cannot load "' + (file?.src ?? this.originalMapUrl) + '"'),
@@ -604,6 +636,7 @@ export class GameScene extends DirtyScene {
             return;
         }
 
+        this.trackMapLoadingFailure(errorCode);
         this.loader.removeLoader();
         errorScreenStore.setError(
             ErrorScreenMessage.fromPartial({
@@ -649,6 +682,7 @@ export class GameScene extends DirtyScene {
         gameManager.gameSceneIsCreated(this);
         urlManager.pushRoomIdToUrl(this._room);
         analyticsClient.enteredRoom(this._room.id, this._room.group);
+        this.trackMapLoadingSuccess();
         contactPageStore.set(this._room.contactPage);
 
         if (touchScreenManager.supportTouchScreen) {
@@ -797,8 +831,6 @@ export class GameScene extends DirtyScene {
         this.subscribeToEntitiesManagerObservables();
 
         this.removeAllRemotePlayers(); //cleanup the list  of remote players in case the scene was rebooted
-
-        this.tryMovePlayerWithMoveToParameter();
 
         this.cameraManager = new CameraManager(
             this,
@@ -1029,6 +1061,30 @@ export class GameScene extends DirtyScene {
         }
     }
 
+    private getWorldLoadDurationMs(): number {
+        return Math.round(performance.now() - this.worldLoadStartedAt);
+    }
+
+    private trackMapLoadingSuccess(): void {
+        if (this.mapLoadSucceededAnalyticsSent || this.mapLoadFailedAnalyticsSent) {
+            return;
+        }
+
+        this.mapLoadSucceededAnalyticsSent = true;
+        const durationMs = this.getWorldLoadDurationMs();
+        analyticsClient.trackAdminEvent("map_loading.succeeded", { durationMs });
+        analyticsClient.trackAdminEvent("world.entered", { durationMs });
+    }
+
+    private trackMapLoadingFailure(reason: string): void {
+        if (this.mapLoadFailedAnalyticsSent || this.mapLoadSucceededAnalyticsSent) {
+            return;
+        }
+
+        this.mapLoadFailedAnalyticsSent = true;
+        analyticsClient.trackAdminEvent("map_loading.failed", { reason, durationMs: this.getWorldLoadDurationMs() });
+    }
+
     public getMapUrl(): string {
         if (!this.mapUrlFile) {
             throw new Error("Trying to access mapUrl before it was fetched");
@@ -1169,11 +1225,20 @@ export class GameScene extends DirtyScene {
         this.shouldPublishScreenShareUnsubscriber?.();
         this.pinchManager?.destroy();
         this.emoteManager?.destroy();
+        this.entityAudioManager?.destroy();
         this.cameraManager?.destroy();
         this.mapEditorModeManager?.destroy();
         this.gameMapPropertiesListener?.destroy();
         this.pathfindingManager?.cleanup();
 
+        // A broadcast does not follow the user into the next room, but nothing said
+        // so: the action bar kept offering to stop it, and its analytics interval —
+        // opened with reopenOnReconnect — was resumed on the next room's socket as if
+        // the megaphone were still on. Guarded so an idle room change does not count
+        // as a stop.
+        if (get(requestedMegaphoneStore)) {
+            stopMegaphoneLive();
+        }
         this._broadcastService?.destroy().catch((e) => {
             console.error("Error while destroying broadcast service", e);
             Sentry.captureException(e);
@@ -1581,6 +1646,16 @@ export class GameScene extends DirtyScene {
     }
 
     /**
+     * Shows/hides the raised-hand indicator above a remote player's woka, resolving the woka from the
+     * numeric player id (derived from the SpaceUser's spaceUserId). The raise-hand state lives on the
+     * SpaceUser (see SpacePeerManager), so this also covers participants who joined the meeting after the
+     * hand was raised.
+     */
+    private setRemotePlayerRaisedHand(playerId: number, raised: boolean): void {
+        this.MapPlayersByKey.get(playerId)?.setRaisedHand(raised);
+    }
+
+    /**
      * Sends to the server an event emitted by one of the ActionableItems.
      */
     emitActionableEvent(itemId: number, eventName: string, state: unknown, parameters: unknown) {
@@ -1754,6 +1829,10 @@ export class GameScene extends DirtyScene {
 
     public getOutlineManager(): OutlineManager {
         return this.outlineManager;
+    }
+
+    public getEntityAudioManager(): EntityAudioManager {
+        return this.entityAudioManager;
     }
 
     /**
@@ -1947,6 +2026,13 @@ export class GameScene extends DirtyScene {
             .then(async (onConnect: OnConnectInterface) => {
                 this.connection = onConnect.connection;
 
+                // Subscribed before any await: the admin messages of the login come right after the connection.
+                // These streams are completed in the RoomConnection. No need to unsubscribe.
+                //eslint-disable-next-line rxjs/no-ignored-subscription, svelte/no-ignored-unsubscribe
+                this.connection.sendUserMessageStream.subscribe((message) => this.showUserMessage(message));
+                //eslint-disable-next-line rxjs/no-ignored-subscription, svelte/no-ignored-unsubscribe
+                this.connection.banUserMessageStream.subscribe((message) => this.ejectedUser(message));
+
                 // The serverDisconnected stream is completed in the RoomConnection. No need to unsubscribe.
                 //eslint-disable-next-line rxjs/no-ignored-subscription, svelte/no-ignored-unsubscribe
                 this.connection.serverDisconnected.subscribe(() => {
@@ -1999,6 +2085,9 @@ export class GameScene extends DirtyScene {
                 this.activatablesManager = new ActivatablesManager(this.CurrentPlayer);
                 this.cameraManager.startFollowPlayer(this.CurrentPlayer, 0);
 
+                // #moveTo walks the player: it must exist, so this cannot run before the pusher answers.
+                this.tryMovePlayerWithMoveToParameter();
+
                 this.mapEditorModeManager?.subscribeToRoomConnection(this.connection);
 
                 this.enterLeaveScriptingService = new EnterLeaveScriptingService(this.gameMapFrontWrapper, this);
@@ -2008,6 +2097,8 @@ export class GameScene extends DirtyScene {
 
                 videoStreamStore.forward(this._spaceRegistry.videoStreamStore);
                 screenShareStreamStore.forward(this._spaceRegistry.screenShareStreamStore);
+                raisedHandSectionsStore.forward(this._spaceRegistry.raisedHandSectionsStore);
+                mediaSynchronizedSpacesStore.forward(this._spaceRegistry.spacesSynchronizingMedia);
 
                 this.initExtensionModule();
 
@@ -2160,8 +2251,6 @@ export class GameScene extends DirtyScene {
 
                 this._sayManager = new SayManager(this.connection, this.CurrentPlayer);
 
-                userMessageManager.setReceiveBanListener(this.bannedUser.bind(this));
-
                 this.CurrentPlayer.on(hasMovedEventName, (event: HasPlayerMovedInterface) => {
                     this.handleCurrentPlayerHasMovedEvent(event);
                 });
@@ -2200,6 +2289,8 @@ export class GameScene extends DirtyScene {
                 this.gameMapFrontWrapper.setPosition(this.CurrentPlayer.x, this.CurrentPlayer.y);
 
                 this.emoteManager = new EmoteManager(this, this.connection);
+                this.entityAudioManager = new EntityAudioManager(this, this.connection);
+                this.CurrentPlayer.on(hasMovedEventName, () => this.entityAudioManager.onPlayerMoved());
 
                 const context = audioContextManager.getContext();
 
@@ -2599,6 +2690,46 @@ export class GameScene extends DirtyScene {
         );
 
         this.unsubscribers.push(
+            isHandRaisedStore.subscribe((raised) => {
+                // Reflect the local user's raised hand on their own woka immediately. The state reaches the
+                // other participants through the space state (see SpacePeerManager.synchronizeMediaState), which
+                // drives both their video tile badge and the indicator above their woka on the map.
+                this.CurrentPlayer?.setRaisedHand(raised);
+            }),
+        );
+
+        // Drive the raised-hand indicator above REMOTE players' wokas from the raised-hands queue of the space state.
+        // The store is keyed by numeric player id (derived from each participant's spaceUserId).
+        this.unsubscribers.push(
+            raisedHandPlayerIdsStore.subscribe((raisedPlayerIds) => {
+                for (const playerId of raisedPlayerIds) {
+                    if (!this.previousRaisedHandPlayerIds.has(playerId)) {
+                        this.setRemotePlayerRaisedHand(playerId, true);
+                    }
+                }
+                for (const playerId of this.previousRaisedHandPlayerIds) {
+                    if (!raisedPlayerIds.has(playerId)) {
+                        this.setRemotePlayerRaisedHand(playerId, false);
+                    }
+                }
+                this.previousRaisedHandPlayerIds = new Set(raisedPlayerIds);
+            }),
+        );
+
+        // Automatically lower the hand when leaving the conversation: the raise-hand button is only shown during a
+        // meeting, so a hand left raised on leave could otherwise no longer be lowered by the user.
+        this.unsubscribers.push(
+            isInRemoteConversation.subscribe((inConversation) => {
+                if (!inConversation) {
+                    requestedHandRaiseState.lowerAll();
+                }
+            }),
+        );
+        // A zone whose option says no needs no safety net: the hand is raised per space, so walking into such a
+        // zone leaves the hand raised elsewhere (e.g. in the bubble) alone, and a space the hand is up in stays
+        // offered by the button so it can still be lowered (see raiseHandSpacesStore).
+
+        this.unsubscribers.push(
             followUsersColorStore.subscribe((color) => {
                 if (color !== undefined) {
                     this.CurrentPlayer.setFollowOutlineColor(color);
@@ -2826,7 +2957,10 @@ ${escapedMessage}
                 this.popUpElements.set(openPopupEvent.popupId, domElement);
 
                 // Analytics tracking for popups
-                analyticsClient.openedPopup(openPopupEvent.targetObject, openPopupEvent.popupId);
+                analyticsClient.trackAdminEvent("popup.opened", {
+                    targetRectangle: openPopupEvent.targetObject,
+                    id: openPopupEvent.popupId,
+                });
             }),
         );
 
@@ -4014,7 +4148,7 @@ ${escapedMessage}
 
         try {
             await this.moveTo({ x: centerX, y: centerY }, true, WOKA_SPEED * 2.5);
-            analyticsClient.goToPersonalDesk();
+            analyticsClient.trackAdminEvent("personal_desk.entered");
         } catch (error) {
             console.warn("Error while moving to personal desk", error);
             warningMessageStore.addWarningMessage(get(LL).actionbar.personalDesk.errorMoving(), { closable: true });
@@ -4268,6 +4402,11 @@ ${escapedMessage}
         if (addPlayerData.availabilityStatus !== 0) {
             player.setAvailabilityStatus(addPlayerData.availabilityStatus, true);
         }
+        // If this player already had their hand raised before their woka was created (e.g. we just joined the
+        // meeting, or the SpaceUser arrived before the woka), reflect it immediately.
+        if (get(raisedHandPlayerIdsStore).has(player.userId)) {
+            player.setRaisedHand(true);
+        }
         this.MapPlayersByKey.set(player.userId, player);
         player.updatePosition(addPlayerData.position);
         this.remotePlayersSpatialIndex.set(player.userId, player);
@@ -4427,15 +4566,38 @@ ${escapedMessage}
         this.groups.set(groupPositionMessage.groupId, conversationBubble);
     }
 
+    /**
+     * Displays a message sent by an admin: a text or an audio message.
+     */
+    private showUserMessage({ type, message }: SendUserMessage) {
+        if (type === "message") {
+            textMessageStore.addMessage(message);
+            this.playSound("new-message", 0.2);
+        } else if (type === "audio") {
+            soundPlayingStore.playSound(UPLOADER_URL + message);
+        }
+    }
+
     //todo: put this into an 'orchestrator' scene (EntryScene?)
-    private bannedUser() {
+    /**
+     * A ban is persisted by the admin; a kick only ejects the user from the room, a reload brings them back.
+     */
+    private ejectedUser({ type, message: reason }: BanUserMessage) {
+        const kind = type === "kicked" ? "kicked" : "banned";
+        const texts = get(LL).report[kind];
         errorScreenStore.setError(
             ErrorScreenMessage.fromPartial({
                 type: "error",
-                code: "USER_BANNED",
-                title: "BANNED",
-                subtitle: "You were banned from WorkAdventure",
-                details: "If you want more information, you may contact us at: hello@workadventu.re",
+                code: kind === "banned" ? "USER_BANNED" : "USER_KICKED",
+                title: texts.title(),
+                subtitle: texts.subtitle(),
+                // One line each: the reason, then (for a ban only) how to reach the admins.
+                details: [
+                    reason.trim() === "" ? "" : get(LL).report.reasonGiven({ reason }),
+                    kind === "banned" ? get(LL).report.banned.details() : "",
+                ]
+                    .filter((line) => line !== "")
+                    .join("\n"),
             }),
         );
 

@@ -19,6 +19,7 @@ import {
     cameraEnergySavingStore,
     inLivekitStore,
     isListenerStore,
+    isSpeakerStore,
     listenerSharingCameraStore,
     localStreamStore,
     localVoiceIndicatorStore,
@@ -162,7 +163,7 @@ export const isInRemoteConversation = derived(
     },
 );
 
-const isInActiveConversationStore = derived(
+export const isInActiveConversationStore = derived(
     [isInRemoteConversation, currentPlayerGroupIdStore, inLivekitStore],
     ([$isInRemoteConversation, $currentPlayerGroupIdStore, $inLivekitStore]) =>
         $isInRemoteConversation || $currentPlayerGroupIdStore !== undefined || $inLivekitStore,
@@ -187,6 +188,7 @@ function createStreamableCollectionStore(): Readable<Map<string, VideoBox>> {
             isInActiveConversationStore,
             isListenerStore,
             listenerSharingCameraStore,
+            isSpeakerStore,
             availabilityStatusStore,
         ],
         (
@@ -204,6 +206,7 @@ function createStreamableCollectionStore(): Readable<Map<string, VideoBox>> {
                 $isInActiveConversationStore,
                 $isListenerStore,
                 $listenerSharingCameraStore,
+                $isSpeakerStore,
                 $availabilityStatusStore,
             ] /*, set*/,
         ) => {
@@ -229,6 +232,7 @@ function createStreamableCollectionStore(): Readable<Map<string, VideoBox>> {
                     isInActiveConversation: $isInActiveConversationStore,
                     isListener: $isListenerStore,
                     listenerSharingCamera: $listenerSharingCameraStore,
+                    isSpeaker: $isSpeakerStore,
                     availabilityStatus: $availabilityStatusStore,
                 })
             ) {

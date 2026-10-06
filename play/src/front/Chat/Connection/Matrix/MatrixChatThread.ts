@@ -371,7 +371,7 @@ export class MatrixChatThread implements ChatThread {
 
         const existingReaction = message.reactions.get(reactionKey);
         if (existingReaction) {
-            existingReaction.addUser(event.getSender(), event.getId());
+            existingReaction.addUser(event);
             return;
         }
 
@@ -536,6 +536,7 @@ export class MatrixChatThread implements ChatThread {
                 formatted_body: file.name,
                 info: {
                     size: file.size,
+                    mimetype: file.type,
                 },
                 msgtype: this.getMessageTypeFromFile(file),
                 url: uploadResponse.content_uri,

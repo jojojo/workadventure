@@ -94,6 +94,8 @@ const camera: DeepPartial<Translation["camera"]> = {
         closeMenu: "meny začinić",
         senPrivateMessage: "pśewatne powěsće posłaś (pśichadźe)",
         kickoffUser: "wužiwarja wotmětować",
+        giveFloor: "Słowo dać",
+        revokeFloor: "Słowo wotewzać",
         muteAudioUser: "audio stummschalten",
         askToMuteAudioUser: "prosyć, zo by audio stummschalten",
         muteAudioEveryBody: "audio za wšěch stummschalten",
@@ -104,7 +106,6 @@ const camera: DeepPartial<Translation["camera"]> = {
     },
     backgroundEffects: {
         imageTitle: "Wobrazki pozadka",
-        videoTitle: "Wideja pozadka",
         blurTitle: "Pozadk njewjasnosć",
         resetTitle: "Pozadk efekty deaktiwěrowaś",
         title: "Pozadk efekty",

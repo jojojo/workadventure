@@ -94,6 +94,8 @@ const camera: BaseTranslation = {
         closeMenu: "Close menu",
         senPrivateMessage: "Send a private message (coming soon)",
         kickoffUser: "Kick off user",
+        giveFloor: "Give the floor",
+        revokeFloor: "Take back the floor",
         muteAudioUser: "Mute audio",
         askToMuteAudioUser: "Ask to mute audio",
         muteAudioEveryBody: "Mute audio for everybody",
@@ -104,7 +106,6 @@ const camera: BaseTranslation = {
     },
     backgroundEffects: {
         imageTitle: "Background Images",
-        videoTitle: "Background Videos",
         blurTitle: "Background Blur",
         resetTitle: "Disable background effects",
         title: "Background Effects",

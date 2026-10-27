@@ -96,3 +96,32 @@ describe("OpenID display name claim", () => {
         expect(OPID_DISPLAY_NAME_CLAIM).toBe(expected);
     });
 });
+
+describe("Boolean feature flags defaulting to true", () => {
+    beforeEach(() => {
+        vi.resetModules();
+    });
+
+    afterEach(() => {
+        vi.doUnmock("../../src/pusher/enums/EnvironmentVariableValidator");
+    });
+
+    it.each([true, false])("should keep ENABLE_SAY and ENABLE_ISSUE_REPORT when they are %s", async (value) => {
+        vi.doMock("../../src/pusher/enums/EnvironmentVariableValidator", () => ({
+            EnvironmentVariables: {
+                safeParse: () => ({
+                    success: true,
+                    data: { ENABLE_SAY: value, ENABLE_ISSUE_REPORT: value },
+                }),
+            },
+        }));
+
+        const { ENABLE_SAY, ENABLE_ISSUE_REPORT, FRONT_ENVIRONMENT_VARIABLES } =
+            await import("../../src/pusher/enums/EnvironmentVariable");
+
+        expect(ENABLE_SAY).toBe(value);
+        expect(ENABLE_ISSUE_REPORT).toBe(value);
+        expect(FRONT_ENVIRONMENT_VARIABLES.ENABLE_SAY).toBe(value);
+        expect(FRONT_ENVIRONMENT_VARIABLES.ENABLE_ISSUE_REPORT).toBe(value);
+    });
+});

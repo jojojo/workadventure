@@ -6,7 +6,6 @@ import type {
     AtLeast,
     EntityCoordinates,
     EntityDataProperties,
-    EntityDimensions,
     WAMEntityData,
 } from "@workadventure/map-editor";
 import {
@@ -137,9 +136,25 @@ const mapStorageServer: MapStorageServer = {
                 const { connectedUserTags, userCanEdit, userUUID } = call.request;
 
                 const gameMapAreas = wamFile.getGameMapAreas();
-                const entityCommandPermissions = gameMapAreas
-                    ? new EntityPermissions(gameMapAreas, connectedUserTags, userCanEdit, userUUID)
-                    : undefined;
+                const entityPermissions = new EntityPermissions(gameMapAreas, connectedUserTags, userCanEdit, userUUID);
+                // Rights on an entity are checked at its top-left corner: it is the only point of the entity
+                // map-storage knows. The WAM does not store entity sizes and the size sent by the client cannot
+                // be trusted (a fake size would move the "center" into the user's zone).
+                const assertCanEditEntityAt = (position: EntityCoordinates, action: string) => {
+                    if (!entityPermissions.canEdit(position)) {
+                        throw new Error(
+                            `User ${userUUID} is not allowed to ${action} at (${position.x}, ${position.y}) on map ${mapUrl}`,
+                        );
+                    }
+                };
+                // Uploads are not tied to a position: any editor access is enough (same rule as the front).
+                const assertHasEditorAccess = (action: string) => {
+                    if (!userCanEdit && !gameMapAreas.isGameMapContainsSpecificAreas(userUUID, connectedUserTags)) {
+                        throw new Error(
+                            `User ${userUUID} has no editor access and is not allowed to ${action} on map ${mapUrl}`,
+                        );
+                    }
+                };
 
                 const commandId = editMapCommandMessage.id;
 
@@ -269,16 +284,8 @@ const mapStorageServer: MapStorageServer = {
                         }
                         const entity = wamFile.getGameMapEntities().getEntity(message.id);
                         if (entity) {
-                            const { x, y, width, height } = message;
-                            if (
-                                entityCommandPermissions &&
-                                !entityCommandPermissions.canEdit(
-                                    getEntityCenterCoordinates({ x, y }, { width, height }),
-                                )
-                            ) {
-                                Sentry.captureException("User is not allowed to modify the entity on map");
-                                break;
-                            }
+                            assertCanEditEntityAt(entity, `modify the entity ${message.id}`);
+                            assertCanEditEntityAt(message, `move the entity ${message.id}`);
                             await mapsManager.executeCommand(
                                 mapKey,
                                 mapUrl.host,
@@ -299,14 +306,7 @@ const mapStorageServer: MapStorageServer = {
                     }
                     case "createEntityMessage": {
                         const message = editMapMessage.createEntityMessage;
-                        const { x, y, width, height } = message;
-                        if (
-                            entityCommandPermissions &&
-                            !entityCommandPermissions.canEdit(getEntityCenterCoordinates({ x, y }, { width, height }))
-                        ) {
-                            Sentry.captureException("User is not allowed to create entity on map");
-                            break;
-                        }
+                        assertCanEditEntityAt(message, "create an entity");
                         await mapsManager.executeCommand(
                             mapKey,
                             mapUrl.host,
@@ -330,6 +330,12 @@ const mapStorageServer: MapStorageServer = {
                     }
                     case "deleteEntityMessage": {
                         const message = editMapMessage.deleteEntityMessage;
+                        const entity = wamFile.getGameMapEntities().getEntity(message.id);
+                        // An entity that is already gone (concurrent edit) is not checked: the delete is a no-op
+                        // that is still dispatched so that every client converges.
+                        if (entity) {
+                            assertCanEditEntityAt(entity, `delete the entity ${message.id}`);
+                        }
                         await mapsManager.executeCommand(
                             mapKey,
                             mapUrl.host,
@@ -344,6 +350,7 @@ const mapStorageServer: MapStorageServer = {
                         break;
                     }
                     case "uploadEntityMessage": {
+                        assertHasEditorAccess("upload a custom entity");
                         const uploadEntityMessage = editMapMessage.uploadEntityMessage;
                         // The uploader owns the entity. We overwrite whatever the client sent, and we do it on the
                         // message itself so that the value is persisted, queued and broadcast to every other client.
@@ -413,6 +420,7 @@ const mapStorageServer: MapStorageServer = {
                         break;
                     }
                     case "uploadFileMessage": {
+                        assertHasEditorAccess("upload a file");
                         const uploadFileMessage = editMapMessage.uploadFileMessage;
                         await entitiesManager.executeCommand(
                             new UploadFileMapStorageCommand(uploadFileMessage, mapUrl.hostname),
@@ -479,13 +487,6 @@ function getMessageFromError(error: unknown): string {
     } else {
         return "Unknown error";
     }
-}
-
-function getEntityCenterCoordinates(entityCoordinates: EntityCoordinates, entityDimensions: EntityDimensions) {
-    return {
-        x: entityCoordinates.x + entityDimensions.width * 0.5,
-        y: entityCoordinates.y + entityDimensions.height * 0.5,
-    };
 }
 
 export { mapStorageServer };

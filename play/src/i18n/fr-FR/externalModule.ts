@@ -2,6 +2,21 @@ import type { DeepPartial } from "../DeepPartial";
 import type { Translation } from "../i18n-types";
 
 const externalModule: DeepPartial<Translation["externalModule"]> = {
+    googleMeet: {
+        description:
+            "Ouvrez Google Meet dans un autre onglet. WorkAdventure libère votre micro et votre caméra lorsque vous rejoignez la réunion.",
+        titleLabel: "Nom de la réunion",
+        urlLabel: "Lien Google Meet",
+        invalidUrl: "Renseignez un lien de réunion Google Meet valide dans les paramètres de la zone.",
+        active: "Mode réunion actif. Votre micro, votre caméra et le son des conversations WorkAdventure sont suspendus.",
+        join: "Rejoindre Google Meet",
+        reopen: "Rouvrir Google Meet",
+        finish: "Terminer ma participation",
+        blocked:
+            "L’ouverture de l’onglet a été bloquée. Autorisez les fenêtres surgissantes pour WorkAdventure et réessayez.",
+        returnHint:
+            "Quitter cette zone ou terminer votre participation rétablit WorkAdventure. Raccrochez séparément dans Meet. Le partage d’écran est arrêté et doit être relancé manuellement.",
+    },
     status: {
         onLine: "Module ok ✅",
         offLine: "Module hors ligne ❌",

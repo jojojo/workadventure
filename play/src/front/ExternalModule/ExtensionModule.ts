@@ -52,6 +52,8 @@ export interface ExtensionModuleAreaProperty {
     shouldDisplayButton: (areaProperties: AreaDataProperties) => boolean;
     /** This area property opens a meeting: an area holds only one. */
     isMeeting?: boolean;
+    /** The module controls when joining succeeds and when its meeting ends. */
+    managesMeetingLifecycle?: boolean;
 }
 
 export interface ExtensionModule {

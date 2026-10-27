@@ -30,6 +30,7 @@ import { BrowserTooOldError } from "./Errors/BrowserTooOldError";
 import { errorStore, warningMessageStore } from "./ErrorStore";
 import { WebviewOnOldIOS } from "./Errors/WebviewOnOldIOS";
 
+import { externalMeetingActiveStore } from "./ExternalMeetingStore";
 import { createSilentStore } from "./SilentStore";
 import { privacyShutdownStore } from "./PrivacyShutdownStore";
 import { inExternalServiceStore, myCameraStore, myMicrophoneStore, proximityMeetingStore } from "./MyMediaStore";
@@ -423,6 +424,7 @@ export const silentStore = createSilentStore();
 
 export const availabilityStatusStore = derived(
     [
+        externalMeetingActiveStore,
         inJitsiStore,
         inBbbStore,
         silentStore,
@@ -436,6 +438,7 @@ export const availabilityStatusStore = derived(
         browserNotificationStore,
     ],
     ([
+        $externalMeetingActiveStore,
         $inJitsiStore,
         $inBbbStore,
         $silentStore,
@@ -450,6 +453,7 @@ export const availabilityStatusStore = derived(
     ]) => {
         // Important: Statuses that should not switch to BUSY
         // must be checked BEFORE privacyShutdownStore to prevent switching to BUSY when privacy is enabled.
+        if ($externalMeetingActiveStore) return AvailabilityStatus.BUSY;
         if ($audioPlaybackStore.size > 0 && !$browserNotificationStore) return AvailabilityStatus.SOUND_BLOCKED;
         if ($inJitsiStore) return AvailabilityStatus.JITSI;
         if ($inBbbStore) return AvailabilityStatus.BBB;
@@ -529,6 +533,7 @@ export const mediaStreamConstraintsStore = derived(
         myCameraStore,
         myMicrophoneStore,
         inExternalServiceStore,
+        externalMeetingActiveStore,
         enableCameraSceneVisibilityStore,
         videoConstraintStore,
         audioConstraintStore,
@@ -547,6 +552,7 @@ export const mediaStreamConstraintsStore = derived(
             $myCameraStore,
             $myMicrophoneStore,
             $inExternalServiceStore,
+            $externalMeetingActiveStore,
             $enableCameraSceneVisibilityStore,
             $videoConstraintStore,
             $audioConstraintStore,
@@ -569,7 +575,7 @@ export const mediaStreamConstraintsStore = derived(
         let currentAudioConstraint: boolean | MediaTrackConstraints = $audioConstraintStore;
 
         // Shared conditions for disabling media
-        const isInExternalService = $inExternalServiceStore === true;
+        const isInExternalService = $inExternalServiceStore || $externalMeetingActiveStore;
         const isEnergySaving = $cameraEnergySavingStore === true && $enableCameraSceneVisibilityStore === false;
         const isUnavailableStatus =
             $availabilityStatusStore === AvailabilityStatus.DENY_PROXIMITY_MEETING ||
@@ -611,7 +617,7 @@ export const mediaStreamConstraintsStore = derived(
             $isLiveStreamingAudioStore && $requestedMicrophoneState === false && !isMicrophoneForcedOff;
 
         // Video constraints only apply when NOT in background settings (to allow camera preview)
-        if (!$inBackgroundSettingsStore) {
+        if (!$inBackgroundSettingsStore || $externalMeetingActiveStore) {
             if (
                 $requestedCameraState === false ||
                 $myCameraStore === false ||

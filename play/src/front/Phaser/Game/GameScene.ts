@@ -141,6 +141,7 @@ import type { AddPlayerEvent } from "../../Api/Events/AddPlayerEvent";
 
 import { chatVisibilityStore, forceRefreshChatStore } from "../../Stores/ChatStore";
 import type { HasPlayerMovedInterface } from "../../Api/Events/HasPlayerMovedInterface";
+import { googleMeetModule } from "../../ExternalModule/GoogleMeet";
 import { extensionModuleStore, gameSceneIsLoadedStore, gameSceneStore } from "../../Stores/GameSceneStore";
 import { myCameraBlockedStore, myMicrophoneBlockedStore } from "../../Stores/MyMediaStore";
 import type { GameStateEvent } from "../../Api/Events/GameStateEvent";
@@ -2623,6 +2624,11 @@ export class GameScene extends DirtyScene {
     }
 
     private initExtensionModule() {
+        // Built-in extensions work without the SaaS Admin API or OAuth metadata.
+        if (!get(extensionModuleStore).some((module) => module.id === googleMeetModule.id)) {
+            googleMeetModule.init();
+            extensionModuleStore.add(googleMeetModule);
+        }
         if (this._room.modules) {
             const externalModules = import.meta.glob("../../external-modules/*/index.ts");
 

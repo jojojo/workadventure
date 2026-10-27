@@ -1415,8 +1415,10 @@ export class AreasPropertiesListener {
                 continue;
 
             areaMapEditor[subtype].handleAreaPropertyOnLeave(area);
-            inJitsiStore.set(false);
-            externalMeetingEnded(subtype);
+            if (!areaMapEditor[subtype].managesMeetingLifecycle) {
+                inJitsiStore.set(false);
+                externalMeetingEnded(subtype);
+            }
         }
     }
 
@@ -1430,6 +1432,7 @@ export class AreasPropertiesListener {
                 continue;
             }
             areaMapEditor[subtype].handleAreaPropertyOnEnter(area, signal);
+            if (areaMapEditor[subtype].managesMeetingLifecycle) continue;
             inJitsiStore.set(true);
             // Only the modules that declare their area a meeting — the same flag the
             // editor and the pathfinder read, so a todo-list panel is not a meeting

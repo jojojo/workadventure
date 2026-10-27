@@ -2,6 +2,20 @@ import type { DeepPartial } from "../DeepPartial";
 import type { Translation } from "../i18n-types";
 
 const externalModule: DeepPartial<Translation["externalModule"]> = {
+    googleMeet: {
+        description:
+            "Open Google Meet in a separate tab. WorkAdventure releases your microphone and camera when you join.",
+        titleLabel: "Meeting name",
+        urlLabel: "Google Meet link",
+        invalidUrl: "Enter a valid Google Meet meeting link in the area settings.",
+        active: "Meeting mode is active. Your WorkAdventure microphone, camera and conversation audio are suspended.",
+        join: "Join Google Meet",
+        reopen: "Reopen Google Meet",
+        finish: "End my participation",
+        blocked: "The new tab was blocked. Allow popups for WorkAdventure and try again.",
+        returnHint:
+            "Leaving this area or ending participation restores WorkAdventure. Hang up separately in Meet. Screen sharing is stopped and must be restarted manually.",
+    },
     status: {
         onLine: "Lo stato è ok ✅",
         offLine: "Lo stato è offline ❌",

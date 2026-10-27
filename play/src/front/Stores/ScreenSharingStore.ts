@@ -12,6 +12,7 @@ import type { EndTimedAnalyticsEvent } from "../Administration/TimedAnalyticsEve
 import type { Streamable, WebRtcStreamable } from "../Space/Streamable";
 import { VideoBox } from "../Space/VideoBox";
 import { localEncoderStatsStore } from "../WebRtc/LocalEncoderStats";
+import { externalMeetingActiveStore } from "./ExternalMeetingStore";
 import { isSpeakerStore, type LocalStreamStoreValue } from "./MediaStore";
 import { isScreenSharingPickerCancelled } from "./ScreenSharingErrors";
 import { inExternalServiceStore, myCameraStore, myMicrophoneStore } from "./MyMediaStore";
@@ -88,6 +89,7 @@ export const screenSharingConstraintsStore = derived(
         myCameraStore,
         myMicrophoneStore,
         inExternalServiceStore,
+        externalMeetingActiveStore,
         screenSharingAvailableStore,
         screenShareStreamElementsStore,
         isSpeakerStore,
@@ -98,6 +100,7 @@ export const screenSharingConstraintsStore = derived(
             $myCameraStore,
             $myMicrophoneStore,
             $inExternalServiceStore,
+            $externalMeetingActiveStore,
             $screenSharingAvailableStore,
             $screenShareStreamElementsStore,
             $isSpeakerStore,
@@ -115,7 +118,7 @@ export const screenSharingConstraintsStore = derived(
         }
 
         // Disable screen sharing if is in a external video/audio service.
-        if ($inExternalServiceStore) {
+        if ($inExternalServiceStore || $externalMeetingActiveStore) {
             currentVideoConstraint = false;
             currentAudioConstraint = false;
         }

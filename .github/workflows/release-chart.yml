@@ -10,6 +10,8 @@ on:
 
 jobs:
   release:
+    # Publishes to charts.workadventu.re with the official repository's credentials.
+    if: ${{ github.repository == 'workadventure/workadventure' }}
     runs-on: ubuntu-22.04
     steps:
       - name: Checkout

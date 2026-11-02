@@ -69,6 +69,22 @@ cartes n'est nécessaire. La validation fonctionnelle avec un compte réel pour 
 
 ## Inventaire à réexaminer à chaque synchronisation
 
+### Workflows GitHub de publication officielle — adaptés au fork
+
+- `build-test-and-deploy.yml` et `release-chart.yml` sont réservés au dépôt
+  `workadventure/workadventure` : registres officiels, Kubernetes et chart Helm ne correspondent pas au
+  déploiement Eoloa. Leurs jobs dépendants sont ignorés sur le fork ; `continuous_integration.yml`
+  reste actif pour les constructions, vérifications et tests du code. Les E2E Docker/Kubernetes de
+  cette chaîne officielle ne tournent donc pas sur le fork.
+- Les cinq appels de construction déclarent `contents: read` et `packages: write`, conformément aux
+  permissions demandées par le workflow imbriqué, pour éviter son rejet avant le démarrage des jobs.
+- Diagnostic du 2 novembre 2026 : CI du commit `bee0c081b` réussie ; workflow Docker rejeté avec
+  « requesting 'packages: write', but is only allowed 'packages: read' » ; publication Helm échouée.
+- Le déploiement Eoloa reste assuré par `npm run prod:deploy`, sans modification de la production lors
+  de l'adaptation des workflows. Vérifier ces gardes à chaque synchronisation amont.
+- **Retrait possible :** workflows officiels adaptés aux forks, sans publication ni secrets de
+  l'infrastructure WorkAdventure, et validation compatible avec la procédure Eoloa.
+
 ### Catalogue Woka persistant — déployé le 2 novembre 2026
 
 - Commande : `npm run woka:add -- fichier.png --name "Nom"`, avec `--id` et `--replace` pour conserver

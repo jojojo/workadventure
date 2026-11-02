@@ -20,22 +20,27 @@ Mettre cette référence et les états à jour après chaque fusion, remplacemen
 
 ## Dernier déploiement confirmé — 2 novembre 2026
 
-- Release : **v1.34.5**, code applicatif **`864a67922`**, déployé avec `npm run prod:deploy -- --release v1.34.5`.
-- Play et Back : images du fork `registry.eoloa.eu/workadventure-{play,back}:v1.34.5-864a67922`,
+- Release : **v1.34.5**, code applicatif **`65ad01ff2`**, déployé avec
+  `npm run prod:deploy -- --release v1.34.5 --enable-custom-wokas` (installation initiale du volume).
+- Play et Back : images du fork `registry.eoloa.eu/workadventure-{play,back}:v1.34.5-65ad01ff2`,
   construites depuis une archive Git pour `linux/amd64`, publiées et vérifiées par digest.
 - Map Storage et Uploader : images officielles `v1.34.5`.
-- Validation : **196 tests réussis**, 2 ignorés ; TypeScript Play/Back, Svelte, i18n et lint ciblé réussis.
+- Validation : **203 tests applicatifs réussis**, 2 ignorés ; **29 tests Python réussis** ;
+  TypeScript Play/Back, Svelte, i18n et lint ciblé réussis.
 - Production : sept services démarrés sans redémarrage ; contrôles de santé disponibles au vert ; page,
-  JavaScript, `/ping` et `/map-storage/ping` en HTTP 200. Paramètres, volumes, ports et autres images conservés.
+  `/ping` et `/map-storage/ping` en HTTP 200. Volume Woka ajouté explicitement ; autres paramètres,
+  volumes, ports et images conservés.
 - L'avertissement d'authentification administrateur Matrix `M_INVALID_PARAM`, antérieur au déploiement,
   reste présent. Les parcours Matrix et Meet avec un compte réel restent à valider.
 - Configuration effective, anciennes références d'images et preuves de validation sauvegardées hors du dépôt.
 - Sauvegarde du dernier déploiement :
-  `/Users/johancappi/.local/state/workadventure/deployments/v1.34.5-864a67922-sm0rkojo`.
-- Commande de déploiement : **16 tests réussis**. Le premier essai (`d196e82a9`) a restauré les anciennes
-  images après une erreur du contrôle des variables Docker sans valeur ; restauration vérifiée, puis
-  second déploiement réussi après correction. Le PNG public de Johan est identique au fichier local
-  et son identifiant est présent dans le catalogue du conteneur Play.
+  `/Users/johancappi/.local/state/workadventure/deployments/v1.34.5-65ad01ff2-u_k22j9_`.
+- Le premier essai d'installation du volume (`6c3797b2b`) a restauré les anciennes images après un écart
+  entre les représentations Docker `Binds` et `Mounts`. Contrôle corrigé et testé, puis installation validée.
+- Import de Johan par `npm run woka:add -- ... --name Johan --id eoloa-johan --replace` réussi :
+  PNG public vérifié, identifiant accepté par le service, catalogue publié et aucun changement d'identifiant
+  de conteneur ni de compteur de redémarrage pendant l'import. Sauvegarde privée :
+  `/Users/johancappi/.local/state/workadventure/deployments/woka-imports/20261102-100713-9d6eda52`.
 
 ## Examen de la v1.34.5 — 2 novembre 2026
 
@@ -62,7 +67,7 @@ cartes n'est nécessaire. La validation fonctionnelle avec un compte réel pour 
 
 ## Inventaire à réexaminer à chaque synchronisation
 
-### Catalogue Woka persistant — implémenté, installation restante
+### Catalogue Woka persistant — déployé le 2 novembre 2026
 
 - Commande : `npm run woka:add -- fichier.png --name "Nom"`, avec `--id` et `--replace` pour conserver
   un identifiant lors d'une modification. [Procédure](docs/others/self-hosting/custom-wokas.md).
@@ -74,7 +79,7 @@ cartes n'est nécessaire. La validation fonctionnelle avec un compte réel pour 
 - Import : validation PNG, sauvegardes privées, verrou distant, noms de fichiers par hash et publication
   atomique du catalogue après vérification HTTP du PNG. Les couches intégrées restent protégées.
 - Validation : 11 tests Python d'import, 18 tests de déploiement et 7 tests de catalogue/routes Play.
-  La validation de l'ajout en production sans changement de conteneur reste à effectuer.
+  Import de Johan validé en production sans changement de conteneur ni redémarrage.
 - L'installation vérifie la représentation Docker des volumes nommés via `HostConfig.Mounts`, avec
   `Binds` inchangé ; ce cas a été corrigé et couvert après le premier essai d'installation.
 - **Retrait possible :** catalogue dynamique officiel disponible en auto-hébergement avec import en ligne
@@ -82,8 +87,9 @@ cartes n'est nécessaire. La validation fonctionnelle avec un compte réel pour 
 
 ### Woka personnel Johan — déployé le 2 novembre 2026
 
-- Personnage complet `eoloa-johan` (nom affiché : `Johan`) ajouté à la collection par défaut dans
-  `play/src/pusher/data/woka.json`, après les personnages existants.
+- Personnage complet `eoloa-johan` (nom affiché : `Johan`) désormais importé dans la collection persistante
+  **Eoloa**. Son entrée intégrée dans `play/src/pusher/data/woka.json` reste en secours pour le retour arrière ;
+  le catalogue dynamique la remplace sans doublon et conserve l'identifiant des sélections existantes.
 - Ressource : `play/public/resources/characters/pipoya/bonhomme-chauve-barbe-lunettes-v2.png`.
 - Validation : PNG transparent de 96 × 128 pixels, grille de 3 × 4 cases de 32 pixels ; ordre visuel
   bas, gauche, droite, haut conforme aux animations. Déclaration JSON et unicité de l'identifiant vérifiées.

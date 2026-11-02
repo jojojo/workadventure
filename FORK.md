@@ -20,8 +20,8 @@ Mettre cette référence et les états à jour après chaque fusion, remplacemen
 
 ## Dernier déploiement confirmé — 2 novembre 2026
 
-- Release : **v1.34.5**, code applicatif **`817bb3294`**.
-- Play et Back : images du fork `registry.eoloa.eu/workadventure-{play,back}:v1.34.5-817bb3294`,
+- Release : **v1.34.5**, code applicatif **`864a67922`**, déployé avec `npm run prod:deploy -- --release v1.34.5`.
+- Play et Back : images du fork `registry.eoloa.eu/workadventure-{play,back}:v1.34.5-864a67922`,
   construites depuis une archive Git pour `linux/amd64`, publiées et vérifiées par digest.
 - Map Storage et Uploader : images officielles `v1.34.5`.
 - Validation : **196 tests réussis**, 2 ignorés ; TypeScript Play/Back, Svelte, i18n et lint ciblé réussis.
@@ -30,6 +30,12 @@ Mettre cette référence et les états à jour après chaque fusion, remplacemen
 - L'avertissement d'authentification administrateur Matrix `M_INVALID_PARAM`, antérieur au déploiement,
   reste présent. Les parcours Matrix et Meet avec un compte réel restent à valider.
 - Configuration effective, anciennes références d'images et preuves de validation sauvegardées hors du dépôt.
+- Sauvegarde du dernier déploiement :
+  `/Users/johancappi/.local/state/workadventure/deployments/v1.34.5-864a67922-sm0rkojo`.
+- Commande de déploiement : **16 tests réussis**. Le premier essai (`d196e82a9`) a restauré les anciennes
+  images après une erreur du contrôle des variables Docker sans valeur ; restauration vérifiée, puis
+  second déploiement réussi après correction. Le PNG public de Johan est identique au fichier local
+  et son identifiant est présent dans le catalogue du conteneur Play.
 
 ## Examen de la v1.34.5 — 2 novembre 2026
 
@@ -56,7 +62,7 @@ cartes n'est nécessaire. La validation fonctionnelle avec un compte réel pour 
 
 ## Inventaire à réexaminer à chaque synchronisation
 
-### Woka personnel Johan — ajouté, non déployé
+### Woka personnel Johan — déployé le 2 novembre 2026
 
 - Personnage complet `eoloa-johan` (nom affiché : `Johan`) ajouté à la collection par défaut dans
   `play/src/pusher/data/woka.json`, après les personnages existants.

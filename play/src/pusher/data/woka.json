@@ -148,6 +148,12 @@
                         "name": "female12",
                         "url": "resources/characters/pipoya/su4 Student fmale 12.png",
                         "position": 23
+                    },
+                    {
+                        "id": "eoloa-johan",
+                        "name": "Johan",
+                        "url": "resources/characters/pipoya/bonhomme-chauve-barbe-lunettes-v2.png",
+                        "position": 24
                     }
                 ]
             }

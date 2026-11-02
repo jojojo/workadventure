@@ -56,6 +56,16 @@ cartes n'est nécessaire. La validation fonctionnelle avec un compte réel pour 
 
 ## Inventaire à réexaminer à chaque synchronisation
 
+### Woka personnel Johan — ajouté, non déployé
+
+- Personnage complet `eoloa-johan` (nom affiché : `Johan`) ajouté à la collection par défaut dans
+  `play/src/pusher/data/woka.json`, après les personnages existants.
+- Ressource : `play/public/resources/characters/pipoya/bonhomme-chauve-barbe-lunettes-v2.png`.
+- Validation : PNG transparent de 96 × 128 pixels, grille de 3 × 4 cases de 32 pixels ; ordre visuel
+  bas, gauche, droite, haut conforme aux animations. Déclaration JSON et unicité de l'identifiant vérifiées.
+- Conserver cette ressource et sa déclaration lors des synchronisations ; le catalogue officiel ne fournit
+  pas cet avatar personnel. La sélection et la marche en jeu restent à valider après déploiement de Play.
+
 ### Présence externe et téléphonie 3CX — actif
 
 **Besoin :** synchroniser la disponibilité WorkAdventure avec une source externe, notamment les appels 3CX.
@@ -166,6 +176,13 @@ médias WorkAdventure pendant la participation déclarée.
   pas réappliqué mécaniquement.
 - `prod-docker-compose.yml` et `prod-traefik.yml` sont des configurations propres au déploiement.
   Ils ne sont pas la source de vérité de la stack effective et ne doivent pas recevoir de secrets.
+- `contrib/tools/deploy-production.py` automatise le déploiement et le retour arrière, avec les accès
+  Portainer locaux et le trousseau Docker. Commandes `npm run prod:check`, `prod:deploy` et `prod:rollback` ;
+  [procédure et prérequis](docs/others/self-hosting/eoloa-deployment.md). Les jetons restent nécessaires à
+  l'authentification mais ne sont plus recopiés à chaque exécution. Tests de protection des secrets,
+  préservation des paramètres et refus d'un retour arrière sur une stack modifiée dans
+  `contrib/tools/test_deploy_production.py` (14 tests réussis). `prod:check` vérifié avec les accès existants ;
+  aucun redéploiement n'est effectué lors de l'ajout du script.
 - Validation : construction depuis une archive du commit, pour `linux/amd64`, puis procédure de déploiement
   et contrôles décrits dans les consignes locales. Garder les références d'images de retour arrière hors du dépôt.
 - **Retrait possible :** construction officielle utilisable dans notre environnement sans secrets de

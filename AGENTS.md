@@ -19,6 +19,14 @@ WorkAdventure is a TypeScript monorepo (npm workspaces) for building collaborati
 - Do not retain a patch merely because it was previously marked "preserve", or remove one based on a similar feature
   name alone. Verify behavior, configuration compatibility, and availability in this deployment.
 
+## Production deployment
+
+- Follow [the Eoloa deployment procedure](docs/others/self-hosting/eoloa-deployment.md).
+- Prefer `npm run prod:check` and `npm run prod:deploy` over ad hoc Portainer API calls.
+- Reuse `~/.config/portainer.env` (owner-only, mode 600) and the Docker credential store; never print or
+  commit credentials, or request a new token when the configured credentials still work.
+- Deploy a clean, pushed commit. Keep effective stack backups and deployment logs outside the repository.
+
 ## Main projects
 
 - `play/AGENTS.md`: Svelte/Phaser frontend, pusher, and Room API server.

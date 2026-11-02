@@ -62,6 +62,22 @@ cartes n'est nécessaire. La validation fonctionnelle avec un compte réel pour 
 
 ## Inventaire à réexaminer à chaque synchronisation
 
+### Catalogue Woka persistant — implémenté, installation restante
+
+- Commande : `npm run woka:add -- fichier.png --name "Nom"`, avec `--id` et `--replace` pour conserver
+  un identifiant lors d'une modification. [Procédure](docs/others/self-hosting/custom-wokas.md).
+- Code : `CustomWokaCatalog.ts`, `CustomWokaController.ts`, `LocalWokaService.ts` et
+  `contrib/tools/woka-add.py`. Les Woka personnels complètent le catalogue local, sans API admin externe.
+- Données hors image Docker : volume externe `workadventure_custom-wokas`, monté dans
+  `/var/lib/workadventure/wokas`. Installation initiale par `prod:deploy -- --enable-custom-wokas` ;
+  déploiements suivants sans cette option. Aucun redémarrage lors des imports.
+- Import : validation PNG, sauvegardes privées, verrou distant, noms de fichiers par hash et publication
+  atomique du catalogue après vérification HTTP du PNG. Les couches intégrées restent protégées.
+- Validation : 11 tests Python d'import, 18 tests de déploiement et 7 tests de catalogue/routes Play.
+  La validation de l'ajout en production sans changement de conteneur reste à effectuer.
+- **Retrait possible :** catalogue dynamique officiel disponible en auto-hébergement avec import en ligne
+  de commande et persistance. Migrer les données et conserver les identifiants déjà sélectionnés.
+
 ### Woka personnel Johan — déployé le 2 novembre 2026
 
 - Personnage complet `eoloa-johan` (nom affiché : `Johan`) ajouté à la collection par défaut dans

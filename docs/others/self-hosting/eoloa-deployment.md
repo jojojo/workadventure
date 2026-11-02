@@ -105,3 +105,9 @@ python3 -m unittest discover -s contrib/tools -p 'test_deploy_production.py'
 ```
 
 Ces tests utilisent des données factices ; ils n'appellent ni Portainer, ni Docker, ni le registre.
+
+## Ajout de Woka sans déploiement
+
+Après l'installation initiale du volume et du chargement dynamique, utiliser
+`npm run woka:add -- fichier.png --name "Nom"`.
+Voir [les Woka personnalisés](custom-wokas.md) pour l'installation, les remplacements et les sauvegardes.

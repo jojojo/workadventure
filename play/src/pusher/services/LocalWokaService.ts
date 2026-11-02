@@ -2,15 +2,18 @@ import fs from "fs/promises";
 import type { WokaDetail, WokaList } from "@workadventure/messages";
 import { wokaPartNames } from "@workadventure/messages";
 import type { WokaServiceInterface } from "./WokaServiceInterface";
+import { addCustomWokas, CUSTOM_WOKA_DIRECTORY } from "./CustomWokaCatalog";
 
-class LocalWokaService implements WokaServiceInterface {
+export class LocalWokaService implements WokaServiceInterface {
+    constructor(private readonly customDirectory = CUSTOM_WOKA_DIRECTORY) {}
+
     private async loadWokaData(): Promise<WokaList> {
         try {
             const file = new URL("../data/woka.json", import.meta.url);
             const content = await fs.readFile(file, "utf8");
-            return JSON.parse(content) as WokaList;
-        } catch {
-            throw new Error("Failed to load Woka data");
+            return await addCustomWokas(JSON.parse(content) as WokaList, this.customDirectory);
+        } catch (cause) {
+            throw new Error("Failed to load Woka data", { cause });
         }
     }
 

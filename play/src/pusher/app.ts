@@ -34,6 +34,7 @@ import { LocalScriptController } from "./controllers/LocalScriptController";
 import { ExternalPresenceController } from "./controllers/ExternalPresenceController";
 import { LivekitWebhookController } from "./controllers/LivekitWebhookController";
 import { analyticsEventsQueue } from "./services/AnalyticsEventsQueue";
+import { registerCustomWokaRoutes } from "./controllers/CustomWokaController";
 
 class App {
     private readonly app: Application;
@@ -95,6 +96,7 @@ class App {
         new PingController(this.app, frontAssets);
         new LocalScriptController(this.app);
         new ExternalPresenceController(this.app);
+        registerCustomWokaRoutes(this.app);
 
         if (ENABLE_OPENAPI_ENDPOINT) {
             new SwaggerController(this.app);

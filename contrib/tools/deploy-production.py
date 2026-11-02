@@ -3,6 +3,7 @@
 
 import argparse
 import base64
+import copy
 import datetime
 import fcntl
 import json
@@ -26,6 +27,8 @@ REGISTRY = "registry.eoloa.eu"
 APP = "https://workadventure.eoloa.net"
 STATE = Path.home() / ".local/state/workadventure/deployments"
 SERVICES = ("play", "back", "map-storage", "uploader")
+CUSTOM_WOKA_DIRECTORY = "/var/lib/workadventure/wokas"
+CUSTOM_WOKA_VOLUME = "workadventure_custom-wokas"
 
 
 class DeploymentError(Exception):
@@ -97,8 +100,8 @@ class Portainer:
         self.endpoint = None
         self.stack_id = None
 
-    def request(self, path, method="GET", payload=None, headers=None, raw=False, timeout=45):
-        body = json.dumps(payload).encode() if payload is not None else None
+    def request(self, path, method="GET", payload=None, headers=None, raw=False, timeout=45, raw_body=None):
+        body = raw_body if raw_body is not None else json.dumps(payload).encode() if payload is not None else None
         request = urllib.request.Request(self.url + "/api" + path, data=body, method=method,
             headers={"X-API-Key": self.key, "Content-Type": "application/json", **(headers or {})})
         try:
@@ -204,6 +207,24 @@ def environment_values(entries):
             for key, separator, value in (entry.partition("=") for entry in entries)}
 
 
+def enable_custom_woka_volume(compose, before, mountpoint):
+    require(not before["play"].get("Mounts"), "Installation initiale attendue sans montage Play existant.")
+    require(len(re.findall(r"^  play:\s*$", compose, re.M)) == 1
+            and len(re.findall(r"^volumes:\s*$", compose, re.M)) == 1,
+            "Structure Compose inattendue pour installer le volume Woka.")
+    require("eoloa-custom-wokas" not in compose and CUSTOM_WOKA_DIRECTORY not in compose,
+            "Le volume Woka est déjà déclaré ou sa configuration est ambiguë.")
+    compose = re.sub(r"^(  play:)\s*$", lambda m: m[1] + "\n    volumes:\n"
+                     f"      - eoloa-custom-wokas:{CUSTOM_WOKA_DIRECTORY}:rw", compose, count=1, flags=re.M)
+    compose = re.sub(r"^(volumes:)\s*$", lambda m: m[1] + "\n  eoloa-custom-wokas:\n"
+                     f"    external: true\n    name: {CUSTOM_WOKA_VOLUME}", compose, count=1, flags=re.M)
+    expected = copy.deepcopy(before)
+    expected["play"]["HostConfig"]["Binds"] = [f"{CUSTOM_WOKA_VOLUME}:{CUSTOM_WOKA_DIRECTORY}:rw"]
+    expected["play"]["Mounts"] = [{"Type": "volume", "Source": mountpoint,
+                                  "Destination": CUSTOM_WOKA_DIRECTORY, "RW": True}]
+    return compose, expected
+
+
 def verify_settings(before, after, expected_ids):
     require(set(before) == set(after), "La liste des services a changé.")
     for service, old in before.items():
@@ -273,7 +294,8 @@ def checks(directory):
     commands += [("back", ["npm", "run", "typecheck"]),
         ("play", ["npm", "test", "--", "--run", "src/front/Chat/Connection/Matrix/tests",
                   "tests/front/ExternalModule/GoogleMeetSession.test.ts",
-                  "tests/front/ExternalModule/GoogleMeetPanel.test.ts", "tests/front/ExternalModule/GoogleMeetMedia.test.ts"]),
+                  "tests/front/ExternalModule/GoogleMeetPanel.test.ts", "tests/front/ExternalModule/GoogleMeetMedia.test.ts",
+                  "tests/pusher/CustomWokas.test.ts"]),
         ("back", ["npm", "test", "--", "--run", "tests/Space.test.ts"])]
     for index, (package, command) in enumerate(commands):
         say(f"Validation {package} : {' '.join(command)}")
@@ -366,6 +388,11 @@ def deploy(api, args, state):
     before, compose = api.inspect(), api.compose()
     require(all(s in before for s in SERVICES), "Services attendus absents de la stack.")
     candidate = replace_images(compose, before, desired)
+    expected_settings = before
+    if getattr(args, "enable_custom_wokas", False):
+        # This is the only explicitly authorized configuration addition. Other settings remain checked.
+        volume = api.docker("/volumes/create", method="POST", payload={"Name": CUSTOM_WOKA_VOLUME})
+        candidate, expected_settings = enable_custom_woka_volume(candidate, before, volume["Mountpoint"])
     save(directory / "stack-before.json", stack)
     save(directory / "inspect-before.json", before)
     save(directory / "compose-before.yml", compose)
@@ -385,7 +412,7 @@ def deploy(api, args, state):
     try:
         say("Mise à jour de la stack…")
         api.update(candidate, stack.get("Env", []))
-        current = wait_healthy(api, before, expected_ids, directory)
+        current = wait_healthy(api, expected_settings, expected_ids, directory)
         warnings = collect_logs(api, current, directory)
         require(api.compose() == candidate, "Configuration effective inattendue après déploiement.")
     except (Exception, KeyboardInterrupt):
@@ -409,6 +436,8 @@ def main():
     commands.add_parser("check", help="Vérifier les accès et la production sans la modifier")
     deploy_parser = commands.add_parser("deploy", help="Valider et déployer le commit HEAD déjà poussé")
     deploy_parser.add_argument("--release", help="Release officielle fusionnée ; déduite des tags sinon")
+    deploy_parser.add_argument("--enable-custom-wokas", action="store_true",
+                               help="Installer le volume persistant pour les Woka personnalisés (une fois)")
     commands.add_parser("rollback", help="Restaurer une sauvegarde créée par ce script").add_argument("backup", type=Path)
     args = parser.parse_args()
     os.umask(0o077)

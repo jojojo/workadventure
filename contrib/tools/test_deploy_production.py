@@ -26,6 +26,32 @@ def container(service="play"):
 
 
 class DeploymentSafetyTests(unittest.TestCase):
+    def test_custom_woka_setup_adds_only_the_authorized_volume(self):
+        before = {"play": container()}
+        before["play"]["Mounts"] = []
+        before["play"]["HostConfig"]["Binds"] = None
+        compose = ("services:\n  play:\n    image: registry.example/play:old\n"
+                   "    environment:\n      SECRET: private\nvolumes:\n  existing: {}\nnetworks:\n  default: {}\n")
+        changed, expected = deploy.enable_custom_woka_volume(compose, before, "/docker/volumes/wokas/_data")
+        self.assertIn("      - eoloa-custom-wokas:/var/lib/workadventure/wokas:rw\n", changed)
+        self.assertIn("    name: workadventure_custom-wokas\n", changed)
+        self.assertIn("      SECRET: private\n", changed)
+        self.assertIn("  existing: {}\nnetworks:\n  default: {}\n", changed)
+        self.assertEqual(before['play']['Mounts'], [])
+        self.assertEqual(expected['play']['Mounts'][0]['Source'], "/docker/volumes/wokas/_data")
+        deploy.verify_settings(expected, copy.deepcopy(expected), {'play': 'sha256:old'})
+        with self.assertRaises(deploy.DeploymentError):
+            deploy.enable_custom_woka_volume(changed, expected, "/docker/volumes/wokas/_data")
+
+    def test_custom_woka_setup_rejects_existing_mounts_or_ambiguous_compose(self):
+        before = {"play": container()}
+        with self.assertRaises(deploy.DeploymentError):
+            deploy.enable_custom_woka_volume("services:\n  play:\nvolumes:\n", before, "/data")
+        before['play']['Mounts'] = []
+        for compose in ("services:\n  play:\n", "services:\n  play:\n  play:\nvolumes:\n"):
+            with self.assertRaises(deploy.DeploymentError):
+                deploy.enable_custom_woka_volume(compose, before, "/data")
+
     def test_replaces_only_image_lines_preserving_secret_and_comments(self):
         original = ('services:\n  play:\n    image: "registry.example/play:old" # keep\n'
                     '    environment:\n      VALUE: registry.example/play:old\n      PASSWORD: "a$#b"\n')

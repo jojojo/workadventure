@@ -10,6 +10,7 @@
     "prod:check": "python3 contrib/tools/deploy-production.py check",
     "prod:deploy": "python3 contrib/tools/deploy-production.py deploy",
     "prod:rollback": "python3 contrib/tools/deploy-production.py rollback",
+    "woka:add": "python3 contrib/tools/woka-add.py",
     "postinstall": "patch-package || echo 'patch-package not found. Maybe you are installing only a subproject without it (e.g. a scoped `npm ci --workspace`); patches are only needed for the play build.'",
     "prepare": "husky install || echo 'Husky not found. Maybe you are installing only a subproject.'",
     "generate-env-docs": "npm run generate --workspace=contrib/tools/generate-env-docs",

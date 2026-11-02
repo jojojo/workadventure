@@ -5,6 +5,20 @@ In order to do so, you will first need to set up OpenID Connect authentication o
 
 We have tested this integration with [Synapse](https://matrix-org.github.io/synapse/latest/).
 
+## Session verification
+
+WorkAdventure keeps the Matrix session and its encryption keys in this browser. After an OpenID Connect
+reauthentication, it checks the stored session with Matrix's `/account/whoami` endpoint before exchanging the
+new SSO login token. If the authenticated WorkAdventure user, Matrix user and device still match, the existing
+session is reused. A device verified in Element therefore does not need to be verified again just because
+WorkAdventure required another SSO login.
+
+The first connection still requires verification. An explicit WorkAdventure logout closes the Matrix session;
+a revoked session, a different account, a new browser, or cleared browser data can also require verification
+again. Sessions saved before WorkAdventure recorded their owner are replaced once rather than reused without
+an ownership check. Network errors and rate limits during the session check preserve the stored session for
+the chat's normal reconnect path.
+
 ## Architecture
 
 Both WorkAdventure and Synapse must be configured to use the same OpenID Connect provider.

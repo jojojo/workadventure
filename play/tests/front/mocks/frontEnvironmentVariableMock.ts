@@ -56,6 +56,7 @@ export const EMBEDLY_KEY: string | undefined = undefined;
 export const MATRIX_PUBLIC_URI: string | undefined = undefined;
 export const MATRIX_ADMIN_USER = "admin";
 export const MATRIX_DOMAIN = "domain";
+export const MATRIX_AUTO_SYNC = "true";
 export const ENABLE_CHAT = true;
 export const ENABLE_CHAT_ONLINE_LIST = true;
 export const ENABLE_CHAT_DISCONNECTED_LIST = true;

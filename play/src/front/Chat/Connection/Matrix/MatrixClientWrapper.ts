@@ -96,8 +96,8 @@ export class MatrixClientWrapper implements MatrixClientWrapperInterface {
             throw new Error("UserUUID is undefined, this is not supposed to happen.");
         }
 
-        // The login token, if the page landed with one, was already exchanged (see exchangeLoginToken()): the
-        // session to restore is the stored one.
+        // The SSO return has already resumed or replaced the session (see resumeSessionOrExchangeLoginToken()).
+        // Restore the resulting stored session, including its device identity.
         const {
             deviceId: matrixDeviceId,
             accessToken,
@@ -159,6 +159,46 @@ export class MatrixClientWrapper implements MatrixClientWrapperInterface {
         }
 
         return this.client;
+    }
+
+    /**
+     * SSO reauthentication must not replace a browser's existing verified Matrix device.
+     * The owner is the authenticated WorkAdventure UUID saved after /me, not a name inferred from email:
+     * Synapse can choose a different Matrix ID. Never resume a previous user's session on a shared browser.
+     */
+    public async resumeSessionOrExchangeLoginToken(loginToken: string): Promise<void> {
+        const owner = this.localUserStore.getMatrixSessionOwner();
+        const { deviceId, accessToken, matrixUserId } = this.retrieveMatrixConnectionDataFromLocalStorage();
+        if (
+            owner &&
+            owner === this.localUserStore.getLocalUser()?.uuid &&
+            deviceId &&
+            accessToken &&
+            matrixUserId &&
+            !this.localUserStore.getMatrixStoresNeedClearing()
+        ) {
+            const client = this._createClient({ baseUrl: this.baseUrl, accessToken, localTimeoutMs: 10_000 });
+            try {
+                const identity = await client.whoami();
+                if (identity.user_id === matrixUserId && identity.device_id === deviceId) {
+                    // Do not exchange the new single-use SSO token: it can expire unused. Keeping both the
+                    // device and the existing crypto stores preserves the verification performed in Element.
+                    return;
+                }
+                this.localUserStore.clearMatrixSession();
+            } catch (error) {
+                if (
+                    !(error instanceof MatrixError) ||
+                    (error.errcode !== "M_UNKNOWN_TOKEN" && error.errcode !== "M_MISSING_TOKEN")
+                ) {
+                    // A timeout, rate limit or server outage does not prove the device was revoked.
+                    // Keep the session for the chat's normal reconnect path rather than creating a new device.
+                    throw error;
+                }
+                this.localUserStore.clearMatrixSession();
+            }
+        }
+        await this.exchangeLoginToken(loginToken);
     }
 
     /**

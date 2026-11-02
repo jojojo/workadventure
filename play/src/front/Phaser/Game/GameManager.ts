@@ -447,11 +447,11 @@ export class GameManager {
     }
 
     /**
-     * Spends the Matrix login token this page landed with, as soon as the homeserver is known (right after /me).
+     * Resumes the browser's Matrix session or spends the SSO token, right after /me identifies its owner.
      *
      * The token lives two minutes, and the chat only opens once the game scene starts, after the Woka and camera
      * screens - or never, on a room where the chat is disabled. openChatConnection() waits for this, so the two never
-     * race on a single-use token. Exchanging only creates a device: nothing here may ever call /logout.
+     * race on a single-use token. A valid session keeps its verified device; nothing here may call /logout.
      */
     public exchangeMatrixLoginToken(loginToken: string): void {
         const matrixServerUrl = this.getMatrixServerUrl() ?? MATRIX_PUBLIC_URI;
@@ -461,13 +461,13 @@ export class GameManager {
         // A login token means a logged-in user, whose chat loads Matrix anyway: this only starts the download sooner.
         this.matrixLoginTokenExchange = import("../../Chat/Connection/Matrix/MatrixClientWrapper")
             .then(({ MatrixClientWrapper }) =>
-                new MatrixClientWrapper(matrixServerUrl, localUserStore).exchangeLoginToken(loginToken),
+                new MatrixClientWrapper(matrixServerUrl, localUserStore).resumeSessionOrExchangeLoginToken(loginToken),
             )
             .catch((e: unknown) => {
-                // The token is gone either way. initMatrixClient() then uses the session this browser already
+                // Any unused SSO token expires naturally. initMatrixClient() uses the session this browser already
                 // holds, if this user opened it (exchangeLoginToken() drops another user's), or fails with
                 // MissingMatrixCredentialsError, which shows the "reconnect" prompt.
-                console.error("Unable to exchange the Matrix login token", e);
+                console.error("Unable to resume or create the Matrix session", e);
                 Sentry.captureException(e);
             });
     }

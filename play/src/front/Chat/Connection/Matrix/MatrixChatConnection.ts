@@ -841,8 +841,8 @@ export class MatrixChatConnection implements ChatConnectionInterface, MatrixChat
         this.client.on(CryptoEvent.VerificationRequestReceived, this.handleVerificationRequestReceived);
         this.client.on(HttpApiEvent.SessionLoggedOut, this.handleSessionLoggedOut);
 
-        // Crypto first, and only then the sync store. Every sign-in mints a new device id while the rust
-        // crypto store keeps the previous one, so `initRustCrypto()` regularly fails with "the account in
+        // Crypto first, and only then the sync store. A fresh login can mint a new device id while the rust
+        // crypto store keeps the previous one, so `initRustCrypto()` can fail with "the account in
         // the store doesn't match the account in the constructor" and has to clear the stores before
         // retrying. Clearing them closes and deletes the sync store's database - and `IndexedDBStore.startup()`
         // returns early once it has run, so it never reconnects. Starting the store first therefore left it

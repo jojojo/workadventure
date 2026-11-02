@@ -3,6 +3,15 @@ import { describe, expect, it, vi } from "vitest";
 import { get, readable, writable } from "svelte/store";
 import { MatrixChatRoom } from "../MatrixChatRoom";
 
+// Membership tests do not need the proximity media graph or browser notification channels.
+vi.mock("../../../../Notification/NotificationManager", () => ({
+    notificationManager: { createNotification: vi.fn() },
+}));
+
+vi.mock("../../Proximity/ProximityChatRoom", () => ({
+    ProximityChatRoom: class {},
+}));
+
 vi.mock("../../../../Phaser/Game/GameManager", () => {
     return {
         gameManager: {

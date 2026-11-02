@@ -23,6 +23,7 @@ import { MatrixChatRoom as MatrixChatRoomClass } from "../MatrixChatRoom";
 import { selectedRoomStore } from "../../../Stores/SelectRoomStore";
 import type { MatrixSecurity } from "../MatrixSecurity";
 import type { RequestedStatus } from "../../../../Rules/StatusRules/statusRules";
+import { localUserStore } from "../../../../Connection/LocalUserStore";
 
 vi.mock("@sentry/svelte", () => ({ captureException: vi.fn() }));
 
@@ -256,6 +257,8 @@ describe("MatrixChatConnection", () => {
 
     describe("init", () => {
         it("should not put the chat on error when the profile sync with the Woka fails", async () => {
+            // Reach the profile request even when Node does not provide browser localStorage.
+            vi.spyOn(localUserStore, "getDisplayNameForMatrixProfile").mockReturnValue("Alice");
             const getProfileInfo = vi.fn().mockRejectedValue(new Error("profile sync failed"));
             const mockMatrixClient = {
                 isGuest: vi.fn().mockReturnValue(false),

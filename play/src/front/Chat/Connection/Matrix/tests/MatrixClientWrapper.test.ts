@@ -332,6 +332,138 @@ describe("MatrixClientWrapper", () => {
         });
     });
 
+    describe("resumeSessionOrExchangeLoginToken", () => {
+        const storedUser = "@alice:example.org";
+        const storedDevice = "VERIFIED_DEVICE";
+        const loginResponse = { user_id: storedUser, access_token: "new-token", device_id: "NEW_DEVICE" };
+
+        function storedSession() {
+            return {
+                ...basicLocalUserStoreMock,
+                getLocalUser: vi.fn().mockReturnValue({ uuid: "wa-alice" }),
+                getMatrixSessionOwner: vi.fn().mockReturnValue("wa-alice"),
+                getMatrixUserId: vi.fn().mockReturnValue(storedUser),
+                getMatrixDeviceId: vi.fn().mockReturnValue(storedDevice),
+                getMatrixAccessToken: vi.fn().mockReturnValue("stored-token"),
+                getMatrixStoresNeedClearing: vi.fn().mockReturnValue(false),
+                clearMatrixSession: vi.fn(),
+                setMatrixDeviceId: vi.fn(),
+                setMatrixAccessToken: vi.fn(),
+                setMatrixStoresNeedClearing: vi.fn(),
+            } satisfies MatrixLocalUserStore;
+        }
+
+        it("keeps a valid device and its crypto stores without exchanging a fresh SSO token", async () => {
+            const store = storedSession();
+            const whoami = vi.fn().mockResolvedValue({ user_id: storedUser, device_id: storedDevice });
+            const loginRequest = vi.fn();
+            const createClient = vi.fn().mockReturnValue({ whoami, loginRequest });
+
+            await new MatrixClientWrapper(
+                "https://matrix.example.org",
+                store,
+                createClient,
+            ).resumeSessionOrExchangeLoginToken("fresh-sso-token");
+
+            expect(createClient).toHaveBeenCalledWith({
+                baseUrl: "https://matrix.example.org",
+                accessToken: "stored-token",
+                localTimeoutMs: 10_000,
+            });
+            expect(whoami).toHaveBeenCalledOnce();
+            expect(loginRequest).not.toHaveBeenCalled();
+            expect(store.clearMatrixSession).not.toHaveBeenCalled();
+            expect(store.setMatrixDeviceId).not.toHaveBeenCalled();
+            expect(store.setMatrixAccessToken).not.toHaveBeenCalled();
+            expect(store.setMatrixStoresNeedClearing).not.toHaveBeenCalled();
+        });
+
+        it.each(["someone-else", null])("does not reuse a session whose owner is %s", async (owner) => {
+            const store = { ...storedSession(), getMatrixSessionOwner: vi.fn().mockReturnValue(owner) };
+            const whoami = vi.fn();
+            const loginRequest = vi.fn().mockResolvedValue(loginResponse);
+            const createClient = vi.fn().mockReturnValue({ whoami, loginRequest });
+
+            await new MatrixClientWrapper("testUrl", store, createClient).resumeSessionOrExchangeLoginToken("fresh");
+
+            expect(whoami).not.toHaveBeenCalled();
+            expect(loginRequest).toHaveBeenCalledOnce();
+            expect(store.setMatrixDeviceId).toHaveBeenCalledWith("NEW_DEVICE", storedUser);
+        });
+
+        it.each(["missing-token", "missing-device", "pending-cleanup"])("creates a session with %s", async (reason) => {
+            const store = storedSession();
+            if (reason === "missing-token") store.getMatrixAccessToken.mockReturnValue(null);
+            if (reason === "missing-device") store.getMatrixDeviceId.mockReturnValue(null);
+            if (reason === "pending-cleanup") store.getMatrixStoresNeedClearing.mockReturnValue(true);
+            const whoami = vi.fn();
+            const loginRequest = vi.fn().mockResolvedValue(loginResponse);
+
+            await new MatrixClientWrapper(
+                "testUrl",
+                store,
+                vi.fn().mockReturnValue({ whoami, loginRequest }),
+            ).resumeSessionOrExchangeLoginToken("fresh");
+
+            expect(whoami).not.toHaveBeenCalled();
+            expect(loginRequest).toHaveBeenCalledOnce();
+        });
+
+        it.each(["M_UNKNOWN_TOKEN", "M_MISSING_TOKEN"])("replaces a session rejected with %s", async (errcode) => {
+            const store = storedSession();
+            const whoami = vi.fn().mockRejectedValue(new MatrixError({ errcode, error: "Rejected" }, 401));
+            const loginRequest = vi.fn().mockResolvedValue(loginResponse);
+
+            await new MatrixClientWrapper(
+                "testUrl",
+                store,
+                vi.fn().mockReturnValue({ whoami, loginRequest }),
+            ).resumeSessionOrExchangeLoginToken("fresh");
+
+            expect(store.clearMatrixSession).toHaveBeenCalledOnce();
+            expect(loginRequest).toHaveBeenCalledOnce();
+        });
+
+        it.each([
+            { user_id: "@bob:example.org", device_id: storedDevice },
+            { user_id: storedUser, device_id: "OTHER_DEVICE" },
+            { user_id: storedUser },
+        ])("does not trust an inconsistent session: %j", async (identity) => {
+            const store = storedSession();
+            const whoami = vi.fn().mockResolvedValue(identity);
+            const loginRequest = vi.fn().mockResolvedValue(loginResponse);
+
+            await new MatrixClientWrapper(
+                "testUrl",
+                store,
+                vi.fn().mockReturnValue({ whoami, loginRequest }),
+            ).resumeSessionOrExchangeLoginToken("fresh");
+
+            expect(store.clearMatrixSession).toHaveBeenCalledOnce();
+            expect(loginRequest).toHaveBeenCalledOnce();
+        });
+
+        it.each([
+            new TypeError("Failed to fetch"),
+            new MatrixError({ errcode: "M_LIMIT_EXCEEDED", error: "Try later" }, 429),
+        ])("does not replace a device on a transient validation failure: %s", async (error) => {
+            const store = storedSession();
+            const whoami = vi.fn().mockRejectedValue(error);
+            const loginRequest = vi.fn();
+
+            await expect(
+                new MatrixClientWrapper(
+                    "testUrl",
+                    store,
+                    vi.fn().mockReturnValue({ whoami, loginRequest }),
+                ).resumeSessionOrExchangeLoginToken("fresh"),
+            ).rejects.toBe(error);
+
+            expect(store.clearMatrixSession).not.toHaveBeenCalled();
+            expect(loginRequest).not.toHaveBeenCalled();
+        });
+    });
+
     describe("exchangeLoginToken", () => {
         /* eslint-disable @typescript-eslint/unbound-method */
         const loginResponse = {

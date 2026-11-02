@@ -9,6 +9,16 @@ WorkAdventure is a TypeScript monorepo (npm workspaces) for building collaborati
 - Package scripts and `.github/workflows/continuous_integration.yml` are the source of truth when a documented command drifts.
 - Run package scripts from that package's directory unless the command explicitly uses `--workspace`.
 
+## Fork maintenance
+
+- Read [FORK.md](FORK.md) before changing a fork-specific integration or synchronizing with upstream.
+- Update its inventory when adding, changing, or removing a local adaptation, including relevant validation and status.
+- For every upstream synchronization, check whether upstream now covers each local adaptation. Prefer the upstream
+  implementation when it preserves the required behavior in the self-hosted edition; remove redundant local code,
+  configuration, and tests, migrate existing data if needed, and record the replacement and validation in `FORK.md`.
+- Do not retain a patch merely because it was previously marked "preserve", or remove one based on a similar feature
+  name alone. Verify behavior, configuration compatibility, and availability in this deployment.
+
 ## Main projects
 
 - `play/AGENTS.md`: Svelte/Phaser frontend, pusher, and Room API server.

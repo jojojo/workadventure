@@ -181,8 +181,9 @@ médias WorkAdventure pendant la participation déclarée.
   [procédure et prérequis](docs/others/self-hosting/eoloa-deployment.md). Les jetons restent nécessaires à
   l'authentification mais ne sont plus recopiés à chaque exécution. Tests de protection des secrets,
   préservation des paramètres et refus d'un retour arrière sur une stack modifiée dans
-  `contrib/tools/test_deploy_production.py` (14 tests réussis). `prod:check` vérifié avec les accès existants ;
-  aucun redéploiement n'est effectué lors de l'ajout du script.
+  `contrib/tools/test_deploy_production.py` (16 tests réussis). Le contrôle distingue les variables Docker
+  sans valeur, vides et absentes ; correction issue du premier essai de déploiement avec la commande.
+  `prod:check` vérifié avec les accès existants.
 - Validation : construction depuis une archive du commit, pour `linux/amd64`, puis procédure de déploiement
   et contrôles décrits dans les consignes locales. Garder les références d'images de retour arrière hors du dépôt.
 - **Retrait possible :** construction officielle utilisable dans notre environnement sans secrets de

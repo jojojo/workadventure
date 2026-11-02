@@ -198,6 +198,12 @@ def replace_images(compose, before, desired):
     return "".join(lines)
 
 
+def environment_values(entries):
+    # Docker also returns bare names for unset variables; keep these distinct from empty values.
+    return {key: value if separator else None
+            for key, separator, value in (entry.partition("=") for entry in entries)}
+
+
 def verify_settings(before, after, expected_ids):
     require(set(before) == set(after), "La liste des services a changé.")
     for service, old in before.items():
@@ -209,9 +215,10 @@ def verify_settings(before, after, expected_ids):
         old_mounts = sorted((x["Type"], x["Source"], x["Destination"], x["RW"]) for x in old.get("Mounts", []))
         new_mounts = sorted((x["Type"], x["Source"], x["Destination"], x["RW"]) for x in new.get("Mounts", []))
         require(old_mounts == new_mounts, f"Volumes modifiés : {service}.")
-        old_env = dict(x.split("=", 1) for x in old["Config"]["Env"])
-        new_env = dict(x.split("=", 1) for x in new["Config"]["Env"])
-        require(all(new_env.get(k) == v for k, v in old_env.items() if k not in ("NODE_VERSION", "YARN_VERSION")),
+        old_env = environment_values(old["Config"]["Env"])
+        new_env = environment_values(new["Config"]["Env"])
+        require(all(k in new_env and new_env[k] == v for k, v in old_env.items()
+                    if k not in ("NODE_VERSION", "YARN_VERSION")),
                 f"Configuration applicative modifiée : {service}.")
 
 

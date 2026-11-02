@@ -69,6 +69,22 @@ class DeploymentSafetyTests(unittest.TestCase):
             with self.subTest(after=after), self.assertRaises(deploy.DeploymentError):
                 deploy.verify_settings(before, after, {"play": "sha256:old"})
 
+    def test_preserves_unset_empty_and_equals_in_environment_values(self):
+        before = {"play": container()}
+        before["play"]["Config"]["Env"] += ["OPTIONAL", "EMPTY=", "VALUE=a=b"]
+        deploy.verify_settings(before, copy.deepcopy(before), {"play": "sha256:old"})
+
+    def test_rejects_removing_or_assigning_unset_environment_variable(self):
+        before = {"play": container()}
+        before["play"]["Config"]["Env"].append("OPTIONAL")
+        for replacement in (None, "OPTIONAL=", "OPTIONAL=enabled"):
+            after = copy.deepcopy(before)
+            after["play"]["Config"]["Env"].remove("OPTIONAL")
+            if replacement is not None:
+                after["play"]["Config"]["Env"].append(replacement)
+            with self.subTest(replacement=replacement), self.assertRaises(deploy.DeploymentError):
+                deploy.verify_settings(before, after, {"play": "sha256:old"})
+
     def test_api_errors_do_not_expose_secret_response_or_token(self):
         api = object.__new__(deploy.Portainer)
         api.url, api.key, api.opener = "https://portainer.example", "private-token", Mock()

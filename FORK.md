@@ -9,7 +9,7 @@ redondante, après vérification et migration éventuelle.
 
 ## Référence et états
 
-- Dernière release officielle fusionnée : **`v1.34.4`**, fusion `8adc90949`.
+- Dernière release officielle fusionnée : **`v1.34.5`**, synchronisation du 2 novembre 2026.
 - Dernière fonctionnalité spécifique commitée à la création de cet inventaire : Google Meet, `80bf3c9e6`.
 - Inventaire établi le **29 octobre 2026** à partir de `git diff v1.34.4 HEAD` et des changements locaux.
 - La reprise de session Matrix décrite ci-dessous est prête pour déploiement ; validation actualisée le 2 novembre 2026.
@@ -17,6 +17,29 @@ redondante, après vérification et migration éventuelle.
   lors d'un déploiement ; les fichiers Compose du dépôt peuvent différer de la stack en service.
 
 Mettre cette référence et les états à jour après chaque fusion, remplacement ou commit concerné.
+
+## Examen de la v1.34.5 — 2 novembre 2026
+
+La comparaison officielle `v1.34.4..v1.34.5` ne modifie que
+`play/src/front/Chat/Components/Room/MessageInputBar.svelte` : la limite des transferts de fichiers ne bloque
+plus les messages texte sans pièce jointe. Ce correctif officiel est adopté sans adaptation.
+
+Chaque adaptation a été comparée à cette release et à son code auto-hébergé :
+
+| Adaptation                 | Décision et vérification                                                                                                   |
+| -------------------------- | -------------------------------------------------------------------------------------------------------------------------- |
+| Présence externe / 3CX     | Conserver : aucune configuration ou implémentation officielle équivalente ajoutée.                                         |
+| Contrôle du profil Matrix  | Conserver : l'amont ne fournit pas `MATRIX_AUTO_SYNC` et l'action manuelle attendue.                                       |
+| Reprise de session Matrix  | Conserver : le parcours officiel échange toujours le token SSO sans le contrôle de reprise ajouté dans `4fc1d8768`.        |
+| Salles Google Meet         | Conserver : absence du module de zones `googleMeet` dans le code officiel auto-hébergé.                                    |
+| Nom et locale OpenID       | Conserver : la sélection du claim d'affichage et la protection de la locale restent spécifiques.                           |
+| URL des cartes             | Conserver : l'autorisation d'édition officielle reste limitée au motif `/~/`, sans le format `/_/` requis.                 |
+| Types d'espace Back        | Conserver : l'amont utilise encore `parse`, sans conversion de l'erreur pour Node 24.                                      |
+| Construction / déploiement | Conserver : le Dockerfile officiel lit encore les secrets Sentry obligatoires ; la stack effective reste externe au dépôt. |
+
+Aucune adaptation n'est devenue redondante dans cette release ; aucune migration de configuration ou de
+cartes n'est nécessaire. La validation fonctionnelle avec un compte réel pour la reprise Matrix et Meet reste
+à effectuer après déploiement.
 
 ## Inventaire à réexaminer à chaque synchronisation
 
@@ -155,12 +178,12 @@ médias WorkAdventure pendant la participation déclarée.
 Pour retrouver les écarts sans confondre historique officiel et adaptations locales :
 
 ```sh
-git diff --name-status v1.34.4 HEAD
-git diff --stat v1.34.4 HEAD
+git diff --name-status v1.34.5 HEAD
+git diff --stat v1.34.5 HEAD
 git log --first-parent --oneline
 ```
 
-Remplacer `v1.34.4` par la référence mise à jour en tête de ce fichier. Examiner aussi `git diff` pour les
+Remplacer `v1.34.5` par la référence mise à jour en tête de ce fichier. Examiner aussi `git diff` pour les
 changements en cours. La comparaison est un outil d'inventaire : ne pas remettre en bloc tous les fichiers
 à la version officielle, ni considérer chaque ancien commit comme un correctif encore nécessaire.
 

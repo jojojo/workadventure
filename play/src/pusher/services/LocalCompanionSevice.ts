@@ -1,18 +1,21 @@
 import fs from "fs/promises";
 import type { CompanionTextureCollection, CompanionDetail } from "@workadventure/messages";
 import type { CompanionServiceInterface } from "./CompanionServiceInterface";
+import { addCustomCompanions, CUSTOM_WOKA_DIRECTORY } from "./CustomWokaCatalog";
 
 /**
  * Companion Service list that the default list of companions
  */
-class LocalCompanionService implements CompanionServiceInterface {
+export class LocalCompanionService implements CompanionServiceInterface {
+    constructor(private readonly customDirectory = CUSTOM_WOKA_DIRECTORY) {}
+
     private async loadCompanionData(): Promise<CompanionTextureCollection[]> {
         try {
             const file = new URL("../data/companions.json", import.meta.url);
             const content = await fs.readFile(file, "utf8");
-            return JSON.parse(content) as CompanionTextureCollection[];
-        } catch {
-            throw new Error("Failed to load Companion data");
+            return await addCustomCompanions(JSON.parse(content) as CompanionTextureCollection[], this.customDirectory);
+        } catch (cause) {
+            throw new Error("Failed to load Companion data", { cause });
         }
     }
 

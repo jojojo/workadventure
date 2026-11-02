@@ -71,6 +71,9 @@ cartes n'est nécessaire. La validation fonctionnelle avec un compte réel pour 
 
 - Commande : `npm run woka:add -- fichier.png --name "Nom"`, avec `--id` et `--replace` pour conserver
   un identifiant lors d'une modification. [Procédure](docs/others/self-hosting/custom-wokas.md).
+- Extension compagnons : `--type companion` ajoute un animal qui suit le joueur dans le sélecteur des
+  compagnons. Catalogue `companions` facultatif, compatible avec les données Woka existantes ; installation
+  de cette extension en production restante.
 - Code : `CustomWokaCatalog.ts`, `CustomWokaController.ts`, `LocalWokaService.ts` et
   `contrib/tools/woka-add.py`. Les Woka personnels complètent le catalogue local, sans API admin externe.
 - Données hors image Docker : volume externe `workadventure_custom-wokas`, monté dans
@@ -78,7 +81,8 @@ cartes n'est nécessaire. La validation fonctionnelle avec un compte réel pour 
   déploiements suivants sans cette option. Aucun redémarrage lors des imports.
 - Import : validation PNG, sauvegardes privées, verrou distant, noms de fichiers par hash et publication
   atomique du catalogue après vérification HTTP du PNG. Les couches intégrées restent protégées.
-- Validation : 11 tests Python d'import, 18 tests de déploiement et 7 tests de catalogue/routes Play.
+- Validation : 16 tests Python d'import, 18 tests de déploiement et tests de catalogue/routes Play,
+  incluant les compagnons, les remplacements et la préservation des avatars existants.
   Import de Johan validé en production sans changement de conteneur ni redémarrage.
 - L'installation vérifie la représentation Docker des volumes nommés via `HostConfig.Mounts`, avec
   `Binds` inchangé ; ce cas a été corrigé et couvert après le premier essai d'installation.

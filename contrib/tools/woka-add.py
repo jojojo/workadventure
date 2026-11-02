@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Import a Woka into the persistent production catalog without restarting Play."""
+"""Import a Woka or companion into the persistent catalog without restarting Play."""
 import argparse
 import datetime
 import fcntl
@@ -67,9 +67,10 @@ def validate_png(content):
                    and all(pixels[y * (row + 1)] <= 4 for y in range(height)), "Données PNG invalides.")
 
 
-def slug(name):
+def slug(name, kind="woka"):
     ascii_name = unicodedata.normalize("NFKD", name).encode("ascii", "ignore").decode().lower()
-    return "custom-" + re.sub(r"[^a-z0-9]+", "-", ascii_name).strip("-")[:65]
+    prefix = "custom-companion-" if kind == "companion" else "custom-"
+    return prefix + re.sub(r"[^a-z0-9]+", "-", ascii_name).strip("-")[:min(65, 80 - len(prefix))]
 
 
 def validate_catalog(catalog):
@@ -77,26 +78,45 @@ def validate_catalog(catalog):
                    and isinstance(catalog.get("wokas"), list) and len(catalog["wokas"]) <= 1000,
                    "Catalogue personnalisé invalide.")
     ids = set()
-    for entry in catalog["wokas"]:
+    companions = catalog.get("companions", [])
+    deploy.require(isinstance(companions, list) and len(companions) <= 1000, "Catalogue de compagnons invalide.")
+    for entry in catalog["wokas"] + companions:
         deploy.require(isinstance(entry, dict) and isinstance(entry.get("id"), str)
                        and ID_PATTERN.fullmatch(entry["id"]) and entry["id"] not in ids
                        and isinstance(entry.get("name"), str) and 1 <= len(entry["name"].strip()) <= 80
                        and isinstance(entry.get("filename"), str) and FILE_PATTERN.fullmatch(entry["filename"]),
                        "Entrée invalide ou identifiant en double dans le catalogue.")
         ids.add(entry["id"])
+    for entry in companions:
+        deploy.require(entry.get("behavior") in (None, "cat", "dog", "red_panda"), "Comportement de compagnon invalide.")
     return catalog
 
 
-def updated_catalog(catalog, entry, replace=False):
+def updated_catalog(catalog, entry, replace=False, kind="woka"):
     result = json.loads(json.dumps(validate_catalog(catalog)))
-    existing = next((x for x in result["wokas"] if x["id"] == entry["id"]), None)
+    key = "companions" if kind == "companion" else "wokas"
+    other = "wokas" if kind == "companion" else "companions"
+    deploy.require(not any(x["id"] == entry["id"] for x in result.get(other, [])),
+                   "Cet identifiant appartient à un autre type de personnage ; choisir un autre --id.")
+    entries = result.setdefault(key, [])
+    existing = next((x for x in entries if x["id"] == entry["id"]), None)
     if existing:
         deploy.require(replace or existing == entry,
                        "Cet identifiant existe déjà. Utiliser --replace pour modifier ce Woka.")
-        result["wokas"][result["wokas"].index(existing)] = entry
+        entries[entries.index(existing)] = entry
     else:
-        result["wokas"].append(entry)
+        entries.append(entry)
     return validate_catalog(result)
+
+
+def validate_builtin_identifier(builtins, identifier, kind, replace):
+    for part, data in builtins.get("wokas", {}).items():
+        collision = any(t['id'] == identifier for c in data['collections'] for t in c['textures'])
+        deploy.require(not collision or kind == 'woka' and part == 'woka' and replace,
+                       "Identifiant déjà utilisé par un Woka ou une couche intégrée ; choisir un autre --id.")
+    collision = any(t['id'] == identifier for c in builtins.get('companions', []) for t in c['textures'])
+    deploy.require(not collision or kind == 'companion' and replace,
+                   "Identifiant déjà utilisé par un compagnon intégré ; choisir un autre --id ou --replace.")
 
 
 def unpack_output(raw):
@@ -135,9 +155,15 @@ def import_woka(api, args, state):
     content = args.file.expanduser().read_bytes()
     validate_png(content)
     name = args.name.strip()
-    identifier = args.id or slug(name)
+    kind = getattr(args, "type", "woka")
+    behavior = getattr(args, "behavior", None)
+    deploy.require(kind in ("woka", "companion") and (not behavior or kind == "companion"),
+                   "--behavior s'utilise uniquement avec --type companion.")
+    identifier = args.id or slug(name, kind)
     deploy.require(1 <= len(name) <= 80 and ID_PATTERN.fullmatch(identifier), "Nom ou identifiant invalide.")
     entry = {"id": identifier, "name": name, "filename": hashlib.sha256(content).hexdigest() + ".png"}
+    if behavior:
+        entry["behavior"] = behavior
     api.discover()
     before = api.inspect()
     play = before["play"]
@@ -155,15 +181,13 @@ def import_woka(api, args, state):
             "process.stdout.write(f.existsSync(p)?f.readFileSync(p,'utf8'):JSON.stringify({version:1,wokas:[]}))",
             DIRECTORY + "/catalog.json")
         catalog = validate_catalog(json.loads(raw))
-        # Avoid shadowing a built-in body/hair/clothing layer or silently replacing a built-in Woka.
+        # Texture identifiers must remain distinct across Wokas, layers and companions.
         builtins = json.loads(execute(api, container,
-            "process.stdout.write(require('fs').readFileSync('/usr/src/play/src/pusher/data/woka.json','utf8'))"))
-        for part, data in builtins.items():
-            collision = any(t['id'] == identifier for c in data['collections'] for t in c['textures'])
-            deploy.require(not collision or part == 'woka' and args.replace,
-                           "Identifiant déjà utilisé dans le catalogue intégré ; choisir un autre --id "
-                           "ou --replace pour remplacer un personnage complet.")
-        new_catalog = updated_catalog(catalog, entry, args.replace)
+            "const f=require('fs'); const root='/usr/src/play/src/pusher/data/'; "
+            "process.stdout.write(JSON.stringify({wokas:JSON.parse(f.readFileSync(root+'woka.json','utf8')),"
+            "companions:JSON.parse(f.readFileSync(root+'companions.json','utf8'))}))"))
+        validate_builtin_identifier(builtins, identifier, kind, args.replace)
+        new_catalog = updated_catalog(catalog, entry, args.replace, kind)
         timestamp = datetime.datetime.now().strftime("%Y%m%d-%H%M%S") + "-" + uuid.uuid4().hex[:8]
         backup = deploy.private_dir(state / "woka-imports" / timestamp)
         deploy.save(backup / "catalog-before.json", catalog)
@@ -185,18 +209,24 @@ def import_woka(api, args, state):
         actual = execute(api, container, "process.stdout.write(require('fs').readFileSync(process.argv[1],'utf8'))",
                          DIRECTORY + "/catalog.json")
         deploy.require(json.loads(actual) == new_catalog, "Catalogue distant différent du catalogue prévu.")
-        details = json.loads(execute(api, container,
-            "require('tsx/cjs'); const {localWokaService}=require('./src/pusher/services/LocalWokaService.ts'); "
-            "localWokaService.fetchWokaDetails([process.argv[1]]).then(x=>process.stdout.write(JSON.stringify(x)))"
-            ".catch(()=>process.exit(1))", identifier))
-        deploy.require(details == [{"id": identifier, "url": "/custom-wokas/" + entry['filename']}],
-                       "Le service Play n'a pas validé le nouveau personnage.")
+        if kind == "companion":
+            validation = ("const {localCompanionService}=require('./src/pusher/services/LocalCompanionSevice.ts'); "
+                          "localCompanionService.fetchCompanionDetails(process.argv[1])")
+        else:
+            validation = ("const {localWokaService}=require('./src/pusher/services/LocalWokaService.ts'); "
+                          "localWokaService.fetchWokaDetails([process.argv[1]])")
+        details = json.loads(execute(api, container, "require('tsx/cjs'); " + validation +
+            ".then(x=>process.stdout.write(JSON.stringify(x))).catch(()=>process.exit(1))", identifier))
+        expected = {"id": identifier, "url": "/custom-wokas/" + entry['filename']}
+        deploy.require(details == (expected if kind == "companion" else [expected]),
+                       "Le service Play n'a pas validé le nouveau personnage ou compagnon.")
         after = api.inspect()
         deploy.verify_settings(before, after, {s: c["Image"] for s, c in before.items()})
         deploy.require(all(after[s]['Id'] == c['Id'] and after[s]['RestartCount'] == c['RestartCount']
                            for s, c in before.items()), "Un conteneur a changé pendant l'import.")
-        deploy.save(backup / "status.json", {"state": "complete", "woka": entry, "container": container})
-        deploy.say(f"Woka « {name} » ajouté ({identifier}). Aucun redémarrage. Rouvrir le sélecteur ou recharger la page.")
+        deploy.save(backup / "status.json", {"state": "complete", "type": kind, "woka": entry, "container": container})
+        label = "Compagnon" if kind == "companion" else "Woka"
+        deploy.say(f"{label} « {name} » ajouté ({identifier}). Aucun redémarrage. Rouvrir le sélecteur ou recharger la page.")
         deploy.say(f"Sauvegarde privée : {backup}")
     except (Exception, KeyboardInterrupt):
         if published:
@@ -217,6 +247,8 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("file", type=Path)
     parser.add_argument("--name", required=True, help="Nom affiché dans le sélecteur")
+    parser.add_argument("--type", choices=("woka", "companion"), default="woka", help="Personnage ou animal qui vous suit")
+    parser.add_argument("--behavior", choices=("cat", "dog", "red_panda"), help="Métadonnée de comportement du compagnon (facultatif)")
     parser.add_argument("--id", help="Identifiant stable ; déduit du nom sinon")
     parser.add_argument("--replace", action="store_true", help="Mettre à jour un personnage existant en conservant son identifiant")
     args = parser.parse_args()

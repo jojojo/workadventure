@@ -5,6 +5,7 @@ import path from "path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import express from "express";
 import { LocalWokaService } from "../../src/pusher/services/LocalWokaService";
+import { LocalCompanionService } from "../../src/pusher/services/LocalCompanionSevice";
 import { registerCustomWokaRoutes } from "../../src/pusher/controllers/CustomWokaController";
 
 const filename = "a".repeat(64) + ".png";
@@ -23,6 +24,67 @@ afterEach(async () => {
 });
 
 describe("persistent custom Wokas", () => {
+    it("keeps existing companions and accepts legacy catalogs without companion entries", async () => {
+        const service = new LocalCompanionService(directory);
+        expect(await service.fetchCompanionDetails("dog1")).toMatchObject({ id: "dog1" });
+        await writeCatalog();
+        expect(await service.fetchCompanionDetails("cat1")).toMatchObject({ id: "cat1" });
+        expect(await service.fetchCompanionDetails(entry.id)).toBeUndefined();
+    });
+
+    it("discovers new companions and replacements without reinitializing either service", async () => {
+        const service = new LocalCompanionService(directory);
+        const wokaService = new LocalWokaService(directory);
+        const companion = { ...entry, id: "custom-companion-felix", behavior: "cat" };
+        expect(await service.fetchCompanionDetails(companion.id)).toBeUndefined();
+        await fs.writeFile(
+            path.join(directory, "catalog.json"),
+            JSON.stringify({ version: 1, wokas: [entry], companions: [companion] }),
+        );
+        expect(await service.fetchCompanionDetails(companion.id)).toEqual({
+            id: companion.id,
+            url: `/custom-wokas/${filename}`,
+        });
+        const list = await service.getCompanionList("", "");
+        expect(list?.at(-1)?.textures[0]).toMatchObject({ id: companion.id, behavior: "cat" });
+        expect(await wokaService.fetchWokaDetails([entry.id])).toHaveLength(1);
+        expect(await wokaService.fetchWokaDetails([companion.id])).toBeUndefined();
+        const replacement = { ...companion, filename: "b".repeat(64) + ".png" };
+        await fs.writeFile(
+            path.join(directory, "catalog.json"),
+            JSON.stringify({ version: 1, wokas: [entry], companions: [replacement] }),
+        );
+        expect(await service.fetchCompanionDetails(companion.id)).toMatchObject({
+            url: `/custom-wokas/${replacement.filename}`,
+        });
+        expect(await service.fetchCompanionDetails("dog1")).toBeDefined();
+    });
+
+    it("can replace a built-in companion without duplicating its identifier", async () => {
+        await fs.writeFile(
+            path.join(directory, "catalog.json"),
+            JSON.stringify({ version: 1, wokas: [], companions: [{ ...entry, id: "dog1" }] }),
+        );
+        const service = new LocalCompanionService(directory);
+        const list = await service.getCompanionList("", "");
+        expect(list?.flatMap((c) => c.textures).filter((t) => t.id === "dog1")).toHaveLength(1);
+        expect(await service.fetchCompanionDetails("dog1")).toMatchObject({ url: `/custom-wokas/${filename}` });
+    });
+
+    it.each(["duplicate", "behavior", "filename"])("rejects invalid companions: %s", async (kind) => {
+        const companion = {
+            ...entry,
+            id: kind === "duplicate" ? entry.id : "custom-companion-felix",
+            behavior: kind === "behavior" ? "unknown" : "cat",
+            filename: kind === "filename" ? "../secret" : filename,
+        };
+        await fs.writeFile(
+            path.join(directory, "catalog.json"),
+            JSON.stringify({ version: 1, wokas: [entry], companions: [companion] }),
+        );
+        await expect(new LocalCompanionService(directory).getCompanionList("", "")).rejects.toThrow();
+        await expect(new LocalWokaService(directory).getWokaList("", "")).rejects.toThrow();
+    });
     it("keeps built-in characters and layers when no catalog exists", async () => {
         const service = new LocalWokaService(directory);
         const catalog = await service.getWokaList("", "");

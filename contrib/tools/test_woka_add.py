@@ -40,6 +40,38 @@ class WokaImportTests(unittest.TestCase):
         self.assertEqual(woka.updated_catalog(old, entry)['wokas'], [entry])
         self.assertEqual(old['wokas'], [])
 
+    def test_companion_addition_and_replacement_preserve_wokas_and_legacy_catalog(self):
+        avatar = {'id': 'eoloa-johan', 'name': 'Johan', 'filename': 'a' * 64 + '.png'}
+        old = {'version': 1, 'wokas': [avatar]}
+        pet = {'id': 'custom-companion-felix', 'name': 'Félix', 'filename': 'b' * 64 + '.png', 'behavior': 'cat'}
+        new = woka.updated_catalog(old, pet, kind='companion')
+        self.assertEqual(new, {**old, 'companions': [pet]})
+        self.assertNotIn('companions', old)
+        replacement = {**pet, 'filename': 'c' * 64 + '.png'}
+        with self.assertRaises(woka.deploy.DeploymentError):
+            woka.updated_catalog(new, replacement, kind='companion')
+        self.assertEqual(woka.updated_catalog(new, replacement, True, 'companion')['wokas'], [avatar])
+        self.assertEqual(woka.updated_catalog(new, replacement, True, 'companion')['companions'], [replacement])
+
+    def test_rejects_cross_type_ids_and_unknown_companion_behaviors(self):
+        entry = {'id': 'custom-alice', 'name': 'Alice', 'filename': 'a' * 64 + '.png'}
+        old = {'version': 1, 'wokas': [entry]}
+        with self.assertRaises(woka.deploy.DeploymentError):
+            woka.updated_catalog(old, entry, True, 'companion')
+        for companion in ({**entry, 'behavior': 'unknown'}, entry):
+            with self.assertRaises(woka.deploy.DeploymentError):
+                woka.validate_catalog({**old, 'companions': [companion]})
+
+    def test_builtin_ids_cannot_move_between_wokas_layers_and_companions(self):
+        builtins = {'wokas': {'woka': {'collections': [{'textures': [{'id': 'male1'}]}]},
+                              'hair': {'collections': [{'textures': [{'id': 'hair1'}]}]}},
+                    'companions': [{'textures': [{'id': 'dog1'}]}]}
+        woka.validate_builtin_identifier(builtins, 'dog1', 'companion', True)
+        woka.validate_builtin_identifier(builtins, 'male1', 'woka', True)
+        for identifier, kind in [('hair1', 'woka'), ('hair1', 'companion'), ('male1', 'companion'), ('dog1', 'woka')]:
+            with self.subTest(identifier=identifier, kind=kind), self.assertRaises(woka.deploy.DeploymentError):
+                woka.validate_builtin_identifier(builtins, identifier, kind, True)
+
     def test_replacement_requires_explicit_flag_and_preserves_other_wokas(self):
         one = {'id': 'custom-alice', 'name': 'Alice', 'filename': 'a' * 64 + '.png'}
         two = {**one, 'id': 'custom-bob', 'name': 'Bob'}
@@ -58,6 +90,7 @@ class WokaImportTests(unittest.TestCase):
 
     def test_generates_safe_stable_ids_with_accents_and_spaces(self):
         self.assertEqual(woka.slug('Élodie Dupont'), 'custom-elodie-dupont')
+        self.assertEqual(woka.slug('Élodie Dupont', 'companion'), 'custom-companion-elodie-dupont')
 
     def test_archive_cannot_write_outside_volume_and_has_readable_permissions(self):
         raw = woka.archive_files({'catalog.json': b'{}', 'a' * 64 + '.png': png()})
@@ -83,16 +116,26 @@ class WokaImportTests(unittest.TestCase):
     def test_failed_runtime_validation_restores_the_previous_catalog(self):
         self.check_import(public_ok=True, runtime_ok=False)
 
-    def check_import(self, public_ok, runtime_ok=True):
+    def test_companion_import_verifies_the_companion_service_without_restart(self):
+        self.check_import(public_ok=True, kind='companion')
+
+    def test_failed_companion_validation_restores_the_previous_catalog(self):
+        self.check_import(public_ok=True, runtime_ok=False, kind='companion')
+
+    def check_import(self, public_ok, runtime_ok=True, kind='woka'):
         with tempfile.TemporaryDirectory() as temporary:
             state = Path(temporary)
             source = state / 'sprite.png'
             image = png()
             source.write_bytes(image)
-            entry = {'id': 'custom-alice', 'name': 'Alice',
+            entry = {'id': woka.slug('Alice', kind), 'name': 'Alice',
                      'filename': woka.hashlib.sha256(image).hexdigest() + '.png'}
             catalog = {'version': 1, 'wokas': []}
             expected = {'version': 1, 'wokas': [entry]}
+            if kind == 'companion':
+                entry['behavior'] = 'cat'
+                catalog['wokas'] = [{'id': 'eoloa-johan', 'name': 'Johan', 'filename': 'b' * 64 + '.png'}]
+                expected = {**catalog, 'companions': [entry]}
             before = {'play': {
                 'Id': 'same-container', 'Image': 'sha256:same', 'RestartCount': 0,
                 'Config': {'Image': 'play:tag', 'Env': ['OPTIONAL', 'SECRET=private']},
@@ -109,6 +152,8 @@ class WokaImportTests(unittest.TestCase):
             results = ['', json.dumps(catalog), '{}']
             if public_ok:
                 details = [{'id': entry['id'], 'url': '/custom-wokas/' + entry['filename']}] if runtime_ok else []
+                if kind == 'companion' and runtime_ok:
+                    details = details[0]
                 results += ['', json.dumps(expected), json.dumps(details)]
                 if not runtime_ok:
                     results += ['']  # Atomic restoration of the old catalog.
@@ -116,7 +161,8 @@ class WokaImportTests(unittest.TestCase):
             with patch.object(woka, 'execute', side_effect=results) as execute, \
                     patch.object(woka.urllib.request, 'urlopen', return_value=context), \
                     patch.object(woka.deploy, 'say'):
-                args = SimpleNamespace(file=source, name='Alice', id=None, replace=False)
+                args = SimpleNamespace(file=source, name='Alice', id=None, replace=False, type=kind,
+                                       behavior='cat' if kind == 'companion' else None)
                 if public_ok and runtime_ok:
                     woka.import_woka(api, args, state)
                 else:
@@ -125,6 +171,9 @@ class WokaImportTests(unittest.TestCase):
                 scripts = [call.args[2] for call in execute.call_args_list]
                 self.assertEqual(any('renameSync' in script for script in scripts), public_ok)
                 self.assertIn('rmdirSync', scripts[-1])
+                if public_ok:
+                    self.assertTrue(any(('fetchCompanionDetails' if kind == 'companion' else 'fetchWokaDetails')
+                                        in script for script in scripts))
             api.update.assert_not_called()
             with tarfile.open(fileobj=io.BytesIO(api.docker.call_args.kwargs['raw_body'])) as archive:
                 if public_ok and not runtime_ok:

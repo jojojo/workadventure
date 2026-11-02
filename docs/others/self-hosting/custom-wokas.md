@@ -15,6 +15,28 @@ Le personnage apparaît dans la collection **Eoloa** du sélecteur. Rouvrir le s
 la page pour récupérer le catalogue actualisé. Aucun build, push Git, redéploiement ou redémarrage
 n'est nécessaire pour un ajout. Le service Play valide aussi les nouveaux identifiants à la connexion.
 
+## Animaux compagnons
+
+Pour ajouter un animal qui suit le joueur, utiliser la même commande avec `--type companion` :
+
+```sh
+npm run woka:add -- "/chemin/mon-chat.png" --name "Félix" --type companion
+```
+
+L'animal apparaît dans la collection **Eoloa** du sélecteur des compagnons. Sa planche suit la même
+grille de 96 × 128 pixels et le même ordre des directions que les Woka. Il reste un compagnon à
+sélectionner séparément du personnage du joueur.
+
+L'identifiant est préfixé par `custom-companion-` pour le distinguer des avatars. `--id` et `--replace`
+permettent aussi de remplacer un animal existant. La métadonnée facultative `--behavior cat`,
+`--behavior dog` ou `--behavior red_panda` correspond aux valeurs reconnues par WorkAdventure ;
+elle ne crée pas de nouvelles animations ou de nouveaux comportements de déplacement.
+
+Les compagnons et les Woka partagent le volume, le verrou et les sauvegardes. Chaque import préserve
+les deux listes et refuse les identifiants utilisés par l'autre type de personnage. Le catalogue initial
+contenant uniquement `wokas` reste compatible ; la liste `companions` est ajoutée au premier import animal.
+Une installation mise à jour pour les animaux nécessite un déploiement du code, sans réinstaller le volume.
+
 ## Identifiants et remplacement
 
 Par défaut, l'identifiant est dérivé du nom (`custom-mon-personnage`). Pour choisir un identifiant stable :

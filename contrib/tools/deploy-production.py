@@ -219,7 +219,8 @@ def enable_custom_woka_volume(compose, before, mountpoint):
     compose = re.sub(r"^(volumes:)\s*$", lambda m: m[1] + "\n  eoloa-custom-wokas:\n"
                      f"    external: true\n    name: {CUSTOM_WOKA_VOLUME}", compose, count=1, flags=re.M)
     expected = copy.deepcopy(before)
-    expected["play"]["HostConfig"]["Binds"] = [f"{CUSTOM_WOKA_VOLUME}:{CUSTOM_WOKA_DIRECTORY}:rw"]
+    expected["play"]["HostConfig"]["Mounts"] = [{"Source": CUSTOM_WOKA_VOLUME,
+        "Target": CUSTOM_WOKA_DIRECTORY, "Type": "volume", "VolumeOptions": {}}]
     expected["play"]["Mounts"] = [{"Type": "volume", "Source": mountpoint,
                                   "Destination": CUSTOM_WOKA_DIRECTORY, "RW": True}]
     return compose, expected
@@ -230,7 +231,7 @@ def verify_settings(before, after, expected_ids):
     for service, old in before.items():
         new = after[service]
         require(new["Image"] == expected_ids[service], f"Digest d'image inattendu : {service}.")
-        for key in ("Binds", "PortBindings", "RestartPolicy", "Memory", "NanoCpus", "NetworkMode"):
+        for key in ("Binds", "Mounts", "PortBindings", "RestartPolicy", "Memory", "NanoCpus", "NetworkMode"):
             require(new["HostConfig"].get(key) == old["HostConfig"].get(key),
                     f"Paramètre Docker modifié : {service}/{key}.")
         old_mounts = sorted((x["Type"], x["Source"], x["Destination"], x["RW"]) for x in old.get("Mounts", []))

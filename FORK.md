@@ -75,6 +75,8 @@ cartes n'est nécessaire. La validation fonctionnelle avec un compte réel pour 
   atomique du catalogue après vérification HTTP du PNG. Les couches intégrées restent protégées.
 - Validation : 11 tests Python d'import, 18 tests de déploiement et 7 tests de catalogue/routes Play.
   La validation de l'ajout en production sans changement de conteneur reste à effectuer.
+- L'installation vérifie la représentation Docker des volumes nommés via `HostConfig.Mounts`, avec
+  `Binds` inchangé ; ce cas a été corrigé et couvert après le premier essai d'installation.
 - **Retrait possible :** catalogue dynamique officiel disponible en auto-hébergement avec import en ligne
   de commande et persistance. Migrer les données et conserver les identifiants déjà sélectionnés.
 

@@ -39,6 +39,10 @@ class DeploymentSafetyTests(unittest.TestCase):
         self.assertIn("  existing: {}\nnetworks:\n  default: {}\n", changed)
         self.assertEqual(before['play']['Mounts'], [])
         self.assertEqual(expected['play']['Mounts'][0]['Source'], "/docker/volumes/wokas/_data")
+        self.assertIsNone(expected['play']['HostConfig']['Binds'])
+        self.assertEqual(expected['play']['HostConfig']['Mounts'], [{
+            'Source': 'workadventure_custom-wokas', 'Target': '/var/lib/workadventure/wokas',
+            'Type': 'volume', 'VolumeOptions': {}}])
         deploy.verify_settings(expected, copy.deepcopy(expected), {'play': 'sha256:old'})
         with self.assertRaises(deploy.DeploymentError):
             deploy.enable_custom_woka_volume(changed, expected, "/docker/volumes/wokas/_data")

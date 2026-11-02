@@ -12,11 +12,24 @@ redondante, après vérification et migration éventuelle.
 - Dernière release officielle fusionnée : **`v1.34.5`**, synchronisation du 2 novembre 2026.
 - Dernière fonctionnalité spécifique commitée à la création de cet inventaire : Google Meet, `80bf3c9e6`.
 - Inventaire établi le **29 octobre 2026** à partir de `git diff v1.34.4 HEAD` et des changements locaux.
-- La reprise de session Matrix décrite ci-dessous est prête pour déploiement ; validation actualisée le 2 novembre 2026.
+- La reprise de session Matrix et les salles Google Meet sont déployées depuis le 2 novembre 2026 ; leur validation avec un compte réel reste à confirmer.
 - L'état du code ne prouve pas l'état de la production. Vérifier les images effectives et les sauvegardes
   lors d'un déploiement ; les fichiers Compose du dépôt peuvent différer de la stack en service.
 
 Mettre cette référence et les états à jour après chaque fusion, remplacement ou commit concerné.
+
+## Dernier déploiement confirmé — 2 novembre 2026
+
+- Release : **v1.34.5**, code applicatif **`817bb3294`**.
+- Play et Back : images du fork `registry.eoloa.eu/workadventure-{play,back}:v1.34.5-817bb3294`,
+  construites depuis une archive Git pour `linux/amd64`, publiées et vérifiées par digest.
+- Map Storage et Uploader : images officielles `v1.34.5`.
+- Validation : **196 tests réussis**, 2 ignorés ; TypeScript Play/Back, Svelte, i18n et lint ciblé réussis.
+- Production : sept services démarrés sans redémarrage ; contrôles de santé disponibles au vert ; page,
+  JavaScript, `/ping` et `/map-storage/ping` en HTTP 200. Paramètres, volumes, ports et autres images conservés.
+- L'avertissement d'authentification administrateur Matrix `M_INVALID_PARAM`, antérieur au déploiement,
+  reste présent. Les parcours Matrix et Meet avec un compte réel restent à valider.
+- Configuration effective, anciennes références d'images et preuves de validation sauvegardées hors du dépôt.
 
 ## Examen de la v1.34.5 — 2 novembre 2026
 
@@ -80,7 +93,7 @@ vers Matrix, tout en permettant une synchronisation manuelle de l'avatar.
 - Particularité de déploiement à conserver : `MATRIX_API_URI` désigne la racine du serveur, sans suffixe
   `/_matrix`, puisque WorkAdventure ajoute le chemin API.
 
-### Reprise de session Matrix après SSO — prête pour déploiement
+### Reprise de session Matrix après SSO — déployée, validation utilisateur restante
 
 **Besoin :** éviter qu'une réauthentification WorkAdventure crée systématiquement un nouvel appareil Matrix
 et impose une nouvelle vérification dans Element.
@@ -100,7 +113,7 @@ et impose une nouvelle vérification dans Element.
   sur navigateur partagé et gestion des sessions invalides. Conserver ou adapter ces tests de comportement
   pour l'implémentation officielle, plutôt que maintenir deux parcours de connexion.
 
-### Salles Google Meet — actif dans le code, pas de déploiement confirmé ici
+### Salles Google Meet — déployées, validation utilisateur restante
 
 **Besoin :** représenter une réunion Meet dans WorkAdventure, ouvrir Meet dans un onglet et suspendre les
 médias WorkAdventure pendant la participation déclarée.

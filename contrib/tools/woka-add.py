@@ -26,7 +26,7 @@ ID_PATTERN = re.compile(r"[a-z0-9][a-z0-9-]{0,79}")
 FILE_PATTERN = re.compile(r"[a-f0-9]{64}\.png")
 
 
-def validate_png(content):
+def validate_png(content, asset_type="woka"):
     deploy.require(len(content) <= 2 * 1024 * 1024 and content.startswith(b"\x89PNG\r\n\x1a\n"),
                    "Un PNG de moins de 2 Mo est requis.")
     offset, chunks, image = 8, [], b""
@@ -50,7 +50,8 @@ def validate_png(content):
     deploy.require(header is not None and chunks[0] == b"IHDR" and chunks[-1] == b"IEND"
                    and offset == len(content) and image, "Structure PNG invalide.")
     width, height, depth, color, compression, filtering, interlace = header
-    deploy.require((width, height) == (96, 128), "Grille attendue : 96 × 128 pixels (3 × 4 cases de 32 pixels).")
+    grids = ((96, 128), (384, 512)) if asset_type == "woka" else ((96, 128),)
+    deploy.require((width, height) in grids, "Grille attendue : 96 × 128 pixels, ou 384 × 512 pour les avatars en poses de 128 pixels.")
     deploy.require(color in (3, 4, 6) and (color != 3 or b"tRNS" in chunks), "Le PNG doit gérer la transparence.")
     deploy.require(compression == filtering == interlace == 0 and depth in (1, 2, 4, 8, 16)
                    and (color == 3 and depth <= 8 or color in (4, 6) and depth in (8, 16)),
@@ -65,6 +66,7 @@ def validate_png(content):
         raise deploy.DeploymentError("Données PNG invalides.") from None
     deploy.require(len(pixels) == expected and decoder.eof and not decoder.unused_data
                    and all(pixels[y * (row + 1)] <= 4 for y in range(height)), "Données PNG invalides.")
+    return width // 3
 
 
 def slug(name, kind="woka"):
@@ -152,13 +154,13 @@ def archive_files(files):
 
 
 def import_woka(api, args, state):
-    content = args.file.expanduser().read_bytes()
-    validate_png(content)
-    name = args.name.strip()
     kind = getattr(args, "type", "woka")
     behavior = getattr(args, "behavior", None)
     deploy.require(kind in ("woka", "companion") and (not behavior or kind == "companion"),
                    "--behavior s'utilise uniquement avec --type companion.")
+    content = args.file.expanduser().read_bytes()
+    frame_size = validate_png(content, kind)
+    name = args.name.strip()
     identifier = args.id or slug(name, kind)
     deploy.require(1 <= len(name) <= 80 and ID_PATTERN.fullmatch(identifier), "Nom ou identifiant invalide.")
     entry = {"id": identifier, "name": name, "filename": hashlib.sha256(content).hexdigest() + ".png"}
@@ -171,6 +173,11 @@ def import_woka(api, args, state):
                        and m.get("Name") == deploy.CUSTOM_WOKA_VOLUME and m["RW"] for m in play.get("Mounts", [])),
                    "Volume Woka absent. Installer le mécanisme avec prod:deploy -- --enable-custom-wokas.")
     container = play["Id"]
+    if frame_size == 128:
+        supported = execute(api, container,
+            "require('tsx/cjs'); const {getWokaFrameSize}=require('./src/front/Utils/WokaFrameSize.ts'); "
+            "process.stdout.write(String(getWokaFrameSize(384,512)))")
+        deploy.require(supported == "128", "Déployer le support des avatars 128 × 128 avant cet import.")
     # The lock lives on the server so imports from two machines cannot overwrite one another.
     execute(api, container, "require('fs').mkdirSync(process.argv[1])", DIRECTORY + "/.import-lock")
     temp_name = ".catalog-" + uuid.uuid4().hex + ".json"
@@ -224,9 +231,9 @@ def import_woka(api, args, state):
         deploy.verify_settings(before, after, {s: c["Image"] for s, c in before.items()})
         deploy.require(all(after[s]['Id'] == c['Id'] and after[s]['RestartCount'] == c['RestartCount']
                            for s, c in before.items()), "Un conteneur a changé pendant l'import.")
-        deploy.save(backup / "status.json", {"state": "complete", "type": kind, "woka": entry, "container": container})
+        deploy.save(backup / "status.json", {"state": "complete", "type": kind, "frameSize": frame_size, "woka": entry, "container": container})
         label = "Compagnon" if kind == "companion" else "Woka"
-        deploy.say(f"{label} « {name} » ajouté ({identifier}). Aucun redémarrage. Rouvrir le sélecteur ou recharger la page.")
+        deploy.say(f"{label} « {name} » ajouté ({identifier}), poses de {frame_size} × {frame_size}. Aucun redémarrage. Rouvrir le sélecteur ou recharger la page.")
         deploy.say(f"Sauvegarde privée : {backup}")
     except (Exception, KeyboardInterrupt):
         if published:

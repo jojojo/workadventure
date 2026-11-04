@@ -1,6 +1,7 @@
 import * as Phaser from "phaser";
 import { CancelablePromise } from "cancelable-promise";
 import type { SuperLoaderPlugin } from "../Services/SuperLoaderPlugin";
+import { queueWokaTexture } from "../Helpers/WokaSpriteSheet";
 import { PlayerTexturesKey } from "./PlayerTextures";
 import type { WokaTextureDescriptionInterface, PlayerTextures } from "./PlayerTextures";
 
@@ -25,7 +26,7 @@ export const loadAllLayers = (
                 console.warn("Player resource has no URL", textureDescriptor);
                 return;
             }
-            load.spritesheet(textureDescriptor.id, textureDescriptor.url, { frameWidth: 32, frameHeight: 32 });
+            queueWokaTexture(load, textureDescriptor.id, textureDescriptor.url);
         });
         returnArray.push(layerArray);
     });
@@ -41,7 +42,7 @@ export const loadAllDefaultModels = (
             console.warn("Player resource has no URL", playerResource);
             return;
         }
-        load.spritesheet(playerResource.id, playerResource.url, { frameWidth: 32, frameHeight: 32 });
+        queueWokaTexture(load, playerResource.id, playerResource.url);
     });
     return returnArray;
 };
@@ -50,10 +51,7 @@ export const loadWokaTexture = (
     superLoaderPlugin: SuperLoaderPlugin,
     texture: WokaTextureDescriptionInterface,
 ): CancelablePromise<Texture> => {
-    return superLoaderPlugin.spritesheet(texture.id, texture.url, {
-        frameWidth: 32,
-        frameHeight: 32,
-    });
+    return superLoaderPlugin.wokaSpritesheet(texture.id, texture.url);
 };
 
 export const lazyLoadPlayerCharacterTextures = (
@@ -62,12 +60,7 @@ export const lazyLoadPlayerCharacterTextures = (
 ): CancelablePromise<string[]> => {
     const promisesList: CancelablePromise<Texture>[] = [];
     for (const texture of textures) {
-        promisesList.push(
-            superLoaderPlugin.spritesheet(texture.id, texture.url, {
-                frameWidth: 32,
-                frameHeight: 32,
-            }),
-        );
+        promisesList.push(superLoaderPlugin.wokaSpritesheet(texture.id, texture.url));
     }
     const returnPromise: CancelablePromise<Texture[]> = CancelablePromise.all(promisesList);
 

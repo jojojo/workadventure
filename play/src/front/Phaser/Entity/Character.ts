@@ -11,6 +11,7 @@ import type { OutlineableInterface } from "../Game/OutlineableInterface";
 import { createColorStore } from "../../Stores/OutlineColorStore";
 import type { PictureStore } from "../../Stores/PictureStore";
 import { TexturesHelper } from "../Helpers/TexturesHelper";
+import { createWokaSprite } from "../Helpers/WokaSpriteSheet";
 import type { GameScene } from "../Game/GameScene";
 import { Companion } from "../Companion/Companion";
 import { CharacterTextureError } from "../../Exception/CharacterTextureError";
@@ -364,7 +365,7 @@ export abstract class Character extends Container implements OutlineableInterfac
             if (this.scene && !this.scene.textures.exists(texture)) {
                 throw new CharacterTextureError(`Texture "${texture}" not found`);
             }
-            const sprite = new Sprite(this.scene, 0, 0, texture, frame);
+            const sprite = createWokaSprite(this.scene, texture, frame);
             this.add(sprite);
             getPlayerAnimations(texture).forEach((d) => {
                 if (!this.scene.anims.exists(d.key)) {

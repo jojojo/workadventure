@@ -1,0 +1,352 @@
+#!/usr/bin/env node
+// Isolated browser check: real Phaser loader, sprites, animations and Svelte avatar previews.
+import assert from "node:assert/strict";
+import { createRequire } from "node:module";
+import { mkdir, writeFile } from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+
+const root = path.resolve(
+  path.dirname(fileURLToPath(import.meta.url)),
+  "../..",
+);
+const require = createRequire(path.join(root, "play/package.json"));
+const { createServer } = require("vite");
+const { chromium } = require("@playwright/test");
+const { svelte, vitePreprocess } = await import(
+  require.resolve("@sveltejs/vite-plugin-svelte")
+);
+const output = path.resolve(
+  process.argv[2] ??
+    path.join(os.homedir(), ".local/state/workadventure/woka-resolution-test"),
+);
+await mkdir(output, { recursive: true });
+const imports = "/__woka-resolution-imports.js";
+const server = await createServer({
+  configFile: false,
+  root: path.join(root, "play"),
+  cacheDir: path.join(os.tmpdir(), "workadventure-woka-resolution-vite"),
+  define: { global: "globalThis" },
+  server: { host: "127.0.0.1", port: 0 },
+  optimizeDeps: {
+    noDiscovery: true,
+    include: [
+      "phaser",
+      "debug",
+      "cancelable-promise",
+      "svelte",
+      "svelte/internal/client",
+    ],
+  },
+  plugins: [
+    svelte({ configFile: false, preprocess: vitePreprocess() }),
+    {
+      name: "woka-resolution-test",
+      resolveId(id) {
+        if (id === imports) return id;
+      },
+      load(id) {
+        if (id === imports)
+          return `
+                    export * as Phaser from "phaser";
+                    export { mount } from "svelte";
+                    export { default as WokaImage } from "/src/front/Components/Woka/WokaImage.svelte";
+                    export { queueWokaTexture, createWokaSprite } from "/src/front/Phaser/Helpers/WokaSpriteSheet.ts";
+                    export { SuperLoaderPlugin } from "/src/front/Phaser/Services/SuperLoaderPlugin.ts";
+                    export { getPlayerAnimations } from "/src/front/Phaser/Player/Animation.ts";
+                `;
+      },
+      configureServer(server) {
+        server.middlewares.use((req, res, next) => {
+          if (req.url !== "/__woka-resolution") return next();
+          res.setHeader("Content-Type", "text/html");
+          res.end(`<!doctype html><html><head><meta charset="utf-8"><title>Woka 32 / 128</title><style>
+                    body{background:#101926;color:#e5edf5;font:15px system-ui;margin:28px}h1{font-size:24px}
+                    .row{display:flex;gap:16px;margin:12px 0}.preview{background:#203249;border-radius:8px;padding:8px;text-align:center}
+                    canvas{image-rendering:pixelated}small{color:#aac1db}#world{margin-top:12px}
+                    </style></head><body><h1>Avatars : poses de 32 et 128 pixels</h1>
+                    <p>Même taille dans le monde. Quatre directions et zoom ×4.</p><div id="previews"></div><div id="world"></div></body></html>`);
+        });
+      },
+    },
+  ],
+});
+let browser;
+try {
+  await server.listen();
+  const address = server.httpServer.address();
+  assert.ok(address && typeof address !== "string");
+  browser = await chromium.launch({
+    channel: process.env.WOKA_TEST_BROWSER_CHANNEL || "chrome",
+    headless: true,
+  });
+  const page = await browser.newPage({
+    viewport: { width: 900, height: 820 },
+    deviceScaleFactor: 1,
+  });
+  const errors = [];
+  page.on("pageerror", (error) => errors.push(error.message));
+  await page.goto(`http://127.0.0.1:${address.port}/__woka-resolution`);
+  const result = await page.evaluate(async (renderer) => {
+    const {
+      Phaser,
+      mount,
+      WokaImage,
+      queueWokaTexture,
+      createWokaSprite,
+      SuperLoaderPlugin,
+      getPlayerAnimations,
+    } = await import("/__woka-resolution-imports.js");
+    const makeSheet = (size) => {
+      const canvas = document.createElement("canvas");
+      canvas.width = size * 3;
+      canvas.height = size * 4;
+      const context = canvas.getContext("2d");
+      const colors = ["#34c6d3", "#f2aa4b", "#c084ed", "#62d49a"];
+      for (let direction = 0; direction < 4; direction++) {
+        for (let pose = 0; pose < 3; pose++) {
+          context.save();
+          context.translate(pose * size, direction * size);
+          context.scale(size / 128, size / 128);
+          context.fillStyle = colors[direction];
+          context.fillRect(0, 0, 12, 12);
+          context.fillStyle = "#172338";
+          const step = pose === 1 ? 0 : pose === 0 ? -5 : 5;
+          context.fillRect(42, 81, 17, 36 + step);
+          context.fillRect(69, 81, 17, 36 - step);
+          context.fillStyle = "#f4f5fa";
+          context.fillRect(37, 111 + step, 24, 10);
+          context.fillRect(67, 111 - step, 24, 10);
+          context.fillStyle = colors[direction];
+          context.fillRect(36, 47, 56, 40);
+          context.fillStyle = "#f6c8a2";
+          context.fillRect(25, 50, 12, 32);
+          context.fillRect(91, 50, 12, 32);
+          context.beginPath();
+          context.arc(64, 28, 23, 0, Math.PI * 2);
+          context.fill();
+          context.fillStyle = "#263144";
+          if (direction !== 3) {
+            const shift = direction === 1 ? -10 : direction === 2 ? 10 : 0;
+            context.fillRect(48 + shift, 22, 12, 8);
+            context.fillRect(68 + shift, 22, 12, 8);
+            context.fillRect(60 + shift, 25, 8, 2);
+            context.fillRect(55 + shift, 37, 18, 4);
+          }
+          // Native one-pixel detail distinguishes 128-pixel frames from enlarged 32-pixel art.
+          context.fillStyle = "#fff";
+          for (let x = 42; x < 88; x += 4) context.fillRect(x, 57, 1, 14);
+          context.restore();
+        }
+      }
+      return canvas.toDataURL("image/png");
+    };
+    const legacy = makeSheet(32),
+      hd = makeSheet(128);
+    for (const [size, url] of [
+      [32, legacy],
+      [128, hd],
+    ]) {
+      const row = document.createElement("div");
+      row.className = "row";
+      document.querySelector("#previews").append(row);
+      for (let direction = 0; direction < 4; direction++) {
+        const item = document.createElement("div");
+        item.className = "preview";
+        item.textContent = `${size} px · ${["Face", "Gauche", "Droite", "Dos"][direction]}`;
+        row.append(item);
+        mount(WokaImage, {
+          target: item,
+          props: {
+            selectedTextures: { woka: `test-${size}` },
+            wokaData: {
+              woka: {
+                collections: [
+                  { name: "Test", textures: [{ id: `test-${size}`, url }] },
+                ],
+              },
+            },
+            canvasSize: 128,
+            direction,
+          },
+        });
+      }
+    }
+    const runtime = await new Promise((resolve, reject) => {
+      const timeout = setTimeout(
+        () => reject(new Error("Phaser did not finish the resolution check")),
+        20000,
+      );
+      class CheckScene extends Phaser.Scene {
+        preload() {
+          queueWokaTexture(this.load, "legacy", legacy);
+          queueWokaTexture(this.load, "hd", hd);
+        }
+        create() {
+          const run = async () => {
+            const values = [];
+            for (const [key, size, x] of [
+              ["legacy", 32, 100],
+              ["hd", 128, 180],
+            ]) {
+              const texture = this.textures.get(key);
+              const sprite = createWokaSprite(this, key, 1);
+              this.add.existing(sprite);
+              const container = this.add.container(x, 90, [sprite]);
+              container.setSize(16, 16);
+              this.physics.add.existing(container);
+              container.body.setSize(16, 16);
+              container.body.setOffset(0, 8);
+              for (const animation of getPlayerAnimations(key))
+                this.anims.create({
+                  ...animation,
+                  frames: this.anims.generateFrameNumbers(key, {
+                    frames: animation.frames,
+                  }),
+                });
+              const frames = [];
+              for (let frame = 0; frame < 12; frame++) {
+                sprite.setFrame(frame);
+                frames.push({
+                  width: sprite.frame.width,
+                  height: sprite.frame.height,
+                  x: sprite.frame.cutX,
+                  y: sprite.frame.cutY,
+                  displayWidth: sprite.displayWidth,
+                  displayHeight: sprite.displayHeight,
+                });
+              }
+              sprite.play(`${key}-down-walk`);
+              sprite.anims.pause();
+              const walkFrames = sprite.anims.currentAnim.frames.map((frame) =>
+                Number(frame.textureFrame),
+              );
+              const enlarged = createWokaSprite(this, key, 1);
+              this.add.existing(enlarged);
+              enlarged.setPosition(size === 32 ? 365 : 515, 90);
+              enlarged.setScale(enlarged.scaleX * 4);
+              values.push({
+                key,
+                size,
+                frameCount: texture.frameTotal - 1,
+                frames,
+                walkFrames,
+                scale: sprite.scaleX,
+                bodyWidth: container.body.width,
+                bodyHeight: container.body.height,
+              });
+            }
+            const loader = new SuperLoaderPlugin(this);
+            const lazy = await loader.wokaSpritesheet("lazy-hd", hd);
+            const cached = await loader.wokaSpritesheet("lazy-hd", hd);
+            clearTimeout(timeout);
+            resolve({
+              values,
+              lazyFrameWidth: lazy.get(1).width,
+              cachedSameTexture: cached === lazy,
+            });
+          };
+          run().catch((error) => {
+            clearTimeout(timeout);
+            reject(error);
+          });
+        }
+      }
+      new Phaser.Game({
+        type: renderer === "canvas" ? Phaser.CANVAS : Phaser.WEBGL,
+        width: 650,
+        height: 180,
+        parent: "world",
+        backgroundColor: "#203249",
+        pixelArt: true,
+        physics: { default: "arcade", arcade: { debug: false } },
+        scene: CheckScene,
+        audio: { noAudio: true },
+        banner: false,
+      });
+    });
+    // Wait for the actual Svelte canvases to decode and paint every direction.
+    const colors = [
+      [52, 198, 211],
+      [242, 170, 75],
+      [192, 132, 237],
+      [98, 212, 154],
+    ];
+    let previewPixels;
+    for (let attempt = 0; attempt < 100; attempt++) {
+      await new Promise((resolve) => requestAnimationFrame(resolve));
+      previewPixels = [...document.querySelectorAll(".preview canvas")].map(
+        (canvas) =>
+          [...canvas.getContext("2d").getImageData(2, 2, 1, 1).data].slice(
+            0,
+            3,
+          ),
+      );
+      if (
+        previewPixels.length === 8 &&
+        previewPixels.every((pixel, index) =>
+          pixel.every((value, channel) => value === colors[index % 4][channel]),
+        )
+      )
+        break;
+    }
+    return { runtime, previewPixels, colors, hd, legacy };
+  }, process.env.WOKA_TEST_RENDERER || "webgl");
+  assert.deepEqual(errors, []);
+  for (const {
+    size,
+    frameCount,
+    frames,
+    scale,
+    walkFrames,
+    bodyWidth,
+    bodyHeight,
+  } of result.runtime.values) {
+    assert.equal(frameCount, 12);
+    assert.equal(scale, 32 / size);
+    assert.equal(bodyWidth, 16);
+    assert.equal(bodyHeight, 16);
+    assert.deepEqual(walkFrames, [0, 1, 2, 1]);
+    frames.forEach((frame, index) => {
+      assert.deepEqual(frame, {
+        width: size,
+        height: size,
+        x: (index % 3) * size,
+        y: Math.floor(index / 3) * size,
+        displayWidth: 32,
+        displayHeight: 32,
+      });
+    });
+  }
+  assert.equal(result.runtime.lazyFrameWidth, 128);
+  assert.equal(result.runtime.cachedSameTexture, true);
+  assert.equal(result.previewPixels.length, 8);
+  result.previewPixels.forEach((pixel, index) =>
+    assert.deepEqual(pixel, result.colors[index % 4]),
+  );
+  await writeFile(
+    path.join(output, "avatar-test-128.png"),
+    Buffer.from(result.hd.split(",")[1], "base64"),
+  );
+  await writeFile(
+    path.join(output, "avatar-test-32.png"),
+    Buffer.from(result.legacy.split(",")[1], "base64"),
+  );
+  await page.screenshot({
+    path: path.join(output, "comparison.png"),
+    fullPage: true,
+  });
+  delete result.hd;
+  delete result.legacy;
+  await writeFile(
+    path.join(output, "result.json"),
+    JSON.stringify(result, null, 2),
+  );
+  console.log(
+    `PASS: 12 poses in both resolutions; 32px world size; 16px collision bodies; lazy/cache loading; 8 Svelte previews.\nArtifacts: ${output}`,
+  );
+} finally {
+  await browser?.close();
+  await server.close();
+}

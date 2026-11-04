@@ -2,6 +2,7 @@ import * as Phaser from "phaser";
 import type { CharacterTextureMessage } from "@workadventure/messages";
 import type { GameScene } from "../Game/GameScene";
 import { TexturesHelper } from "../Helpers/TexturesHelper";
+import { createWokaSprite } from "../Helpers/WokaSpriteSheet";
 import { CharacterTextureError } from "../../Exception/CharacterTextureError";
 import { gameManager } from "../Game/GameManager";
 import { lazyLoadPlayerCharacterTextures } from "./PlayerTexturesLoadingManager";
@@ -75,7 +76,7 @@ export class CharacterLayerManager {
             if (scene && !scene.textures.exists(texture)) {
                 throw new CharacterTextureError("texture not found");
             }
-            const sprite = new Sprite(scene, 0, 0, texture, frame);
+            const sprite = createWokaSprite(scene, texture, frame);
 
             sprites.set(texture, sprite);
         }

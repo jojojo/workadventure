@@ -29,6 +29,12 @@ class WokaImportTests(unittest.TestCase):
         woka.validate_png(png())
         woka.validate_png((woka.deploy.ROOT / 'play/public/resources/characters/pipoya/bonhomme-chauve-barbe-lunettes-v2.png').read_bytes())
 
+    def test_accepts_native_128_avatar_frames_but_keeps_companions_at_32(self):
+        self.assertEqual(woka.validate_png(png(384, 512)), 128)
+        self.assertEqual(woka.validate_png(png()), 32)
+        with self.assertRaises(woka.deploy.DeploymentError):
+            woka.validate_png(png(384, 512), 'companion')
+
     def test_refuses_wrong_grid_truncation_corruption_and_fake_png(self):
         for image in (png(128, 96), png()[:-5], png()[:40] + b'bad-data', b'not a png'):
             with self.subTest(image=image[:20]), self.assertRaises(woka.deploy.DeploymentError):
@@ -110,6 +116,24 @@ class WokaImportTests(unittest.TestCase):
     def test_import_publishes_catalog_after_image_verification_without_restart(self):
         self.check_import(public_ok=True)
 
+    def test_import_128_avatar_checks_server_support_and_preserves_catalog(self):
+        self.check_import(public_ok=True, frame_size=128)
+
+    def test_128_import_refuses_an_older_server_before_lock_or_publication(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            source = Path(temporary) / 'hd.png'
+            source.write_bytes(png(384, 512))
+            api = Mock()
+            api.inspect.return_value = {'play': {'Id': 'play', 'Mounts': [{
+                'Destination': woka.DIRECTORY, 'Type': 'volume', 'RW': True,
+                'Name': woka.deploy.CUSTOM_WOKA_VOLUME}]}}
+            with patch.object(woka, 'execute', return_value='32') as execute:
+                with self.assertRaises(woka.deploy.DeploymentError):
+                    woka.import_woka(api, SimpleNamespace(file=source, name='HD', id=None, replace=False), Path(temporary))
+                execute.assert_called_once()
+                self.assertIn('getWokaFrameSize', execute.call_args.args[2])
+            api.docker.assert_not_called()
+
     def test_failed_public_image_verification_never_publishes_catalog_and_releases_lock(self):
         self.check_import(public_ok=False)
 
@@ -122,11 +146,11 @@ class WokaImportTests(unittest.TestCase):
     def test_failed_companion_validation_restores_the_previous_catalog(self):
         self.check_import(public_ok=True, runtime_ok=False, kind='companion')
 
-    def check_import(self, public_ok, runtime_ok=True, kind='woka'):
+    def check_import(self, public_ok, runtime_ok=True, kind='woka', frame_size=32):
         with tempfile.TemporaryDirectory() as temporary:
             state = Path(temporary)
             source = state / 'sprite.png'
-            image = png()
+            image = png(frame_size * 3, frame_size * 4)
             source.write_bytes(image)
             entry = {'id': woka.slug('Alice', kind), 'name': 'Alice',
                      'filename': woka.hashlib.sha256(image).hexdigest() + '.png'}
@@ -149,7 +173,7 @@ class WokaImportTests(unittest.TestCase):
             context = Mock()
             context.__enter__ = Mock(return_value=response)
             context.__exit__ = Mock(return_value=False)
-            results = ['', json.dumps(catalog), '{}']
+            results = (['128'] if frame_size == 128 else []) + ['', json.dumps(catalog), '{}']
             if public_ok:
                 details = [{'id': entry['id'], 'url': '/custom-wokas/' + entry['filename']}] if runtime_ok else []
                 if kind == 'companion' and runtime_ok:

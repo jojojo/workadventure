@@ -69,6 +69,21 @@ cartes n'est nécessaire. La validation fonctionnelle avec un compte réel pour 
 
 ## Inventaire à réexaminer à chaque synchronisation
 
+### Avatars en poses de 128 × 128 — expérimentation, déploiement restant
+
+- Planche 384 × 512 pixels, trois colonnes et quatre directions, reconnue après décodage de l'image par
+  `WokaSpriteSheetFile`. Les 297 textures intégrées de 96 × 128 restent découpées en poses de 32 pixels.
+- `SuperLoaderPlugin.wokaSpritesheet` couvre le chargement à la demande, les joueurs distants et le cache.
+  `createWokaSprite` garde la taille logique de 32 pixels dans le monde et les vignettes de profil ;
+  l'aperçu Svelte découpe les poses selon les dimensions réelles. Aucun changement de protocole réseau.
+- Commande `woka:add` : avatars 32 ou 128 pixels par pose, contrôle préalable du support serveur pour
+  les avatars 128. Les compagnons restent en 32 pixels. [Documentation](docs/others/self-hosting/custom-wokas.md).
+- Validation : test réel dans Chrome/Phaser en Canvas puis WebGL, 12 poses par résolution, taille affichée
+  32 × 32, corps de collision 16 × 16, animation, chargement à la demande/cache et 8 aperçus Svelte.
+  Reproduction : `node contrib/tools/test-woka-resolution.mjs`. Tests Python de grille et d'import HD.
+- **Retrait possible :** résolution variable officiellement supportée dans tous ces parcours ; conserver
+  la compatibilité avec les sprites 128 déjà importés et leur taille dans les cartes.
+
 ### Workflows GitHub de publication officielle — adaptés au fork
 
 - `build-test-and-deploy.yml` et `release-chart.yml` sont réservés au dépôt

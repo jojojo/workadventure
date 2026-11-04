@@ -6,14 +6,48 @@ Depuis la racine du dépôt, ajouter un personnage complet :
 npm run woka:add -- "/chemin/mon-personnage.png" --name "Mon personnage"
 ```
 
-Le fichier doit être un PNG transparent non entrelacé de **96 × 128 pixels**, avec trois colonnes
-et quatre lignes de cases de 32 pixels. Ordre des lignes : bas, gauche, droite, haut. La colonne centrale
+Le fichier doit être un PNG transparent non entrelacé, avec trois colonnes et quatre lignes :
+
+- **96 × 128 pixels** pour des poses de **32 × 32** (format historique).
+- **384 × 512 pixels** pour des poses de **128 × 128** (avatars uniquement).
+
+Ordre des lignes : bas, gauche, droite, haut. La colonne centrale
 est la pose d'arrêt. La commande vérifie la grille, les données PNG et leur intégrité avant de contacter
 la production.
 
 Le personnage apparaît dans la collection **Eoloa** du sélecteur. Rouvrir le sélecteur ou recharger
 la page pour récupérer le catalogue actualisé. Aucun build, push Git, redéploiement ou redémarrage
 n'est nécessaire pour un ajout. Le service Play valide aussi les nouveaux identifiants à la connexion.
+
+## Avatars en poses de 128 × 128
+
+La même commande accepte une planche de **384 × 512 pixels** :
+
+```sh
+npm run woka:add -- "/chemin/avatar-128.png" --name "Mon avatar 128"
+```
+
+La résolution est détectée dans l'image, y compris pour les autres joueurs qui chargent cet avatar.
+Le personnage occupe toujours 32 × 32 pixels logiques dans le monde : taille, collisions et distances
+ne changent pas. Le zoom et les aperçus peuvent afficher les détails des poses de 128 pixels. Les
+vignettes de profil générées par le jeu conservent leur taille historique de 32 pixels.
+
+Les animations restent sur douze poses, dans le même ordre. Les Woka existants restent compatibles.
+Une image simplement agrandie depuis 32 pixels n'apporte pas de détails supplémentaires. Les compagnons
+restent au format 32 pixels par pose. Recharger les onglets après le déploiement du support 128 pixels ;
+un ancien client découperait incorrectement une planche haute résolution.
+
+Pour reproduire le test isolé avec le moteur Phaser et les aperçus Svelte (dépendances du monorepo et
+Google Chrome nécessaires) :
+
+```sh
+node contrib/tools/test-woka-resolution.mjs
+# Variante Canvas : WOKA_TEST_RENDERER=canvas node contrib/tools/test-woka-resolution.mjs
+```
+
+Le test vérifie les 12 poses, la taille dans le monde, les corps de collision, le chargement à la demande,
+le cache et les quatre directions dans les aperçus. Il écrit des sprites techniques, une capture de
+comparaison et un rapport dans `~/.local/state/workadventure/woka-resolution-test/`.
 
 ## Animaux compagnons
 

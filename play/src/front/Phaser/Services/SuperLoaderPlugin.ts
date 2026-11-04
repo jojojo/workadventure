@@ -1,6 +1,7 @@
 import * as Phaser from "phaser";
 import { CancelablePromise } from "cancelable-promise";
 import Debug from "debug";
+import { queueWokaTexture } from "../Helpers/WokaSpriteSheet";
 
 import Texture = Phaser.Textures.Texture;
 
@@ -63,6 +64,16 @@ export class SuperLoaderPlugin {
                 return undefined;
             },
             "image",
+        );
+    }
+
+    public wokaSpritesheet(key: string, url: string): CancelablePromise<Texture> {
+        return this.loadResource<Texture>(
+            () => queueWokaTexture(this.scene.load, key, url),
+            key,
+            url,
+            () => (this.scene.textures.exists(key) ? this.scene.textures.get(key) : undefined),
+            "spritesheet",
         );
     }
 

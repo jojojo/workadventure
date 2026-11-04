@@ -1,5 +1,6 @@
 <script lang="ts">
     import { onMount, onDestroy } from "svelte";
+    import { getWokaFrameSize } from "../../Utils/WokaFrameSize";
     import type { WokaData, WokaTexture } from "./WokaTypes";
 
     interface Props {
@@ -58,8 +59,9 @@
         for (const part of bodyPartOrder) {
             const img = images[part];
             ctx.imageSmoothingEnabled = false;
-            if (img && img.complete) {
-                ctx.drawImage(img, frame * 32, direction * 32, 32, 32, 0, 0, canvasSize, canvasSize);
+            if (img && img.complete && img.naturalWidth > 0) {
+                const size = getWokaFrameSize(img.naturalWidth, img.naturalHeight);
+                ctx.drawImage(img, frame * size, direction * size, size, size, 0, 0, canvasSize, canvasSize);
             }
         }
     }

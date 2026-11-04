@@ -72,22 +72,29 @@ cartes n'est nécessaire. La validation fonctionnelle avec un compte réel pour 
 
 ## Inventaire à réexaminer à chaque synchronisation
 
-### Avatars en poses de 128 × 128 — déployés, essai en jeu à confirmer
+### Avatars en poses de 64 et 128 pixels — extension 64 et correctif de zoom à déployer
 
-- Planche 384 × 512 pixels, trois colonnes et quatre directions, reconnue après décodage de l'image par
+- Planches 192 × 256 ou 384 × 512 pixels, trois colonnes et quatre directions, reconnues après décodage de l'image par
   `WokaSpriteSheetFile`. Les 297 textures intégrées de 96 × 128 restent découpées en poses de 32 pixels.
 - `SuperLoaderPlugin.wokaSpritesheet` couvre le chargement à la demande, les joueurs distants et le cache.
   `createWokaSprite` garde la taille logique de 32 pixels dans le monde et les vignettes de profil ;
   l'aperçu Svelte découpe les poses selon les dimensions réelles. Aucun changement de protocole réseau.
-- Commande `woka:add` : avatars 32 ou 128 pixels par pose, contrôle préalable du support serveur pour
-  les avatars 128. Les compagnons restent en 32 pixels. [Documentation](docs/others/self-hosting/custom-wokas.md).
+- Commande `woka:add` : avatars 32, 64 ou 128 pixels par pose, contrôle préalable du support serveur pour
+  les avatars 64/128. Les compagnons restent en 32 pixels. [Documentation](docs/others/self-hosting/custom-wokas.md).
+- `WaScaleManager` garde un canvas natif dès qu'un avatar 64/128 est chargé. L'ancien retour à un
+  canvas réduit en fin de zoom écrasait les détails. Le zoom reste effectué par la caméra et les
+  sessions sans avatar détaillé conservent le mode réduit. Les événements de chargement sont nettoyés
+  lors du remplacement ou de la destruction du jeu. Les appels sans caméra utilisent la caméra active.
 - Validation : test réel dans Chrome/Phaser en Canvas puis WebGL, 12 poses par résolution, taille affichée
-  32 × 32, corps de collision 16 × 16, animation, chargement à la demande/cache et 8 aperçus Svelte.
+  32 × 32, corps de collision 16 × 16, animation, chargement à la demande/cache et 12 aperçus Svelte.
   Reproduction : `node contrib/tools/test-woka-resolution.mjs`. Tests Python de grille et d'import HD.
 - Test WebGL répété avec la planche utilisateur, comparaison exacte des pixels des quatre aperçus aux
   poses source ; import « Johan 128 » réalisé après le déploiement du 4 novembre 2026. L'ancien avatar
   Johan reste disponible. Un rechargement complet des clients est nécessaire pour utiliser le nouveau
   découpage ; le choix et la marche dans une carte réelle restent à confirmer par l'utilisateur.
+- Essai 64 : planche Adrien fournie par l'utilisateur, validée en WebGL aux DPR 1 et 2. Le test
+  reproduit le canvas réduit des avatars 32, puis vérifie le passage au natif au chargement du 64 et
+  sa stabilité en fin de zoom et lors d'un appel sans caméra. Import d'« Adrien 64 » en production restant.
 - **Retrait possible :** résolution variable officiellement supportée dans tous ces parcours ; conserver
   la compatibilité avec les sprites 128 déjà importés et leur taille dans les cartes.
 

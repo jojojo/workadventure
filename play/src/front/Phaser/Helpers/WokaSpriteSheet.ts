@@ -1,14 +1,26 @@
 import * as Phaser from "phaser";
-import { getWokaFrameSize, WOKA_DISPLAY_SIZE } from "../../Utils/WokaFrameSize";
+import {
+    getWokaFrameSize,
+    WOKA_DISPLAY_SIZE,
+    HIGH_RESOLUTION_WOKA_KEY,
+    HIGH_RESOLUTION_WOKA_EVENT,
+} from "../../Utils/WokaFrameSize";
 
 /** Decide the frame size after image decoding, before Phaser creates the texture's frames. */
 class WokaSpriteSheetFile extends Phaser.Loader.FileTypes.SpriteSheetFile {
     public override addToCache(): void {
+        let highResolution = false;
         if (this.data instanceof HTMLImageElement) {
             const size = getWokaFrameSize(this.data.naturalWidth, this.data.naturalHeight);
             this.config = { frameWidth: size, frameHeight: size };
+            highResolution = size > WOKA_DISPLAY_SIZE;
         }
         super.addToCache();
+        const game = this.loader.scene.game;
+        if (highResolution && !game.registry.get(HIGH_RESOLUTION_WOKA_KEY)) {
+            game.registry.set(HIGH_RESOLUTION_WOKA_KEY, true);
+            game.events.emit(HIGH_RESOLUTION_WOKA_EVENT);
+        }
     }
 }
 

@@ -23,6 +23,7 @@ const output = path.resolve(
 );
 await mkdir(output, { recursive: true });
 const imports = "/__woka-resolution-imports.js";
+const viewportStore = "/__woka-resolution-viewport.js";
 const server = await createServer({
   configFile: false,
   root: path.join(root, "play"),
@@ -43,10 +44,18 @@ const server = await createServer({
     svelte({ configFile: false, preprocess: vitePreprocess() }),
     {
       name: "woka-resolution-test",
-      resolveId(id) {
+      enforce: "pre",
+      resolveId(id, importer) {
+        if (
+          importer?.endsWith("/WaScaleManager.ts") &&
+          id.endsWith("/Stores/CoWebsiteStore")
+        )
+          return viewportStore;
         if (id === imports) return id;
       },
       load(id) {
+        if (id === viewportStore)
+          return "export const coWebsiteManager = {getGameSize:()=>({width:650,height:180})};";
         if (id === imports)
           return `
                     export * as Phaser from "phaser";
@@ -55,17 +64,18 @@ const server = await createServer({
                     export { queueWokaTexture, createWokaSprite } from "/src/front/Phaser/Helpers/WokaSpriteSheet.ts";
                     export { SuperLoaderPlugin } from "/src/front/Phaser/Services/SuperLoaderPlugin.ts";
                     export { getPlayerAnimations } from "/src/front/Phaser/Player/Animation.ts";
+                    export { WaScaleManager } from "/src/front/Phaser/Services/WaScaleManager.ts";
                 `;
       },
       configureServer(server) {
         server.middlewares.use((req, res, next) => {
           if (req.url !== "/__woka-resolution") return next();
           res.setHeader("Content-Type", "text/html");
-          res.end(`<!doctype html><html><head><meta charset="utf-8"><title>Woka 32 / 128</title><style>
+          res.end(`<!doctype html><html><head><meta charset="utf-8"><title>Woka 32 / 64 / 128</title><style>
                     body{background:#101926;color:#e5edf5;font:15px system-ui;margin:28px}h1{font-size:24px}
                     .row{display:flex;gap:16px;margin:12px 0}.preview{background:#203249;border-radius:8px;padding:8px;text-align:center}
                     canvas{image-rendering:pixelated}small{color:#aac1db}#world{margin-top:12px}
-                    </style></head><body><h1>Avatars : poses de 32 et 128 pixels</h1>
+                    </style></head><body><h1>Avatars : poses de 32, 64 et 128 pixels</h1>
                     <p>Même taille dans le monde. Quatre directions et zoom ×4.</p><div id="previews"></div><div id="world"></div></body></html>`);
         });
       },
@@ -83,7 +93,7 @@ try {
   });
   const page = await browser.newPage({
     viewport: { width: 900, height: 820 },
-    deviceScaleFactor: 1,
+    deviceScaleFactor: Number(process.env.WOKA_TEST_DPR || 1),
   });
   const errors = [];
   page.on("pageerror", (error) => errors.push(error.message));
@@ -91,8 +101,15 @@ try {
   const avatar = process.env.WOKA_TEST_AVATAR
     ? `data:image/png;base64,${(await readFile(process.env.WOKA_TEST_AVATAR)).toString("base64")}`
     : undefined;
+  const avatarSize = process.env.WOKA_TEST_AVATAR
+    ? (await readFile(process.env.WOKA_TEST_AVATAR)).readUInt32BE(16) / 3
+    : 128;
+  assert.ok(
+    [64, 128].includes(avatarSize),
+    "Expected a 192x256 or 384x512 avatar sheet",
+  );
   const result = await page.evaluate(
-    async ({ renderer, avatar }) => {
+    async ({ renderer, avatar, avatarSize }) => {
       const {
         Phaser,
         mount,
@@ -101,6 +118,7 @@ try {
         createWokaSprite,
         SuperLoaderPlugin,
         getPlayerAnimations,
+        WaScaleManager,
       } = await import("/__woka-resolution-imports.js");
       const makeSheet = (size) => {
         const canvas = document.createElement("canvas");
@@ -147,9 +165,11 @@ try {
         return canvas.toDataURL("image/png");
       };
       const legacy = makeSheet(32),
-        hd = avatar ?? makeSheet(128);
+        medium = avatar && avatarSize === 64 ? avatar : makeSheet(64),
+        hd = avatar && avatarSize === 128 ? avatar : makeSheet(128);
       for (const [size, url] of [
         [32, legacy],
+        [64, medium],
         [128, hd],
       ]) {
         const row = document.createElement("div");
@@ -185,14 +205,41 @@ try {
         class CheckScene extends Phaser.Scene {
           preload() {
             queueWokaTexture(this.load, "legacy", legacy);
-            queueWokaTexture(this.load, "hd", hd);
           }
           create() {
             const run = async () => {
+              this.game.markDirty = () => {};
+              const scale = new WaScaleManager((650 * 180) / 4, 64);
+              scale.setGame(this.game);
+              const camera = this.cameras.main;
+              const readZoom = () => ({
+                width: this.game.canvas.width,
+                height: this.game.canvas.height,
+                zoom: camera.zoom,
+              });
+              scale.setZoomModifier(2, camera, true);
+              const legacyAnimating = readZoom();
+              scale.setZoomModifier(2, camera, false);
+              const legacySettled = readZoom();
+              const loader = new SuperLoaderPlugin(this);
+              await loader.wokaSpritesheet("medium", medium);
+              const nativeAfterLoad = readZoom();
+              scale.setZoomModifier(2, camera, true);
+              const nativeAnimating = readZoom();
+              scale.setZoomModifier(2, camera, false);
+              const nativeSettled = readZoom();
+              camera.setZoom(1);
+              scale.applyNewSize();
+              const nativeNoCamera = readZoom();
+              await loader.wokaSpritesheet("hd", hd);
+              scale.setZoomModifier(2, camera, false);
+              const hdSettled = readZoom();
+              scale.setZoomModifier(0.5, camera, false);
               const values = [];
               for (const [key, size, x] of [
-                ["legacy", 32, 100],
-                ["hd", 128, 180],
+                ["legacy", 32, 65],
+                ["medium", 64, 105],
+                ["hd", 128, 145],
               ]) {
                 const texture = this.textures.get(key);
                 const sprite = createWokaSprite(this, key, 1);
@@ -228,7 +275,10 @@ try {
                 );
                 const enlarged = createWokaSprite(this, key, 1);
                 this.add.existing(enlarged);
-                enlarged.setPosition(size === 32 ? 365 : 515, 90);
+                enlarged.setPosition(
+                  size === 32 ? 260 : size === 64 ? 415 : 570,
+                  90,
+                );
                 enlarged.setScale(enlarged.scaleX * 4);
                 values.push({
                   key,
@@ -241,7 +291,6 @@ try {
                   bodyHeight: container.body.height,
                 });
               }
-              const loader = new SuperLoaderPlugin(this);
               const lazy = await loader.wokaSpritesheet("lazy-hd", hd);
               const cached = await loader.wokaSpritesheet("lazy-hd", hd);
               clearTimeout(timeout);
@@ -249,6 +298,13 @@ try {
                 values,
                 lazyFrameWidth: lazy.get(1).width,
                 cachedSameTexture: cached === lazy,
+                legacyAnimating,
+                legacySettled,
+                nativeAfterLoad,
+                nativeAnimating,
+                nativeSettled,
+                nativeNoCamera,
+                hdSettled,
               });
             };
             run().catch((error) => {
@@ -280,6 +336,7 @@ try {
       const expectedHashes = [];
       for (const [size, url] of [
         [32, legacy],
+        [64, medium],
         [128, hd],
       ]) {
         const image = new Image();
@@ -311,14 +368,14 @@ try {
           [...document.querySelectorAll(".preview canvas")].map(hash),
         );
         if (
-          previewHashes.length === 8 &&
+          previewHashes.length === 12 &&
           previewHashes.every((value, index) => value === expectedHashes[index])
         )
           break;
       }
-      return { runtime, previewHashes, expectedHashes, hd, legacy };
+      return { runtime, previewHashes, expectedHashes, hd, medium, legacy };
     },
-    { renderer: process.env.WOKA_TEST_RENDERER || "webgl", avatar },
+    { renderer: process.env.WOKA_TEST_RENDERER || "webgl", avatar, avatarSize },
   );
   assert.deepEqual(errors, []);
   for (const {
@@ -348,8 +405,26 @@ try {
   }
   assert.equal(result.runtime.lazyFrameWidth, 128);
   assert.equal(result.runtime.cachedSameTexture, true);
-  assert.equal(result.previewHashes.length, 8);
+  assert.ok(
+    result.runtime.legacySettled.width < result.runtime.legacyAnimating.width,
+  );
+  assert.equal(result.runtime.legacySettled.zoom, 1);
+  assert.deepEqual(
+    result.runtime.nativeAfterLoad,
+    result.runtime.nativeAnimating,
+  );
+  assert.deepEqual(
+    result.runtime.nativeSettled,
+    result.runtime.nativeAnimating,
+  );
+  assert.deepEqual(result.runtime.nativeNoCamera, result.runtime.nativeSettled);
+  assert.deepEqual(result.runtime.hdSettled, result.runtime.nativeSettled);
+  assert.equal(result.previewHashes.length, 12);
   assert.deepEqual(result.previewHashes, result.expectedHashes);
+  await writeFile(
+    path.join(output, "avatar-test-64.png"),
+    Buffer.from(result.medium.split(",")[1], "base64"),
+  );
   await writeFile(
     path.join(output, "avatar-test-128.png"),
     Buffer.from(result.hd.split(",")[1], "base64"),
@@ -363,13 +438,14 @@ try {
     fullPage: true,
   });
   delete result.hd;
+  delete result.medium;
   delete result.legacy;
   await writeFile(
     path.join(output, "result.json"),
     JSON.stringify(result, null, 2),
   );
   console.log(
-    `PASS: 12 poses in both resolutions; 32px world size; 16px collision bodies; lazy/cache loading; 8 Svelte previews.\nArtifacts: ${output}`,
+    `PASS: 32/64/128px frames; 32px world size; collision bodies; lazy/cache loading; 12 Svelte previews; native pixels preserved after zoom.\nArtifacts: ${output}`,
   );
 } finally {
   await browser?.close();

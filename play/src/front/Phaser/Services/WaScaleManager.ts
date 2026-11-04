@@ -1,5 +1,6 @@
 import * as Phaser from "phaser";
 import { coWebsiteManager } from "../../Stores/CoWebsiteStore";
+import { HIGH_RESOLUTION_WOKA_KEY, HIGH_RESOLUTION_WOKA_EVENT } from "../../Utils/WokaFrameSize";
 import type { Game } from "../Game/Game";
 import { ResizableScene } from "../Login/ResizableScene";
 import { HdpiManager } from "./HdpiManager";
@@ -24,6 +25,13 @@ export class WaScaleManager {
     private lastEmittedActualZoom: number | undefined;
 
     private focusTarget?: WaScaleManagerFocusTarget;
+    private readonly onHighResolutionWoka = (): void => {
+        this.applyNewSize();
+    };
+    private readonly removeResolutionListeners = (): void => {
+        this.game.events.off(HIGH_RESOLUTION_WOKA_EVENT, this.onHighResolutionWoka);
+        this.game.events.off(Phaser.Core.Events.DESTROY, this.removeResolutionListeners);
+    };
 
     public constructor(
         private minGamePixelsNumber: number,
@@ -48,15 +56,21 @@ export class WaScaleManager {
     }
 
     public setGame(game: Game): void {
+        if (this.game) {
+            this.removeResolutionListeners();
+        }
         this.scaleManager = game.scale;
         this.game = game;
         this.lastEmittedZoomModifier = this.hdpiManager.zoomModifier;
+        game.events.once(HIGH_RESOLUTION_WOKA_EVENT, this.onHighResolutionWoka);
+        game.events.once(Phaser.Core.Events.DESTROY, this.removeResolutionListeners);
     }
 
     public applyNewSize(camera?: Camera, animating = false): void {
         if (this.scaleManager === undefined) {
             return;
         }
+        const zoomCamera = camera ?? this.game.scene.getScenes(true).at(-1)?.cameras.main;
         const { width, height } = coWebsiteManager.getGameSize();
         const devicePixelRatio = window.devicePixelRatio ?? 1;
         const { game: gameSize, real: realSize } = this.hdpiManager.getOptimalGameSize({
@@ -73,13 +87,20 @@ export class WaScaleManager {
         // To zoom in and out, we use the camera. The zoom is calculated using the optimal zoom level.
         // If the game size is smaller than the real size, we set the Phaser zoom level to 1 and we resize the canvas pixel size.
         // It's more efficient to keep the canvas as small as possible.
-        // One exception: during camera zoom animations. The this.scaleManager.resize costs a lot of resources. So we don't
+        // Exceptions: camera zoom animations and high-resolution Wokas, which need native canvas pixels even at rest.
+        // Reducing the canvas again at the end of a zoom would discard their extra detail.
+        // The this.scaleManager.resize costs a lot of resources. So we don't
         // want to do this in a loop when zooming. If we are in the middle of an animation, we scale the canvas number of pixels
         // to the browser viewport and we use the Phaser camera zoom.
-        if (gameSize.width <= realSize.width && gameSize.height <= realSize.height && !animating) {
+        if (
+            gameSize.width <= realSize.width &&
+            gameSize.height <= realSize.height &&
+            !animating &&
+            !this.game.registry.get(HIGH_RESOLUTION_WOKA_KEY)
+        ) {
             this.scaleManager.resize(gameSize.width, gameSize.height);
             this.scaleManager.setZoom(this.actualZoom);
-            camera?.setZoom(1);
+            zoomCamera?.setZoom(1);
         } else {
             if (this.scaleManager.width !== realSize.width || this.scaleManager.height !== realSize.height) {
                 this.scaleManager.resize(realSize.width, realSize.height);
@@ -90,7 +111,7 @@ export class WaScaleManager {
             // In the camera-zoom branch, keep the DOM and canvas layers on the same display scale.
             // The scale manager only compensates for DPR here; the gameplay zoom is fully handled by the camera.
             this.scaleManager.setZoom(1 / devicePixelRatio);
-            camera?.setZoom(zoom);
+            zoomCamera?.setZoom(zoom);
         }
 
         // Note: onResize will be called twice (once here and once in Game.ts), but we have no better way.

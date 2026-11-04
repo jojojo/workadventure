@@ -9,6 +9,7 @@ npm run woka:add -- "/chemin/mon-personnage.png" --name "Mon personnage"
 Le fichier doit être un PNG transparent non entrelacé, avec trois colonnes et quatre lignes :
 
 - **96 × 128 pixels** pour des poses de **32 × 32** (format historique).
+- **192 × 256 pixels** pour des poses de **64 × 64** (avatars uniquement).
 - **384 × 512 pixels** pour des poses de **128 × 128** (avatars uniquement).
 
 Ordre des lignes : bas, gauche, droite, haut. La colonne centrale
@@ -19,23 +20,28 @@ Le personnage apparaît dans la collection **Eoloa** du sélecteur. Rouvrir le s
 la page pour récupérer le catalogue actualisé. Aucun build, push Git, redéploiement ou redémarrage
 n'est nécessaire pour un ajout. Le service Play valide aussi les nouveaux identifiants à la connexion.
 
-## Avatars en poses de 128 × 128
+## Avatars en poses de 64 ou 128 pixels
 
-La même commande accepte une planche de **384 × 512 pixels** :
+La même commande accepte une planche de **192 × 256 pixels** (poses 64) ou **384 × 512** (poses 128) :
 
 ```sh
-npm run woka:add -- "/chemin/avatar-128.png" --name "Mon avatar 128"
+npm run woka:add -- "/chemin/avatar-64.png" --name "Mon avatar 64"
 ```
 
 La résolution est détectée dans l'image, y compris pour les autres joueurs qui chargent cet avatar.
 Le personnage occupe toujours 32 × 32 pixels logiques dans le monde : taille, collisions et distances
-ne changent pas. Le zoom et les aperçus peuvent afficher les détails des poses de 128 pixels. Les
+ne changent pas. Le zoom et les aperçus peuvent afficher les détails des poses de 64 ou 128 pixels. Les
 vignettes de profil générées par le jeu conservent leur taille historique de 32 pixels.
 
 Les animations restent sur douze poses, dans le même ordre. Les Woka existants restent compatibles.
 Une image simplement agrandie depuis 32 pixels n'apporte pas de détails supplémentaires. Les compagnons
-restent au format 32 pixels par pose. Recharger les onglets après le déploiement du support 128 pixels ;
+restent au format 32 pixels par pose. Recharger les onglets après le déploiement du support 64/128 pixels ;
 un ancien client découperait incorrectement une planche haute résolution.
+
+Dès qu'un avatar 64 ou 128 est chargé, le canvas du jeu conserve la résolution physique de l'écran et
+le zoom est effectué par la caméra, pendant l'animation comme à l'arrêt. Cela évite le retour à un
+canvas réduit puis agrandi, qui supprimait les détails à la fin du zoom. Le canvas contient alors
+plus de pixels à rendre ; le mode historique réduit reste utilisé dans les sessions sans avatar détaillé.
 
 Pour reproduire le test isolé avec le moteur Phaser et les aperçus Svelte (dépendances du monorepo et
 Google Chrome nécessaires) :
@@ -43,11 +49,13 @@ Google Chrome nécessaires) :
 ```sh
 node contrib/tools/test-woka-resolution.mjs
 # Variante Canvas : WOKA_TEST_RENDERER=canvas node contrib/tools/test-woka-resolution.mjs
+# Écran Retina : WOKA_TEST_DPR=2 node contrib/tools/test-woka-resolution.mjs
 # Planche personnelle : WOKA_TEST_AVATAR="/chemin/avatar-128.png" node contrib/tools/test-woka-resolution.mjs
 ```
 
-Le test vérifie les 12 poses, la taille dans le monde, les corps de collision, le chargement à la demande,
-le cache et les quatre directions dans les aperçus. Il écrit des sprites techniques, une capture de
+Le test vérifie les 12 poses dans les trois résolutions, la taille dans le monde, les corps de collision,
+le chargement à la demande, le cache, la stabilité du canvas après le zoom et les quatre directions
+dans les aperçus. Il écrit des sprites techniques, une capture de
 comparaison et un rapport dans `~/.local/state/workadventure/woka-resolution-test/`.
 
 ## Animaux compagnons

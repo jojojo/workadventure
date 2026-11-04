@@ -31,9 +31,12 @@ class WokaImportTests(unittest.TestCase):
 
     def test_accepts_native_128_avatar_frames_but_keeps_companions_at_32(self):
         self.assertEqual(woka.validate_png(png(384, 512)), 128)
+        self.assertEqual(woka.validate_png(png(192, 256)), 64)
         self.assertEqual(woka.validate_png(png()), 32)
         with self.assertRaises(woka.deploy.DeploymentError):
             woka.validate_png(png(384, 512), 'companion')
+        with self.assertRaises(woka.deploy.DeploymentError):
+            woka.validate_png(png(192, 256), 'companion')
 
     def test_refuses_wrong_grid_truncation_corruption_and_fake_png(self):
         for image in (png(128, 96), png()[:-5], png()[:40] + b'bad-data', b'not a png'):
@@ -119,6 +122,9 @@ class WokaImportTests(unittest.TestCase):
     def test_import_128_avatar_checks_server_support_and_preserves_catalog(self):
         self.check_import(public_ok=True, frame_size=128)
 
+    def test_import_64_avatar_checks_server_support_and_preserves_catalog(self):
+        self.check_import(public_ok=True, frame_size=64)
+
     def test_128_import_refuses_an_older_server_before_lock_or_publication(self):
         with tempfile.TemporaryDirectory() as temporary:
             source = Path(temporary) / 'hd.png'
@@ -173,7 +179,7 @@ class WokaImportTests(unittest.TestCase):
             context = Mock()
             context.__enter__ = Mock(return_value=response)
             context.__exit__ = Mock(return_value=False)
-            results = (['128'] if frame_size == 128 else []) + ['', json.dumps(catalog), '{}']
+            results = ([str(frame_size)] if frame_size > 32 else []) + ['', json.dumps(catalog), '{}']
             if public_ok:
                 details = [{'id': entry['id'], 'url': '/custom-wokas/' + entry['filename']}] if runtime_ok else []
                 if kind == 'companion' and runtime_ok:

@@ -18,14 +18,14 @@ redondante, après vérification et migration éventuelle.
 
 Mettre cette référence et les états à jour après chaque fusion, remplacement ou commit concerné.
 
-## Dernier déploiement confirmé — 2 novembre 2026
+## Dernier déploiement confirmé — 4 novembre 2026
 
-- Release : **v1.34.5**, code applicatif **`c554a89a7`**, déployé avec
-  `npm run prod:deploy -- --release v1.34.5` (extension des imports aux compagnons).
-- Play et Back : images du fork `registry.eoloa.eu/workadventure-{play,back}:v1.34.5-c554a89a7`,
+- Release : **v1.34.5**, code applicatif **`e032c366d`**, déployé avec
+  `npm run prod:deploy -- --release v1.34.5` (avatars en poses de 128 pixels).
+- Play et Back : images du fork `registry.eoloa.eu/workadventure-{play,back}:v1.34.5-e032c366d`,
   construites depuis une archive Git pour `linux/amd64`, publiées et vérifiées par digest.
 - Map Storage et Uploader : images officielles `v1.34.5`.
-- Validation : **209 tests applicatifs réussis**, 2 ignorés ; **34 tests Python réussis** ;
+- Validation : **209 tests applicatifs réussis**, 2 ignorés ; **37 tests Python réussis** ;
   TypeScript Play/Back, Svelte, i18n et lint ciblé réussis.
 - Production : sept services démarrés sans redémarrage ; contrôles de santé disponibles au vert ; page,
   `/ping` et `/map-storage/ping` en HTTP 200. Volume Woka, paramètres, ports et autres images conservés.
@@ -33,9 +33,12 @@ Mettre cette référence et les états à jour après chaque fusion, remplacemen
   reste présent. Les parcours Matrix et Meet avec un compte réel restent à valider.
 - Configuration effective, anciennes références d'images et preuves de validation sauvegardées hors du dépôt.
 - Sauvegarde du dernier déploiement :
-  `/Users/johancappi/.local/state/workadventure/deployments/v1.34.5-c554a89a7-ukc0q4dn`.
-- Catalogue persistant comparé avant/après redéploiement : inchangé, Johan et chiens intégrés disponibles.
-  Chargement dynamique d'un compagnon validé sur une même instance du service déployé, avec un catalogue
+  `/Users/johancappi/.local/state/workadventure/deployments/v1.34.5-e032c366d-7lqsm3gc`.
+- Avatar `custom-johan-128` (« Johan 128 ») importé depuis la planche utilisateur de 384 × 512 pixels,
+  PNG public identique, service de validation et absence de redémarrage vérifiés. Sauvegarde privée :
+  `/Users/johancappi/.local/state/workadventure/deployments/woka-imports/20261104-102624-09c6ef1e`.
+- Lors du déploiement compagnons du 2 novembre, catalogue persistant comparé avant/après redéploiement :
+  inchangé, Johan et chiens intégrés disponibles. Chargement dynamique d'un compagnon validé sur une même instance du service déployé, avec un catalogue
   temporaire isolé puis supprimé ; aucun compagnon de test ajouté au catalogue utilisateur.
 - Le premier essai d'installation du volume (`6c3797b2b`) a restauré les anciennes images après un écart
   entre les représentations Docker `Binds` et `Mounts`. Contrôle corrigé et testé, puis installation validée.
@@ -69,7 +72,7 @@ cartes n'est nécessaire. La validation fonctionnelle avec un compte réel pour 
 
 ## Inventaire à réexaminer à chaque synchronisation
 
-### Avatars en poses de 128 × 128 — expérimentation, déploiement restant
+### Avatars en poses de 128 × 128 — déployés, essai en jeu à confirmer
 
 - Planche 384 × 512 pixels, trois colonnes et quatre directions, reconnue après décodage de l'image par
   `WokaSpriteSheetFile`. Les 297 textures intégrées de 96 × 128 restent découpées en poses de 32 pixels.
@@ -81,6 +84,10 @@ cartes n'est nécessaire. La validation fonctionnelle avec un compte réel pour 
 - Validation : test réel dans Chrome/Phaser en Canvas puis WebGL, 12 poses par résolution, taille affichée
   32 × 32, corps de collision 16 × 16, animation, chargement à la demande/cache et 8 aperçus Svelte.
   Reproduction : `node contrib/tools/test-woka-resolution.mjs`. Tests Python de grille et d'import HD.
+- Test WebGL répété avec la planche utilisateur, comparaison exacte des pixels des quatre aperçus aux
+  poses source ; import « Johan 128 » réalisé après le déploiement du 4 novembre 2026. L'ancien avatar
+  Johan reste disponible. Un rechargement complet des clients est nécessaire pour utiliser le nouveau
+  découpage ; le choix et la marche dans une carte réelle restent à confirmer par l'utilisateur.
 - **Retrait possible :** résolution variable officiellement supportée dans tous ces parcours ; conserver
   la compatibilité avec les sprites 128 déjà importés et leur taille dans les cartes.
 

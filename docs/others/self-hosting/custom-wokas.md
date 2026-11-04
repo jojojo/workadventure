@@ -43,6 +43,7 @@ Google Chrome nécessaires) :
 ```sh
 node contrib/tools/test-woka-resolution.mjs
 # Variante Canvas : WOKA_TEST_RENDERER=canvas node contrib/tools/test-woka-resolution.mjs
+# Planche personnelle : WOKA_TEST_AVATAR="/chemin/avatar-128.png" node contrib/tools/test-woka-resolution.mjs
 ```
 
 Le test vérifie les 12 poses, la taille dans le monde, les corps de collision, le chargement à la demande,

@@ -20,12 +20,12 @@ Mettre cette référence et les états à jour après chaque fusion, remplacemen
 
 ## Dernier déploiement confirmé — 4 novembre 2026
 
-- Release : **v1.34.5**, code applicatif **`e032c366d`**, déployé avec
-  `npm run prod:deploy -- --release v1.34.5` (avatars en poses de 128 pixels).
-- Play et Back : images du fork `registry.eoloa.eu/workadventure-{play,back}:v1.34.5-e032c366d`,
+- Release : **v1.34.5**, code applicatif **`db677a761`**, déployé avec
+  `npm run prod:deploy -- --release v1.34.5` (avatars 64 pixels et stabilité du rendu après zoom).
+- Play et Back : images du fork `registry.eoloa.eu/workadventure-{play,back}:v1.34.5-db677a761`,
   construites depuis une archive Git pour `linux/amd64`, publiées et vérifiées par digest.
 - Map Storage et Uploader : images officielles `v1.34.5`.
-- Validation : **209 tests applicatifs réussis**, 2 ignorés ; **37 tests Python réussis** ;
+- Validation : **209 tests applicatifs réussis**, 2 ignorés ; **38 tests Python réussis** ;
   TypeScript Play/Back, Svelte, i18n et lint ciblé réussis.
 - Production : sept services démarrés sans redémarrage ; contrôles de santé disponibles au vert ; page,
   `/ping` et `/map-storage/ping` en HTTP 200. Volume Woka, paramètres, ports et autres images conservés.
@@ -33,7 +33,11 @@ Mettre cette référence et les états à jour après chaque fusion, remplacemen
   reste présent. Les parcours Matrix et Meet avec un compte réel restent à valider.
 - Configuration effective, anciennes références d'images et preuves de validation sauvegardées hors du dépôt.
 - Sauvegarde du dernier déploiement :
-  `/Users/johancappi/.local/state/workadventure/deployments/v1.34.5-e032c366d-7lqsm3gc`.
+  `/Users/johancappi/.local/state/workadventure/deployments/v1.34.5-db677a761-mv25sm7s`.
+- Avatar `custom-adrien-64` (« Adrien 64 ») importé depuis la planche utilisateur de 192 × 256 pixels,
+  PNG public identique, identifiant accepté et aucun redémarrage lors de l'import. Les entrées
+  préexistantes du catalogue sont conservées. Sauvegarde privée :
+  `/Users/johancappi/.local/state/workadventure/deployments/woka-imports/20261104-105630-d7637880`.
 - Avatar `custom-johan-128` (« Johan 128 ») importé depuis la planche utilisateur de 384 × 512 pixels,
   PNG public identique, service de validation et absence de redémarrage vérifiés. Sauvegarde privée :
   `/Users/johancappi/.local/state/workadventure/deployments/woka-imports/20261104-102624-09c6ef1e`.
@@ -72,7 +76,7 @@ cartes n'est nécessaire. La validation fonctionnelle avec un compte réel pour 
 
 ## Inventaire à réexaminer à chaque synchronisation
 
-### Avatars en poses de 64 et 128 pixels — extension 64 et correctif de zoom à déployer
+### Avatars en poses de 64 et 128 pixels — déployés, essai en jeu à confirmer
 
 - Planches 192 × 256 ou 384 × 512 pixels, trois colonnes et quatre directions, reconnues après décodage de l'image par
   `WokaSpriteSheetFile`. Les 297 textures intégrées de 96 × 128 restent découpées en poses de 32 pixels.
@@ -94,7 +98,8 @@ cartes n'est nécessaire. La validation fonctionnelle avec un compte réel pour 
   découpage ; le choix et la marche dans une carte réelle restent à confirmer par l'utilisateur.
 - Essai 64 : planche Adrien fournie par l'utilisateur, validée en WebGL aux DPR 1 et 2. Le test
   reproduit le canvas réduit des avatars 32, puis vérifie le passage au natif au chargement du 64 et
-  sa stabilité en fin de zoom et lors d'un appel sans caméra. Import d'« Adrien 64 » en production restant.
+  sa stabilité en fin de zoom et lors d'un appel sans caméra. Extension et correctif déployés puis
+  « Adrien 64 » importé le 4 novembre 2026 ; la confirmation visuelle dans une carte réelle reste à faire.
 - **Retrait possible :** résolution variable officiellement supportée dans tous ces parcours ; conserver
   la compatibilité avec les sprites 128 déjà importés et leur taille dans les cartes.
 

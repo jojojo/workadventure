@@ -49,7 +49,7 @@ Environment variables for the Play service (frontend and pusher).
 | `OPENID_LOCALE_CLAIM` | No | JWT claim to use for user locale. Defaults to 'locale' |
 | `OPENID_WOKA_NAME_POLICY` | No | Policy for avatar naming: 'user_input', 'allow_override_opid', or 'force_opid' |
 | `OPENID_TAGS_CLAIM` | No | JWT claim containing user tags/roles |
-| `EXTERNAL_PRESENCE_API_TOKEN` | No | Dedicated secret (at least 32 characters) for n8n presence snapshots sent to `POST /external-module/event`, module `external-presence`. See [the event contract](external-presence.md). Never exposed to browsers. |
+| `EXTERNAL_PRESENCE_API_TOKEN` | No | Dedicated credential for external-presence events at /external-module/event; never exposed to browsers |
 | `DISABLE_ANONYMOUS` | No | If true, anonymous users cannot access the platform. Defaults to false |
 | `PROMETHEUS_AUTHORIZATION_TOKEN` | No | The token to access the Prometheus metrics. |
 | `PROMETHEUS_PORT` | No | The port to access the Prometheus metrics. If not set, the default port is used AND an authorization token is required. |

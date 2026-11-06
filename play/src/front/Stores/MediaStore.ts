@@ -454,6 +454,8 @@ export const availabilityStatusStore = derived(
         $audioPlaybackStore,
         $browserNotificationStore,
     ]) => {
+        // Phone presence takes precedence without changing the saved manual preference.
+        if ($externalPhoneBusyStore) return AvailabilityStatus.BACK_IN_A_MOMENT;
         // Important: Statuses that should not switch to BUSY
         // must be checked BEFORE privacyShutdownStore to prevent switching to BUSY when privacy is enabled.
         if ($externalMeetingActiveStore) return AvailabilityStatus.BUSY;
@@ -467,7 +469,6 @@ export const availabilityStatusStore = derived(
         if ($isListenerStore) return AvailabilityStatus.LISTENER;
         if ($requestedStatusStore) return $requestedStatusStore;
         if ($privacyShutdownStore) return AvailabilityStatus.AWAY;
-        if ($externalPhoneBusyStore) return AvailabilityStatus.BACK_IN_A_MOMENT;
 
         return AvailabilityStatus.ONLINE;
     },

@@ -160,7 +160,9 @@ cartes n'est nécessaire. La validation fonctionnelle avec un compte réel pour 
   `POST /external-module/event`, secret dédié `EXTERNAL_PRESENCE_API_TOKEN`. Routage par identité
   dans `ExternalPresenceService.ts` et `PusherRoom.ts`, transport `externalModuleMessage` existant.
 - Front : `ExternalPresenceSync.ts`, `ExternalPhoneStore.ts`, `MediaStore.ts`, `RoomConnection.ts`.
-  Présence transitoire, sans écraser ni enregistrer le statut manuel. Libellé français
+  Présence téléphonique prioritaire sur les statuts orange et les autres disponibilités,
+  transitoire, sans écraser ni enregistrer le statut manuel ; retour à la situation courante
+  en fin d'appel. Régressions BUSY/AWAY et activité externe testées. Libellé français
   `BACK_IN_A_MOMENT` conservé : « 📞 Au téléphone ».
 - Construction Play : réutilisation temporaire du cache de tarballs du builder pour l'installation
   npm de production, à la suite d'un timeout réseau de construction ; dépendances amd64 réinstallées.

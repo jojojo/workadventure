@@ -57,9 +57,10 @@ Après un redémarrage Play, ce snapshot arrive au plus tard au prochain contrô
 producteur, sous réserve du fonctionnement de n8n et du réseau.
 
 Un état connu non renouvelé dans les 120 s devient `UNKNOWN` par un timer local,
-sans accès réseau. `BUSY` et `UNKNOWN` ajoutent le statut « 📞 Au téléphone » quand
-la disponibilité normale serait ONLINE. Un statut manuel ou une activité
-WorkAdventure prioritaire reste respecté. La présence téléphonique est transitoire :
+sans accès réseau. `BUSY` et `UNKNOWN` affichent le statut « 📞 Au téléphone » en
+première priorité, devant les statuts orange BUSY/AWAY, les statuts manuels et les
+activités WorkAdventure. En fin d'appel, le statut correspondant à la situation
+courante réapparaît. La présence téléphonique est transitoire :
 elle ne modifie ni le choix manuel ni sa sauvegarde locale. Fin d'appel et sortie
 de connexion retirent seulement cette présence téléphonique.
 

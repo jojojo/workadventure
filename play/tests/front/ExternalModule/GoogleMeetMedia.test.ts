@@ -1,5 +1,5 @@
 import { afterAll, afterEach, describe, expect, it, vi } from "vitest";
-import { get } from "svelte/store";
+import { get, type Writable } from "svelte/store";
 import { AvailabilityStatus } from "@workadventure/messages";
 import { ExternalPresenceSync } from "../../../src/front/Connection/ExternalPresenceSync";
 import { externalPhoneBusyStore } from "../../../src/front/Stores/ExternalPhoneStore";
@@ -43,6 +43,9 @@ vi.mock("../../../src/front/Stores/PeerStore", async () => ({
     screenShareStreamElementsStore: (await import("svelte/store")).writable([]),
 }));
 
+const { privacyShutdownStore } = await vi.importMock<{ privacyShutdownStore: Writable<boolean> }>(
+    "../../../src/front/Stores/PrivacyShutdownStore",
+);
 const sync = new ExternalPresenceSync();
 
 const previous = {
@@ -56,6 +59,7 @@ const previous = {
 
 afterEach(() => {
     sync.stop();
+    privacyShutdownStore.set(false);
     externalMeetingActiveStore.set(false);
     inBackgroundSettingsStore.set(previous.background);
     requestedStatusStore.set(previous.status);
@@ -104,13 +108,18 @@ describe("phone presence over the existing WebSocket", () => {
         sync.apply({ status: "ONLINE" });
         expect(get(availabilityStatusStore)).toBe(AvailabilityStatus.ONLINE);
     });
-    it("preserves manual DND before and during the call, then reflects the latest preference", () => {
+    it("prioritizes the phone while preserving manual DND and the latest preference for call end", () => {
         requestedStatusStore.set(AvailabilityStatus.DO_NOT_DISTURB);
         sync.apply({ status: "BUSY" });
+        expect(get(availabilityStatusStore)).toBe(AvailabilityStatus.BACK_IN_A_MOMENT);
+        expect(get(requestedStatusStore)).toBe(AvailabilityStatus.DO_NOT_DISTURB);
+        sync.apply({ status: "ONLINE" });
         expect(get(availabilityStatusStore)).toBe(AvailabilityStatus.DO_NOT_DISTURB);
+        sync.apply({ status: "BUSY" });
         requestedStatusStore.set(null);
         expect(get(availabilityStatusStore)).toBe(AvailabilityStatus.BACK_IN_A_MOMENT);
         requestedStatusStore.set(AvailabilityStatus.BUSY);
+        expect(get(availabilityStatusStore)).toBe(AvailabilityStatus.BACK_IN_A_MOMENT);
         sync.apply({ status: "ONLINE" });
         expect(get(availabilityStatusStore)).toBe(AvailabilityStatus.BUSY);
     });
@@ -123,6 +132,35 @@ describe("phone presence over the existing WebSocket", () => {
         requestedStatusStore.set(AvailabilityStatus.BACK_IN_A_MOMENT);
         sync.apply({ status: "ONLINE" });
         expect(get(availabilityStatusStore)).toBe(AvailabilityStatus.BACK_IN_A_MOMENT);
+    });
+    it.each(["BUSY", "UNKNOWN"])(
+        "prioritizes %s phone presence over orange busy and away, then restores them",
+        (status) => {
+            requestedStatusStore.set(AvailabilityStatus.BUSY);
+            expect(get(availabilityStatusStore)).toBe(AvailabilityStatus.BUSY);
+            sync.apply({ status });
+            expect(get(availabilityStatusStore)).toBe(AvailabilityStatus.BACK_IN_A_MOMENT);
+            expect(get(requestedStatusStore)).toBe(AvailabilityStatus.BUSY);
+            sync.apply({ status: "ONLINE" });
+            expect(get(availabilityStatusStore)).toBe(AvailabilityStatus.BUSY);
+
+            requestedStatusStore.set(null);
+            privacyShutdownStore.set(true);
+            expect(get(availabilityStatusStore)).toBe(AvailabilityStatus.AWAY);
+            sync.apply({ status });
+            expect(get(availabilityStatusStore)).toBe(AvailabilityStatus.BACK_IN_A_MOMENT);
+            sync.apply({ status: "ONLINE" });
+            expect(get(availabilityStatusStore)).toBe(AvailabilityStatus.AWAY);
+        },
+    );
+    it("prioritizes phone presence over an orange external meeting and restores that meeting on call end", () => {
+        requestedStatusStore.set(null);
+        externalMeetingActiveStore.set(true);
+        expect(get(availabilityStatusStore)).toBe(AvailabilityStatus.BUSY);
+        sync.apply({ status: "BUSY" });
+        expect(get(availabilityStatusStore)).toBe(AvailabilityStatus.BACK_IN_A_MOMENT);
+        sync.apply({ status: "ONLINE" });
+        expect(get(availabilityStatusStore)).toBe(AvailabilityStatus.BUSY);
     });
     it("ignores malformed events", () => {
         sync.stop();

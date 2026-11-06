@@ -9,6 +9,8 @@ import { apiClientRepository } from "../services/ApiClientRepository";
 import { socketManager } from "../services/SocketManager";
 import type { PusherWebSocket } from "../services/PusherWebSocket";
 import { WS_CLOSE_CODE_SESSION_DESTROYED } from "../../common/WebSocketCloseCodes";
+import { EXTERNAL_PRESENCE_MODULE_ID } from "../../common/ExternalPresence";
+import { externalPresenceService } from "../services/ExternalPresenceService";
 import { PositionDispatcher } from "./PositionDispatcher";
 import type { ViewportInterface } from "./Websocket/ViewportMessage";
 import type { ZoneEventListener } from "./Zone";
@@ -22,6 +24,8 @@ export class PusherRoom {
     private backConnection!: ClientDuplexStream<PusherToBackRoomMessage, BatchToPusherRoomMessage>;
     private isClosing = false;
     private listeners: Set<PusherWebSocket> = new Set<PusherWebSocket>();
+
+    private readonly presenceSubscriptions = new Map<PusherWebSocket, () => void>();
 
     private _wamSettings: WAMFileFormat["settings"] = {};
     private backConnectionClosedAbortController: AbortController = new AbortController();
@@ -48,9 +52,30 @@ export class PusherRoom {
         this.listeners.add(socket);
 
         socket.getUserData().pusherRoom = this;
+        this.presenceSubscriptions.get(socket)?.();
+        if (socket.getUserData().isLogged) {
+            this.presenceSubscriptions.set(
+                socket,
+                externalPresenceService.subscribe(socket.getUserData().userUuid, (status) => {
+                    socket.send({
+                        message: {
+                            $case: "externalModuleMessage",
+                            externalModuleMessage: {
+                                moduleId: EXTERNAL_PRESENCE_MODULE_ID,
+                                roomId: this.roomUrl,
+                                recipientUuid: socket.getUserData().userUuid,
+                                message: { status },
+                            },
+                        },
+                    });
+                }),
+            );
+        }
     }
 
     public leave(socket: PusherWebSocket): void {
+        this.presenceSubscriptions.get(socket)?.();
+        this.presenceSubscriptions.delete(socket);
         this.positionNotifier.removeViewport(socket);
         this.listeners.delete(socket);
         socket.getUserData().pusherRoom = undefined;
@@ -268,6 +293,8 @@ export class PusherRoom {
     public close(): void {
         debug("Closing connection to room %s on back server", this.roomUrl);
         this.isClosing = true;
+        for (const unsubscribe of this.presenceSubscriptions.values()) unsubscribe();
+        this.presenceSubscriptions.clear();
         this.backConnection.cancel();
     }
 

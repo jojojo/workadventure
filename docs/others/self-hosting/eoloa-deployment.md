@@ -111,3 +111,19 @@ Ces tests utilisent des données factices ; ils n'appellent ni Portainer, ni Doc
 Après l'installation initiale du volume et du chargement dynamique, utiliser
 `npm run woka:add -- fichier.png --name "Nom"`.
 Voir [les Woka personnalisés](custom-wokas.md) pour l'installation, les remplacements et les sauvegardes.
+
+## Activer la présence événementielle (une fois)
+
+Après validation du raccordement n8n, ajouter le secret dédié en même temps que
+l'image Play, sans modifier les autres variables de production :
+
+```sh
+npm run prod:deploy -- --external-presence-token-file ~/.local/state/workadventure/presence-push-20261106/presence-token
+```
+
+Le fichier brut doit être hors dépôt, appartenir à l'utilisateur et avoir le mode
+600. Utiliser un secret aléatoire de 32 à 128 caractères URL-safe. Le script refuse
+un jeton déjà configuré ; les déploiements suivants se font sans cette option.
+Il sauvegarde la configuration effective avant l'ajout et vérifie la présence du
+secret dans le conteneur sans l'afficher. Les autres paramètres sont préservés.
+[Contrat et configuration n8n](external-presence.md).

@@ -631,7 +631,6 @@ class ConnectionManager {
         //user connected, set connected store for menu at true
         if (localUserStore.isLogged()) {
             userIsConnected.set(true);
-            externalPresenceSync.start();
         }
 
         return response;

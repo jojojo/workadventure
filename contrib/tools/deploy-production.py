@@ -226,6 +226,30 @@ def enable_custom_woka_volume(compose, before, mountpoint):
     return compose, expected
 
 
+def enable_external_presence(compose, before, token_file):
+    info = token_file.stat()
+    require(stat.S_IMODE(info.st_mode) == 0o600 and info.st_uid == os.getuid()
+            and not token_file.resolve().is_relative_to(ROOT),
+            "Le jeton de présence doit être un fichier privé 600 hors dépôt.")
+    token = token_file.read_text().strip()
+    require(bool(re.fullmatch(r"[A-Za-z0-9_-]{32,128}", token)), "Format du jeton de présence invalide.")
+    require("EXTERNAL_PRESENCE_API_TOKEN" not in compose
+            and "EXTERNAL_PRESENCE_API_TOKEN" not in environment_values(before["play"]["Config"]["Env"]),
+            "Le jeton de présence est déjà configuré ; ne pas le remplacer implicitement.")
+    blocks = list(re.finditer(r"^  play:\s*\n(?:(?!^  [a-zA-Z0-9_-]+:|^\S).)*", compose, re.M | re.S))
+    require(len(blocks) == 1, "Service Play ambigu pour la configuration de présence.")
+    block = blocks[0]
+    content = block.group()
+    require(len(re.findall(r"^    environment:\s*$", content, re.M)) == 1
+            and bool(re.search(r"^      - ", content, re.M)),
+            "Liste environment Play attendue pour la configuration de présence.")
+    changed = re.sub(r"^(    environment:)\s*$", lambda m: m[1] + "\n      - EXTERNAL_PRESENCE_API_TOKEN=" + token,
+                     content, count=1, flags=re.M)
+    expected = copy.deepcopy(before)
+    expected["play"]["Config"]["Env"].append("EXTERNAL_PRESENCE_API_TOKEN=" + token)
+    return compose[:block.start()] + changed + compose[block.end():], expected
+
+
 def verify_settings(before, after, expected_ids):
     require(set(before) == set(after), "La liste des services a changé.")
     for service, old in before.items():
@@ -296,7 +320,8 @@ def checks(directory):
         ("play", ["npm", "test", "--", "--run", "src/front/Chat/Connection/Matrix/tests",
                   "tests/front/ExternalModule/GoogleMeetSession.test.ts",
                   "tests/front/ExternalModule/GoogleMeetPanel.test.ts", "tests/front/ExternalModule/GoogleMeetMedia.test.ts",
-                  "tests/pusher/CustomWokas.test.ts"]),
+                  "tests/pusher/CustomWokas.test.ts", "tests/pusher/ExternalPresenceService.test.ts",
+                  "tests/pusher/ExternalModuleToken.test.ts"]),
         ("back", ["npm", "test", "--", "--run", "tests/Space.test.ts"])]
     for index, (package, command) in enumerate(commands):
         say(f"Validation {package} : {' '.join(command)}")
@@ -394,6 +419,9 @@ def deploy(api, args, state):
         # This is the only explicitly authorized configuration addition. Other settings remain checked.
         volume = api.docker("/volumes/create", method="POST", payload={"Name": CUSTOM_WOKA_VOLUME})
         candidate, expected_settings = enable_custom_woka_volume(candidate, before, volume["Mountpoint"])
+    if getattr(args, "external_presence_token_file", None):
+        candidate, expected_settings = enable_external_presence(candidate, expected_settings,
+                                                               args.external_presence_token_file.expanduser())
     save(directory / "stack-before.json", stack)
     save(directory / "inspect-before.json", before)
     save(directory / "compose-before.yml", compose)
@@ -439,6 +467,8 @@ def main():
     deploy_parser.add_argument("--release", help="Release officielle fusionnée ; déduite des tags sinon")
     deploy_parser.add_argument("--enable-custom-wokas", action="store_true",
                                help="Installer le volume persistant pour les Woka personnalisés (une fois)")
+    deploy_parser.add_argument("--external-presence-token-file", type=Path,
+                               help="Configurer le secret privé 600 du module présence (une fois)")
     commands.add_parser("rollback", help="Restaurer une sauvegarde créée par ce script").add_argument("backup", type=Path)
     args = parser.parse_args()
     os.umask(0o077)

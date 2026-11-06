@@ -26,8 +26,6 @@ export interface FrontConfigurationInterface {
     ENABLE_CHAT_UPLOAD: boolean;
     FALLBACK_LOCALE: string | undefined;
     OPID_WOKA_NAME_POLICY: OpidWokaNamePolicy | undefined;
-    EXTERNAL_PRESENCE_ENABLED: boolean;
-    EXTERNAL_PRESENCE_POLL_INTERVAL: number;
     ENABLE_REPORT_ISSUES_MENU: boolean | undefined;
     REPORT_ISSUES_URL: string | undefined;
     CLIENT_DISCONNECTION_RETENTION_MS: number;

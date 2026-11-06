@@ -49,16 +49,7 @@ Environment variables for the Play service (frontend and pusher).
 | `OPENID_LOCALE_CLAIM` | No | JWT claim to use for user locale. Defaults to 'locale' |
 | `OPENID_WOKA_NAME_POLICY` | No | Policy for avatar naming: 'user_input', 'allow_override_opid', or 'force_opid' |
 | `OPENID_TAGS_CLAIM` | No | JWT claim containing user tags/roles |
-| `EXTERNAL_PRESENCE_URL` | No | Optional HTTP endpoint returning external presence state for the current user |
-| `EXTERNAL_PRESENCE_AUTH_TOKEN` | No | Optional bearer token sent to the external presence endpoint |
-| `EXTERNAL_PRESENCE_MATCH_FIELD` | No | User field forwarded to the external presence endpoint. Defaults to 'identifier' |
-| `EXTERNAL_PRESENCE_POLL_INTERVAL` | No | Polling interval in milliseconds for external presence sync. Defaults to 5000 |
-| `THREE_CX_BASE_URL` | No | Optional 3CX base URL used for direct phone presence sync |
-| `THREE_CX_CLIENT_ID` | No | 3CX API client id used for direct phone presence sync |
-| `THREE_CX_CLIENT_SECRET` | No | 3CX API client secret used for direct phone presence sync |
-| `THREE_CX_MATCH_FIELD` | No | User field matched against 3CX users. Defaults to 'identifier' |
-| `THREE_CX_USER_FILTER_FIELD` | No | 3CX Users field used in the OData filter. Defaults to 'EmailAddress' |
-| `THREE_CX_ACTIVE_CALLS_PATH` | No | 3CX endpoint path returning active call state. Defaults to '/xapi/v1/ActiveCalls' |
+| `EXTERNAL_PRESENCE_API_TOKEN` | No | Dedicated secret (at least 32 characters) for n8n presence snapshots sent to `POST /external-module/event`, module `external-presence`. See [the event contract](external-presence.md). Never exposed to browsers. |
 | `DISABLE_ANONYMOUS` | No | If true, anonymous users cannot access the platform. Defaults to false |
 | `PROMETHEUS_AUTHORIZATION_TOKEN` | No | The token to access the Prometheus metrics. |
 | `PROMETHEUS_PORT` | No | The port to access the Prometheus metrics. If not set, the default port is used AND an authorization token is required. |

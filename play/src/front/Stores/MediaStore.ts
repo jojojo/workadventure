@@ -31,6 +31,7 @@ import { errorStore, warningMessageStore } from "./ErrorStore";
 import { WebviewOnOldIOS } from "./Errors/WebviewOnOldIOS";
 
 import { externalMeetingActiveStore } from "./ExternalMeetingStore";
+import { externalPhoneBusyStore } from "./ExternalPhoneStore";
 import { createSilentStore } from "./SilentStore";
 import { privacyShutdownStore } from "./PrivacyShutdownStore";
 import { inExternalServiceStore, myCameraStore, myMicrophoneStore, proximityMeetingStore } from "./MyMediaStore";
@@ -424,6 +425,7 @@ export const silentStore = createSilentStore();
 
 export const availabilityStatusStore = derived(
     [
+        externalPhoneBusyStore,
         externalMeetingActiveStore,
         inJitsiStore,
         inBbbStore,
@@ -438,6 +440,7 @@ export const availabilityStatusStore = derived(
         browserNotificationStore,
     ],
     ([
+        $externalPhoneBusyStore,
         $externalMeetingActiveStore,
         $inJitsiStore,
         $inBbbStore,
@@ -464,6 +467,7 @@ export const availabilityStatusStore = derived(
         if ($isListenerStore) return AvailabilityStatus.LISTENER;
         if ($requestedStatusStore) return $requestedStatusStore;
         if ($privacyShutdownStore) return AvailabilityStatus.AWAY;
+        if ($externalPhoneBusyStore) return AvailabilityStatus.BACK_IN_A_MOMENT;
 
         return AvailabilityStatus.ONLINE;
     },

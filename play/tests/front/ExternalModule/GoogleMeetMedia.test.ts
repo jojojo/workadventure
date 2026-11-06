@@ -1,6 +1,8 @@
 import { afterAll, afterEach, describe, expect, it, vi } from "vitest";
 import { get } from "svelte/store";
 import { AvailabilityStatus } from "@workadventure/messages";
+import { ExternalPresenceSync } from "../../../src/front/Connection/ExternalPresenceSync";
+import { externalPhoneBusyStore } from "../../../src/front/Stores/ExternalPhoneStore";
 import { externalMeetingActiveStore } from "../../../src/front/Stores/ExternalMeetingStore";
 import {
     availabilityStatusStore,
@@ -41,6 +43,8 @@ vi.mock("../../../src/front/Stores/PeerStore", async () => ({
     screenShareStreamElementsStore: (await import("svelte/store")).writable([]),
 }));
 
+const sync = new ExternalPresenceSync();
+
 const previous = {
     camera: get(requestedCameraState),
     microphone: get(requestedMicrophoneState),
@@ -51,6 +55,7 @@ const previous = {
 };
 
 afterEach(() => {
+    sync.stop();
     externalMeetingActiveStore.set(false);
     inBackgroundSettingsStore.set(previous.background);
     requestedStatusStore.set(previous.status);
@@ -88,4 +93,40 @@ vi.mock("../../../src/front/Stores/HelpSettingsStore", () => ({ hideHelpCameraSe
 vi.mock("../../../src/front/Stores/IsStreamingStore", async () => {
     const { writable } = await import("svelte/store");
     return { isLiveStreamingAudioStore: writable(false), isLiveStreamingStore: writable(false) };
+});
+
+describe("phone presence over the existing WebSocket", () => {
+    it("overlays the phone status without saving it as a manual preference", () => {
+        requestedStatusStore.set(null);
+        sync.apply({ status: "BUSY" });
+        expect(get(availabilityStatusStore)).toBe(AvailabilityStatus.BACK_IN_A_MOMENT);
+        expect(get(requestedStatusStore)).toBeNull();
+        sync.apply({ status: "ONLINE" });
+        expect(get(availabilityStatusStore)).toBe(AvailabilityStatus.ONLINE);
+    });
+    it("preserves manual DND before and during the call, then reflects the latest preference", () => {
+        requestedStatusStore.set(AvailabilityStatus.DO_NOT_DISTURB);
+        sync.apply({ status: "BUSY" });
+        expect(get(availabilityStatusStore)).toBe(AvailabilityStatus.DO_NOT_DISTURB);
+        requestedStatusStore.set(null);
+        expect(get(availabilityStatusStore)).toBe(AvailabilityStatus.BACK_IN_A_MOMENT);
+        requestedStatusStore.set(AvailabilityStatus.BUSY);
+        sync.apply({ status: "ONLINE" });
+        expect(get(availabilityStatusStore)).toBe(AvailabilityStatus.BUSY);
+    });
+    it("treats unknown phone data conservatively and releases only its overlay on disconnect", () => {
+        requestedStatusStore.set(null);
+        sync.apply({ status: "UNKNOWN" });
+        expect(get(availabilityStatusStore)).toBe(AvailabilityStatus.BACK_IN_A_MOMENT);
+        sync.stop();
+        expect(get(availabilityStatusStore)).toBe(AvailabilityStatus.ONLINE);
+        requestedStatusStore.set(AvailabilityStatus.BACK_IN_A_MOMENT);
+        sync.apply({ status: "ONLINE" });
+        expect(get(availabilityStatusStore)).toBe(AvailabilityStatus.BACK_IN_A_MOMENT);
+    });
+    it("ignores malformed events", () => {
+        sync.stop();
+        for (const value of [null, {}, { status: "invalid" }]) sync.apply(value);
+        expect(get(externalPhoneBusyStore)).toBe(false);
+    });
 });

@@ -104,6 +104,7 @@ import { AbortError } from "@workadventure/shared-utils/src/Abort/AbortError";
 import { asError } from "catch-unknown";
 import { abortAny } from "@workadventure/shared-utils/src/Abort/AbortAny";
 import { abortTimeout } from "@workadventure/shared-utils/src/Abort/AbortTimeout";
+import { EXTERNAL_PRESENCE_MODULE_ID } from "../../common/ExternalPresence";
 import type { ReceiveEventEvent } from "../Api/Events/ReceiveEventEvent";
 import type { SetPlayerVariableEvent } from "../Api/Events/SetPlayerVariableEvent";
 import { iframeListener } from "../Api/IframeListener";
@@ -132,6 +133,7 @@ import {
 import { requestedScreenSharingState } from "../Stores/ScreenSharingStore";
 import { selectCompanionSceneVisibleStore } from "../Stores/SelectCompanionStore";
 import { selectCharacterSceneVisibleStore } from "../Stores/SelectCharacterStore";
+import { externalPresenceSync } from "./ExternalPresenceSync";
 import { connectionManager } from "./ConnectionManager";
 import type {
     GroupCreatedUpdatedMessageInterface,
@@ -790,6 +792,10 @@ export class RoomConnection implements RoomConnection {
                     break;
                 }
                 case "externalModuleMessage": {
+                    if (message.externalModuleMessage.moduleId === EXTERNAL_PRESENCE_MODULE_ID) {
+                        externalPresenceSync.apply(message.externalModuleMessage.message);
+                        break;
+                    }
                     this._externalModuleMessage.next(message.externalModuleMessage);
                     break;
                 }
@@ -2285,6 +2291,7 @@ export class RoomConnection implements RoomConnection {
         this._spacePublicMessageEvent.complete();
         this._joinSpaceRequestMessage.complete();
         this._leaveSpaceRequestMessage.complete();
+        externalPresenceSync.stop();
         this._externalModuleMessage.complete();
         this._spaceDestroyedMessage.complete();
     }

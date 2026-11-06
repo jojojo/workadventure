@@ -26,6 +26,23 @@ def container(service="play"):
 
 
 class DeploymentSafetyTests(unittest.TestCase):
+    def test_presence_setup_preserves_other_services_and_settings(self):
+        before = {"play": container()}
+        compose = "services:\n  play:\n    image: old\n    environment:\n      - MATRIX_AUTO_SYNC=false\n  back:\n    environment:\n      - KEEP=true\n"
+        with tempfile.TemporaryDirectory() as directory:
+            secret = Path(directory) / "presence-token"
+            secret.write_text("synthetic-test-credential-with-32-characters")
+            secret.chmod(0o600)
+            changed, expected = deploy.enable_external_presence(compose, before, secret)
+            self.assertEqual(changed.replace("      - EXTERNAL_PRESENCE_API_TOKEN=" + secret.read_text() + "\n", ""), compose)
+            self.assertNotEqual(expected['play']['Config']['Env'], before['play']['Config']['Env'])
+            deploy.verify_settings(expected, copy.deepcopy(expected), {'play': 'sha256:old'})
+            with self.assertRaises(deploy.DeploymentError):
+                deploy.enable_external_presence(changed, expected, secret)
+            secret.chmod(0o644)
+            with self.assertRaises(deploy.DeploymentError):
+                deploy.enable_external_presence(compose, before, secret)
+
     def test_custom_woka_setup_adds_only_the_authorized_volume(self):
         before = {"play": container()}
         before["play"]["Mounts"] = []

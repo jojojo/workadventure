@@ -5,7 +5,11 @@ import { z } from "zod";
 import Debug from "debug";
 import { apiClientRepository } from "../services/ApiClientRepository";
 import { adminToken } from "../middlewares/AdminToken";
+import { externalModuleToken } from "../middlewares/ExternalModuleToken";
 import { validatePostQuery } from "../services/QueryValidator";
+
+import { EXTERNAL_PRESENCE_MODULE_ID } from "../../common/ExternalPresence";
+import { externalPresenceService } from "../services/ExternalPresenceService";
 import { BaseHttpController } from "./BaseHttpController";
 
 const debug = Debug("pusher:requests");
@@ -350,9 +354,18 @@ export class AdminController extends BaseHttpController {
     }
 
     dispatchExternalModuleEvent(): void {
-        this.app.post("/external-module/event", [adminToken], async (req: Request, res: Response) => {
+        this.app.post("/external-module/event", [externalModuleToken], async (req: Request, res: Response) => {
             debug(`AdminController => [${req.method}] ${req.originalUrl} — IP: ${req.ip} — Time: ${Date.now()}`);
             const body = req.body;
+            if (body?.data?.moduleId === EXTERNAL_PRESENCE_MODULE_ID) {
+                try {
+                    externalPresenceService.update(body.data.message);
+                    res.send("ok");
+                } catch {
+                    res.status(400).send("Invalid external presence snapshot");
+                }
+                return;
+            }
             try {
                 if (typeof body.data.moduleId !== "string") {
                     throw new Error("Incorrect roomId parameter");

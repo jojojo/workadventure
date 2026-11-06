@@ -98,8 +98,6 @@ if (typeof window !== "undefined" && window.env === undefined) {
         BYPASS_PWA: undefined,
         PROVIDE_DEFAULT_WOKA_NAME: undefined,
         PROVIDE_DEFAULT_WOKA_TEXTURE: undefined,
-        EXTERNAL_PRESENCE_ENABLED: false,
-        EXTERNAL_PRESENCE_POLL_INTERVAL: 5000,
         MATRIX_AUTO_SYNC: "true",
         ENABLE_TUTORIAL: false,
     };

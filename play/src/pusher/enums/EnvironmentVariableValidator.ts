@@ -245,41 +245,13 @@ export const EnvironmentVariables = z.object({
         "Policy for avatar naming: 'user_input', 'allow_override_opid', or 'force_opid'",
     ),
     OPENID_TAGS_CLAIM: z.string().optional().describe("JWT claim containing user tags/roles"),
-    EXTERNAL_PRESENCE_URL: z
+    EXTERNAL_PRESENCE_API_TOKEN: z
         .string()
+        .min(32)
         .optional()
-        .describe("Optional HTTP endpoint returning external presence state for the current user"),
-    EXTERNAL_PRESENCE_AUTH_TOKEN: z
-        .string()
-        .optional()
-        .describe("Optional bearer token sent to the external presence endpoint"),
-    EXTERNAL_PRESENCE_MATCH_FIELD: z
-        .enum(["identifier", "username"])
-        .optional()
-        .describe("User field forwarded to the external presence endpoint. Defaults to 'identifier'"),
-    EXTERNAL_PRESENCE_POLL_INTERVAL: PositiveIntAsString.optional()
-        .transform((val) => toNumber(val, 5000))
-        .describe("Polling interval in milliseconds for external presence sync. Defaults to 5000"),
-    THREE_CX_BASE_URL: z
-        .string()
-        .url()
-        .optional()
-        .describe("Optional 3CX base URL used for direct phone presence sync"),
-    THREE_CX_CLIENT_ID: z.string().optional().describe("3CX API client id used for direct phone presence sync"),
-    THREE_CX_CLIENT_SECRET: z.string().optional().describe("3CX API client secret used for direct phone presence sync"),
-    THREE_CX_MATCH_FIELD: z
-        .enum(["identifier", "username"])
-        .optional()
-        .describe("User field matched against 3CX users. Defaults to 'identifier'"),
-    THREE_CX_USER_FILTER_FIELD: z
-        .string()
-        .optional()
-        .describe("3CX Users field used in the OData filter. Defaults to 'EmailAddress'"),
-    THREE_CX_ACTIVE_CALLS_PATH: z
-        .string()
-        .optional()
-        .describe("3CX endpoint path returning active call state. Defaults to '/xapi/v1/ActiveCalls'"),
-
+        .describe(
+            "Dedicated credential for external-presence events at /external-module/event; never exposed to browsers",
+        ),
     DISABLE_ANONYMOUS: BoolAsString.optional()
         .transform((val) => toBool(val, false))
         .describe("If true, anonymous users cannot access the platform. Defaults to false"),

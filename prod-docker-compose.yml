@@ -90,6 +90,7 @@ services:
       - GOOGLE_DRIVE_PICKER_APP_ID=33618006458
       - GOOGLE_OAUTH_CLIENT_SECRET=${GOOGLE_OAUTH_CLIENT_SECRET}
       - MAP_STORAGE_API_TOKEN=exserimus72
+      # Inject EXTERNAL_PRESENCE_API_TOKEN through the deployment secret configuration.
       - MATRIX_API_URI=https://matrix.eoloa.eu/_matrix
       - MATRIX_PUBLIC_URI=https://matrix.eoloa.eu
       - MATRIX_DOMAIN=matrix.eoloa.eu
@@ -101,9 +102,6 @@ services:
       - MATRIX_PRESERVE_USER_PROFILES=true
       - MATRIX_AUTO_SYNC=false
 
-      - EXTERNAL_PRESENCE_URL=https://n8n.eoloa.eu/webhook/8bcec9f4-1167-401d-8c07-96f0a472363a
-      - EXTERNAL_PRESENCE_MATCH_FIELD=identifier
-      - EXTERNAL_PRESENCE_POLL_INTERVAL=5000
     
     restart: always
     networks:

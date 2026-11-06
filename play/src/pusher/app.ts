@@ -31,7 +31,6 @@ import { WokaService } from "./services/WokaService";
 import { UserController } from "./controllers/UserController";
 import { MatrixRoomAreaController } from "./controllers/MatrixRoomAreaController";
 import { LocalScriptController } from "./controllers/LocalScriptController";
-import { ExternalPresenceController } from "./controllers/ExternalPresenceController";
 import { LivekitWebhookController } from "./controllers/LivekitWebhookController";
 import { analyticsEventsQueue } from "./services/AnalyticsEventsQueue";
 import { registerCustomWokaRoutes } from "./controllers/CustomWokaController";
@@ -95,7 +94,6 @@ class App {
         const frontAssets = createFrontAssets();
         new PingController(this.app, frontAssets);
         new LocalScriptController(this.app);
-        new ExternalPresenceController(this.app);
         registerCustomWokaRoutes(this.app);
 
         if (ENABLE_OPENAPI_ENDPOINT) {

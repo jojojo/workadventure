@@ -154,22 +154,25 @@ cartes n'est nécessaire. La validation fonctionnelle avec un compte réel pour 
 
 ### Présence externe et téléphonie 3CX — actif
 
-**Besoin :** synchroniser la disponibilité WorkAdventure avec une source externe, notamment les appels 3CX.
+**Besoin :** synchroniser la disponibilité avec les appels 3CX via le producteur WebSocket n8n.
 
-- Code : `play/src/front/Connection/ExternalPresenceSync.ts`,
-  `play/src/pusher/controllers/ExternalPresenceController.ts`,
-  `play/src/pusher/services/ThreeCxClient.ts`, `ThreeCxPresenceService.ts`, et raccordements
-  dans `ConnectionManager.ts`, `play/src/pusher/app.ts` et la configuration front/pusher.
-- Configuration : familles `EXTERNAL_PRESENCE_*` et `THREE_CX_*` ; valeurs documentées dans
-  [les variables d'environnement](docs/others/self-hosting/env-variables.md).
-- Le libellé français de `BACK_IN_A_MOMENT` est adapté en « 📞 Au téléphone » dans
-  `play/src/i18n/fr-FR/actionbar.ts`. Réexaminer ce choix si l'amont introduit un statut téléphonique distinct.
-- Origines : `acfcb8a82`, `490274bf3`, `50d1effb4` ; compléments de cache, d'en-têtes et de suivi
-  dans `dd55848b6`, `506feb51a`, `d9a21288b`.
-- Validation : début/fin d'appel, correspondance des utilisateurs, source indisponible, arrêt du polling à la
-  déconnexion et retour au statut prévu. Vérifier aussi l'absence d'exposition des identifiants 3CX côté navigateur.
-- **Retrait possible :** intégration officielle disponible en auto-hébergement, couvrant les sources et
-  règles de correspondance utilisées. Migrer la configuration et retirer le polling ou les routes en double.
+- Depuis la migration du 6 novembre 2026 : module `external-presence` sur l'API existante
+  `POST /external-module/event`, secret dédié `EXTERNAL_PRESENCE_API_TOKEN`. Routage par identité
+  dans `ExternalPresenceService.ts` et `PusherRoom.ts`, transport `externalModuleMessage` existant.
+- Front : `ExternalPresenceSync.ts`, `ExternalPhoneStore.ts`, `MediaStore.ts`, `RoomConnection.ts`.
+  Présence transitoire, sans écraser ni enregistrer le statut manuel. Libellé français
+  `BACK_IN_A_MOMENT` conservé : « 📞 Au téléphone ».
+- Polling navigateur, GET de présence, client 3CX direct et anciennes variables retirés.
+  n8n reste seul consommateur 3CX ; snapshots périodiques du producteur pour contrôle de fraîcheur.
+- Cache ciblé, état à l'entrée dans une salle, séquences monotones et rejet des doublons/retards.
+  Expiration locale après 120 s : UNKNOWN conservateur. Aucun secret téléphonique côté navigateur.
+- [Contrat, configuration, limites et retour arrière](docs/others/self-hosting/external-presence.md).
+  Une seule instance Play requise tant qu'aucun bus partagé n'est raccordé.
+- Validation : tests du service, de l'authentification et de la disponibilité dérivée réelle ;
+  SQL n8n sur MariaDB isolée. Un appel réel reste nécessaire après déploiement pour valider
+  l'ensemble 3CX → n8n → WorkAdventure.
+- **Retrait possible :** intégration officielle disponible en auto-hébergement couvrant le même
+  producteur et les règles d'identité, de disponibilité et de fraîcheur.
 
 ### Contrôle du profil Matrix — actif
 

@@ -72,7 +72,11 @@ COPY libs/store-utils/package.json libs/store-utils/package.json
 COPY libs/shared-utils/package.json libs/shared-utils/package.json
 ENV NODE_ENV=production
 ENV UWS_HTTP_MAX_HEADERS_SIZE=16384
-RUN npm ci --omit=dev --workspace workadventure-play
+# Reuse verified package tarballs from the native builder without copying its
+# architecture-specific node_modules or retaining the npm cache in the image.
+# The writable bind is discarded after this RUN; npm still installs for TARGETPLATFORM.
+RUN --mount=type=bind,from=builder,source=/root/.npm/_cacache,target=/root/.npm/_cacache,rw \
+    npm ci --prefer-offline --omit=dev --workspace workadventure-play
 COPY --from=builder /usr/src/libs /usr/src/libs
 COPY --from=builder --chown=node:node /usr/src/play /usr/src/play
 # useful for profiling (with --prof) because it write a file in current directory

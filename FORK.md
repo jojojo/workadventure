@@ -162,6 +162,8 @@ cartes n'est nécessaire. La validation fonctionnelle avec un compte réel pour 
 - Front : `ExternalPresenceSync.ts`, `ExternalPhoneStore.ts`, `MediaStore.ts`, `RoomConnection.ts`.
   Présence transitoire, sans écraser ni enregistrer le statut manuel. Libellé français
   `BACK_IN_A_MOMENT` conservé : « 📞 Au téléphone ».
+- Construction Play : réutilisation temporaire du cache de tarballs du builder pour l'installation
+  npm de production, à la suite d'un timeout réseau de construction ; dépendances amd64 réinstallées.
 - Polling navigateur, GET de présence, client 3CX direct et anciennes variables retirés.
   n8n reste seul consommateur 3CX ; snapshots périodiques du producteur pour contrôle de fraîcheur.
 - Cache ciblé, état à l'entrée dans une salle, séquences monotones et rejet des doublons/retards.

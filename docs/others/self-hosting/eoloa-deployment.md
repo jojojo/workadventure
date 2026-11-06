@@ -127,3 +127,9 @@ un jeton déjà configuré ; les déploiements suivants se font sans cette optio
 Il sauvegarde la configuration effective avant l'ajout et vérifie la présence du
 secret dans le conteneur sans l'afficher. Les autres paramètres sont préservés.
 [Contrat et configuration n8n](external-presence.md).
+
+La construction Play réutilise les tarballs npm vérifiés du builder via un montage
+BuildKit temporaire. Les dépendances de production sont toujours installées pour
+la plateforme cible ; aucun `node_modules` ARM ni cache npm n'est copié dans
+l'image amd64. Ce montage limite les téléchargements répétés après un incident
+réseau npm, sans modifier le lockfile ou désactiver les scripts d'installation.

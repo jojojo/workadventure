@@ -240,14 +240,27 @@ def enable_external_presence(compose, before, token_file):
     require(len(blocks) == 1, "Service Play ambigu pour la configuration de présence.")
     block = blocks[0]
     content = block.group()
-    require(len(re.findall(r"^    environment:\s*$", content, re.M)) == 1
-            and bool(re.search(r"^      - ", content, re.M)),
+    environment = re.search(r"^(    environment:[ \t]*\n)([ ]{4,})- ", content, re.M)
+    require(len(re.findall(r"^    environment:[ \t]*$", content, re.M)) == 1 and environment is not None,
             "Liste environment Play attendue pour la configuration de présence.")
-    changed = re.sub(r"^(    environment:)\s*$", lambda m: m[1] + "\n      - EXTERNAL_PRESENCE_API_TOKEN=" + token,
-                     content, count=1, flags=re.M)
+    # YAML permits an indentless sequence at the same level as the environment key.
+    # Match that exact sequence indentation rather than guessing from other service lists.
+    insertion = environment.end(1)
+    changed = (content[:insertion] + environment[2] + "- EXTERNAL_PRESENCE_API_TOKEN=" + token + "\n"
+               + content[insertion:])
     expected = copy.deepcopy(before)
     expected["play"]["Config"]["Env"].append("EXTERNAL_PRESENCE_API_TOKEN=" + token)
     return compose[:block.start()] + changed + compose[block.end():], expected
+
+
+def validate_compose(compose_file, stack_env, directory):
+    log_file = directory / "compose-validation.log"
+    save(log_file, "")
+    environment = {**os.environ, **{entry["name"]: entry["value"] for entry in stack_env}}
+    with log_file.open("a") as log:
+        result = subprocess.run(["docker", "compose", "-f", str(compose_file), "config", "--quiet"],
+                                cwd=directory, env=environment, stdout=log, stderr=subprocess.STDOUT)
+    require(result.returncode == 0, f"Compose invalide ; voir {log_file}.")
 
 
 def verify_settings(before, after, expected_ids):
@@ -416,7 +429,7 @@ def deploy(api, args, state):
     candidate = replace_images(compose, before, desired)
     expected_settings = before
     if getattr(args, "enable_custom_wokas", False):
-        # This is the only explicitly authorized configuration addition. Other settings remain checked.
+        # Explicitly requested Woka mount addition. Other settings remain checked.
         volume = api.docker("/volumes/create", method="POST", payload={"Name": CUSTOM_WOKA_VOLUME})
         candidate, expected_settings = enable_custom_woka_volume(candidate, before, volume["Mountpoint"])
     if getattr(args, "external_presence_token_file", None):
@@ -427,6 +440,7 @@ def deploy(api, args, state):
     save(directory / "compose-before.yml", compose)
     save(directory / "compose-after.yml", candidate)
     save(directory / "deployment.json", {"commit": commit, "release": release, "images": desired})
+    validate_compose(directory / "compose-after.yml", stack.get("Env", []), directory)
     checks(directory)
     require(not git("status", "--porcelain") and git("rev-parse", "HEAD") == commit,
             "Le dépôt a changé pendant la validation ; relancer après vérification.")

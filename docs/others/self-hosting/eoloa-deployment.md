@@ -133,3 +133,14 @@ BuildKit temporaire. Les dépendances de production sont toujours installées po
 la plateforme cible ; aucun `node_modules` ARM ni cache npm n'est copié dans
 l'image amd64. Ce montage limite les téléchargements répétés après un incident
 réseau npm, sans modifier le lockfile ou désactiver les scripts d'installation.
+
+Avant validation et construction, le script contrôle maintenant la syntaxe du
+Compose candidat avec `docker compose config --quiet`, en reprenant les variables
+de stack Portainer. L'ajout du secret préserve l'indentation réelle des listes
+`environment` (y compris les séquences YAML sans indentation supplémentaire).
+
+Le volume d'état Coturn `/var/lib/coturn` doit rester explicitement rattaché au
+volume externe `eoloa-coturn-state` dans la stack effective. Il réutilise le volume
+initial ; les certificats conservent leur montage séparé en lecture seule. Un
+volume anonyme renouvelé lors d'une recréation ne constitue pas une restauration
+validée : vérifier sa source avant de poursuivre.

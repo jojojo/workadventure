@@ -43,6 +43,27 @@ class DeploymentSafetyTests(unittest.TestCase):
             with self.assertRaises(deploy.DeploymentError):
                 deploy.enable_external_presence(compose, before, secret)
 
+    def test_presence_setup_preserves_indentless_environment_lists(self):
+        before = {"play": container()}
+        compose = "services:\n  play:\n    volumes:\n      - preserved:/data\n    environment:\n    - MATRIX_AUTO_SYNC=false\n    - KEEP=true\n  back:\n    image: old\n"
+        with tempfile.TemporaryDirectory() as directory:
+            secret = Path(directory) / "presence-token"
+            secret.write_text("synthetic-test-credential-with-32-characters")
+            secret.chmod(0o600)
+            changed, _ = deploy.enable_external_presence(compose, before, secret)
+            insertion = "    - EXTERNAL_PRESENCE_API_TOKEN=" + secret.read_text() + "\n"
+            self.assertIn("    environment:\n" + insertion + "    - MATRIX_AUTO_SYNC=false", changed)
+            self.assertEqual(changed.replace(insertion, ""), compose)
+
+    def test_compose_validation_fails_before_build_or_stack_update(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            with patch.object(deploy.subprocess, "run", return_value=Mock(returncode=1)) as run:
+                with self.assertRaises(deploy.DeploymentError):
+                    deploy.validate_compose(root / "compose.yml", [{"name": "TEST", "value": "private"}], root)
+                self.assertEqual(run.call_args.kwargs['env']['TEST'], 'private')
+                self.assertNotIn('private', run.call_args.args[0])
+
     def test_custom_woka_setup_adds_only_the_authorized_volume(self):
         before = {"play": container()}
         before["play"]["Mounts"] = []

@@ -170,6 +170,14 @@ cartes n'est nécessaire. La validation fonctionnelle avec un compte réel pour 
   n8n reste seul consommateur 3CX ; snapshots périodiques du producteur pour contrôle de fraîcheur.
 - Cache ciblé, état à l'entrée dans une salle, séquences monotones et rejet des doublons/retards.
   Expiration locale après 120 s : UNKNOWN conservateur. Aucun secret téléphonique côté navigateur.
+- Correctif producteur n8n du 12 novembre 2026 : omission des UNKNOWN frais dus
+  seulement à DISCONNECTED/RESYNC, sans renouveler le délai du cache Play.
+  Les lots UNKNOWN des 74 postes à 11 h 33 et 11 h 37 CET correspondaient à des
+  réouvertures du micro 728/807 ms après : ils étaient interprétés comme une
+  occupation téléphonique et interrompaient les bulles. Seul le SELECT de
+  correspondance n8n change ; appels réels et expiration 120 s préservés.
+  Tests SQL, module 3CX et cache Play réussis ; conversation réelle après
+  publication restant à confirmer. Aucun redéploiement Play/Back.
 - [Contrat, configuration, limites et retour arrière](docs/others/self-hosting/external-presence.md).
   Une seule instance Play requise tant qu'aucun bus partagé n'est raccordé.
 - Validation : tests du service, de l'authentification et de la disponibilité dérivée réelle ;

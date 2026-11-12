@@ -40,6 +40,15 @@ n8n. Le producteur utilise l'horloge en millisecondes multipliée par 1000.
 Le SQL de correspondance et le workflow inactif sans credentials sont versionnés
 sous `cloudron-admin/workflows/n8n.eoloa.eu/3cx-presence/`.
 
+Depuis le correctif n8n du 12 novembre 2026, le producteur omet les identités
+dont l'état UNKNOWN frais provient seulement d'une reconnexion DISCONNECTED/RESYNC.
+Play conserve alors son dernier état jusqu'à son échéance initiale de 120 s :
+aucun ONLINE ni heartbeat artificiel n'est envoyé. Cela empêche une reconnexion
+3CX de moins d'une seconde de fermer les bulles et les médias WorkAdventure.
+Les vrais appels BUSY et les inconnus non transitoires restent pris en compte.
+La requête corrigée est publiée dans n8n ; aucun changement d'image Play/Back
+ni rechargement des navigateurs n'est nécessaire pour cette correction.
+
 Un lot invalide, trop ancien (120 s), trop futur (30 s), ou dépassant 10 000
 identités en cache est refusé intégralement avec HTTP 400. Un credential incorrect
 reçoit HTTP 401. Les doublons et séquences plus anciennes sont ignorés avec succès,

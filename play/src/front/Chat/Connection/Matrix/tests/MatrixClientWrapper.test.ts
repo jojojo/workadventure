@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { ICreateClientOpts } from "matrix-js-sdk";
-import { MatrixError } from "matrix-js-sdk";
+import { createClient as createSdkClient, HttpApiEvent, MatrixError } from "matrix-js-sdk";
 import type { SecretStorageKeyDescriptionAesV1 } from "matrix-js-sdk/lib/secret-storage";
 import type { MatrixClientWrapperInterface, MatrixLocalUserStore } from "../MatrixClientWrapper";
 import { InvalidLoginTokenError, MatrixClientWrapper, MissingMatrixCredentialsError } from "../MatrixClientWrapper";
@@ -332,6 +332,156 @@ describe("MatrixClientWrapper", () => {
         });
     });
 
+    describe("token renewal", () => {
+        function renewableSession() {
+            let accessToken = "expired-token";
+            let refreshToken: string | null = "refresh-token";
+            return {
+                ...basicLocalUserStoreMock,
+                getLocalUser: vi.fn().mockReturnValue({ uuid: "wa-alice" }),
+                getMatrixSessionOwner: vi.fn().mockReturnValue("wa-alice"),
+                getMatrixUserId: vi.fn().mockReturnValue("@alice:example.org"),
+                getMatrixDeviceId: vi.fn().mockReturnValue("VERIFIED_DEVICE"),
+                clearMatrixSession: vi.fn(),
+                setMatrixDeviceId: vi.fn(),
+                setMatrixAccessTokenExpireDate: vi.fn(),
+                getMatrixAccessToken: () => accessToken,
+                getMatrixRefreshToken: () => refreshToken,
+                setMatrixAccessToken: vi.fn((value: string) => {
+                    accessToken = value;
+                }),
+                setMatrixRefreshToken: vi.fn((value: string | null) => {
+                    refreshToken = value;
+                }),
+            } satisfies MatrixLocalUserStore;
+        }
+
+        function requestUrl(input: RequestInfo | URL): string {
+            return typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
+        }
+
+        function homeserver(onRefresh?: () => Response | Promise<Response>) {
+            return vi.fn<typeof fetch>().mockImplementation(async (input, init) => {
+                const url = requestUrl(input);
+                if (url.endsWith("/refresh")) {
+                    expect(JSON.parse(init?.body as string)).toEqual({ refresh_token: "refresh-token" });
+                    if (onRefresh) return onRefresh();
+                    return new Response(
+                        JSON.stringify({
+                            access_token: "renewed-token",
+                            refresh_token: "rotated-refresh",
+                            expires_in_ms: 60_000,
+                        }),
+                        { status: 200 },
+                    );
+                }
+                expect(url).toContain("/account/whoami");
+                if (new Headers(init?.headers).get("Authorization") === "Bearer expired-token") {
+                    return new Response(JSON.stringify({ errcode: "M_UNKNOWN_TOKEN", error: "Expired" }), {
+                        status: 401,
+                        headers: { "Content-Type": "application/json" },
+                    });
+                }
+                return new Response(JSON.stringify({ user_id: "@alice:example.org", device_id: "VERIFIED_DEVICE" }), {
+                    status: 200,
+                });
+            });
+        }
+
+        it("renews an expired session after reopening and persists the rotated tokens for the next reopen", async () => {
+            const store = renewableSession();
+            const fetchFn = homeserver();
+            const createClient = (opts: ICreateClientOpts) => createSdkClient({ ...opts, fetchFn });
+            const client = await new MatrixClientWrapper(
+                "https://matrix.example.org",
+                store,
+                createClient,
+            ).initMatrixClient();
+
+            await expect(client.whoami()).resolves.toMatchObject({ device_id: "VERIFIED_DEVICE" });
+            expect(store.getMatrixAccessToken()).toBe("renewed-token");
+            expect(store.getMatrixRefreshToken()).toBe("rotated-refresh");
+            expect(store.clearMatrixSession).not.toHaveBeenCalled();
+            expect(store.setMatrixAccessTokenExpireDate).toHaveBeenCalledWith(expect.any(Date));
+
+            const reopened = await new MatrixClientWrapper(
+                "https://matrix.example.org",
+                store,
+                createClient,
+            ).initMatrixClient();
+            await expect(reopened.whoami()).resolves.toMatchObject({ device_id: "VERIFIED_DEVICE" });
+            expect(fetchFn.mock.calls.filter(([url]) => requestUrl(url).endsWith("/refresh"))).toHaveLength(1);
+        });
+
+        it("renews before validating an existing session on SSO return instead of replacing its device", async () => {
+            const store = renewableSession();
+            const fetchFn = homeserver();
+            const createClient = (opts: ICreateClientOpts) => createSdkClient({ ...opts, fetchFn });
+
+            await new MatrixClientWrapper(
+                "https://matrix.example.org",
+                store,
+                createClient,
+            ).resumeSessionOrExchangeLoginToken("unused-sso-token");
+
+            expect(store.getMatrixAccessToken()).toBe("renewed-token");
+            expect(store.clearMatrixSession).not.toHaveBeenCalled();
+            expect(store.setMatrixDeviceId).not.toHaveBeenCalled();
+        });
+
+        it.each(["network", "rate-limit", "server-error", "revoked", "changed-owner"])(
+            "does not overwrite credentials after a renewal failure: %s",
+            async (reason) => {
+                const store = renewableSession();
+                const fetchFn = homeserver(() => {
+                    if (reason === "network") throw new TypeError("Failed to fetch");
+                    if (reason === "changed-owner") {
+                        store.getMatrixSessionOwner.mockReturnValue("wa-bob");
+                        return new Response(
+                            JSON.stringify({
+                                access_token: "stale-result",
+                                refresh_token: "stale-refresh",
+                                expires_in_ms: 60_000,
+                            }),
+                        );
+                    }
+                    return new Response(
+                        JSON.stringify({
+                            errcode:
+                                reason === "revoked"
+                                    ? "M_UNKNOWN_TOKEN"
+                                    : reason === "rate-limit"
+                                      ? "M_LIMIT_EXCEEDED"
+                                      : "M_UNKNOWN",
+                            error: "Renewal failed",
+                        }),
+                        {
+                            status: reason === "revoked" ? 401 : reason === "rate-limit" ? 429 : 503,
+                            headers: { "Content-Type": "application/json" },
+                        },
+                    );
+                });
+                const createClient = (opts: ICreateClientOpts) => createSdkClient({ ...opts, fetchFn });
+                const client = await new MatrixClientWrapper(
+                    "https://matrix.example.org",
+                    store,
+                    createClient,
+                ).initMatrixClient();
+                const loggedOut = vi.fn();
+                client.on(HttpApiEvent.SessionLoggedOut, loggedOut);
+                try {
+                    await expect(client.whoami()).rejects.toThrow();
+                    expect(store.getMatrixAccessToken()).toBe("expired-token");
+                    expect(store.getMatrixRefreshToken()).toBe("refresh-token");
+                    expect(store.setMatrixAccessToken).not.toHaveBeenCalled();
+                    expect(loggedOut).toHaveBeenCalledTimes(reason === "revoked" ? 1 : 0);
+                } finally {
+                    client.off(HttpApiEvent.SessionLoggedOut, loggedOut);
+                }
+            },
+        );
+    });
+
     describe("resumeSessionOrExchangeLoginToken", () => {
         const storedUser = "@alice:example.org";
         const storedDevice = "VERIFIED_DEVICE";
@@ -487,6 +637,7 @@ describe("MatrixClientWrapper", () => {
             expect(loginRequest).toHaveBeenCalledWith({
                 type: "m.login.token",
                 token: "LoginToken",
+                refresh_token: true,
                 initial_device_display_name: "WorkAdventure",
             });
             expect(localUserStoreMock.setMatrixUserId).toHaveBeenCalledWith("@alice:example.org");

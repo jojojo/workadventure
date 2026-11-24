@@ -217,6 +217,16 @@ et impose une nouvelle vérification dans Element.
 - Une session révoquée est remplacée ; un incident réseau ou une limitation temporaire ne crée pas de nouvel
   appareil. Une déconnexion explicite reste une vraie déconnexion Matrix. La première vérification, un nouveau
   navigateur ou l'effacement des données peuvent toujours nécessiter une vérification.
+- Correctif local du 13 novembre 2026, **non déployé** : demande de jetons renouvelables au login et
+  raccordement de `tokenRefreshFunction` au SDK, pour le chat et le contrôle `/account/whoami` du retour SSO.
+  Les jetons renouvelés sont enregistrés avant leur utilisation pour permettre la réouverture suivante.
+  Une erreur réseau, une limitation ou une erreur serveur pendant le renouvellement ne déconnecte pas le client ;
+  une réponse tardive ne peut pas écraser une session dont le propriétaire ou les identifiants ont changé.
+  Les sessions déjà ouvertes sans jeton de renouvellement nécessiteront une nouvelle connexion pour en obtenir un.
+  Tests avec le vrai SDK et un serveur HTTP simulé : expiration, rotation puis réouverture, retour SSO,
+  panne réseau, limitation, erreur serveur, révocation et changement de propriétaire.
+  Ce défaut reproduit est une cause possible du signalement utilisateur de reconnexion après fermeture ;
+  la cause exacte dans le navigateur et la validation en production restent à confirmer.
 - Validation actualisée le 2 novembre 2026 : **163 tests Matrix et Google Meet réussis**, TypeScript et Svelte sans erreur ni avertissement. Tests de reprise,
   changement de compte, données incomplètes, révocation et erreur réseau dans `MatrixClientWrapper.test.ts`.
   Le comportement avec un compte réel reste à confirmer après déploiement.

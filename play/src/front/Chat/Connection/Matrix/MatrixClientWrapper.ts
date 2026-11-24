@@ -127,7 +127,7 @@ export class MatrixClientWrapper implements MatrixClientWrapperInterface {
             deviceId: matrixDeviceId,
             userId: matrixUserId,
             accessToken: accessToken,
-            refreshToken: refreshToken ?? undefined,
+            ...this.tokenRefreshOptions(refreshToken),
             store: matrixStore,
             cryptoStore: matrixCryptoStore,
             cryptoCallbacks: {
@@ -168,7 +168,8 @@ export class MatrixClientWrapper implements MatrixClientWrapperInterface {
      */
     public async resumeSessionOrExchangeLoginToken(loginToken: string): Promise<void> {
         const owner = this.localUserStore.getMatrixSessionOwner();
-        const { deviceId, accessToken, matrixUserId } = this.retrieveMatrixConnectionDataFromLocalStorage();
+        const { deviceId, accessToken, refreshToken, matrixUserId } =
+            this.retrieveMatrixConnectionDataFromLocalStorage();
         if (
             owner &&
             owner === this.localUserStore.getLocalUser()?.uuid &&
@@ -177,7 +178,12 @@ export class MatrixClientWrapper implements MatrixClientWrapperInterface {
             matrixUserId &&
             !this.localUserStore.getMatrixStoresNeedClearing()
         ) {
-            const client = this._createClient({ baseUrl: this.baseUrl, accessToken, localTimeoutMs: 10_000 });
+            const client = this._createClient({
+                baseUrl: this.baseUrl,
+                accessToken,
+                localTimeoutMs: 10_000,
+                ...this.tokenRefreshOptions(refreshToken),
+            });
             try {
                 const identity = await client.whoami();
                 if (identity.user_id === matrixUserId && identity.device_id === deviceId) {
@@ -239,6 +245,55 @@ export class MatrixClientWrapper implements MatrixClientWrapperInterface {
         }
     }
 
+    private tokenRefreshOptions(
+        refreshToken: string | null,
+    ): Pick<ICreateClientOpts, "refreshToken" | "tokenRefreshFunction"> {
+        if (!refreshToken) return {};
+
+        const owner = this.localUserStore.getMatrixSessionOwner();
+        const { matrixUserId, deviceId } = this.retrieveMatrixConnectionDataFromLocalStorage();
+        return {
+            refreshToken,
+            tokenRefreshFunction: async (currentRefreshToken) => {
+                // Use an unauthenticated client: refreshing via the expired client's authedRequest can
+                // trigger another refresh inside the refresh already in progress.
+                const client = this._createClient({ baseUrl: this.baseUrl, localTimeoutMs: 10_000 });
+                const response = await client.refreshToken(currentRefreshToken).catch((error: unknown) => {
+                    // The SDK treats any MatrixError from this callback as a revoked session, including
+                    // rate limits and server failures. Only authentication errors justify logging out.
+                    if (
+                        error instanceof MatrixError &&
+                        !["M_UNKNOWN_TOKEN", "M_MISSING_TOKEN", "M_FORBIDDEN"].includes(error.errcode ?? "")
+                    ) {
+                        throw new Error("Matrix token renewal temporarily unavailable", { cause: error });
+                    }
+                    throw error;
+                });
+
+                // Logout or a different login may have completed while the server was answering.
+                // Never resurrect that session or overwrite another user's credentials.
+                const current = this.retrieveMatrixConnectionDataFromLocalStorage();
+                if (
+                    this.localUserStore.getMatrixSessionOwner() !== owner ||
+                    current.matrixUserId !== matrixUserId ||
+                    current.deviceId !== deviceId ||
+                    current.refreshToken !== currentRefreshToken
+                ) {
+                    throw new Error("Matrix session changed while renewing its access token");
+                }
+
+                const nextRefreshToken = response.refresh_token ?? currentRefreshToken;
+                const expiry = new Date(Date.now() + response.expires_in_ms);
+                // The SDK updates its in-memory tokens only. Save rotations before returning so reopening
+                // the page uses the new refresh token rather than replaying the consumed one.
+                this.localUserStore.setMatrixAccessToken(response.access_token);
+                this.localUserStore.setMatrixRefreshToken(nextRefreshToken);
+                this.localUserStore.setMatrixAccessTokenExpireDate(expiry);
+                return { accessToken: response.access_token, refreshToken: nextRefreshToken, expiry };
+            },
+        };
+    }
+
     private async loginWithToken(loginToken: string): Promise<void> {
         // A hung request would hold the chat back, since it waits for the exchange: give up and retry instead.
         const client = this._createClient({ baseUrl: this.baseUrl, localTimeoutMs: 10_000 });
@@ -249,6 +304,7 @@ export class MatrixClientWrapper implements MatrixClientWrapperInterface {
             response = await client.loginRequest({
                 type: "m.login.token",
                 token: loginToken,
+                refresh_token: true,
                 initial_device_display_name: "WorkAdventure",
             });
         } catch (e) {

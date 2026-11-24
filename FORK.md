@@ -9,7 +9,7 @@ redondante, après vérification et migration éventuelle.
 
 ## Référence et états
 
-- Dernière release officielle fusionnée : **`v1.35.0`**, synchronisation du 24 novembre 2026 (validation terminée, déploiement en préparation).
+- Dernière release officielle fusionnée : **`v1.35.0`**, synchronisation du 24 novembre 2026 (déployée le même jour).
 - Dernière fonctionnalité spécifique commitée à la création de cet inventaire : Google Meet, `80bf3c9e6`.
 - Inventaire établi le **29 octobre 2026** à partir de `git diff v1.34.4 HEAD` et des changements locaux.
 - La reprise de session Matrix et les salles Google Meet sont déployées depuis le 2 novembre 2026 ; leur validation avec un compte réel reste à confirmer.
@@ -18,7 +18,34 @@ redondante, après vérification et migration éventuelle.
 
 Mettre cette référence et les états à jour après chaque fusion, remplacement ou commit concerné.
 
-## Dernier déploiement confirmé — 4 novembre 2026
+## Dernier déploiement confirmé — 24 novembre 2026
+
+- Release **v1.35.0**, code applicatif **`daeec7df7`**, fusionné, validé et poussé sur `origin/master`.
+- Play/Back : `registry.eoloa.eu/workadventure-{play,back}:v1.35.0-daeec7df7`, construits depuis
+  une archive Git pour `linux/amd64`, publiés et vérifiés par tag et digest.
+- Map Storage officiel : `thecodingmachine/workadventure-map-storage:v1.35.0`.
+- **Six services** : Play, Back, Map Storage, Coturn, Redis et Icon. Uploader et ses variables retirés ;
+  aucune modification des autres images, paramètres, ports ou volumes. Aucun LiveKit dans cette stack.
+- Trois contrôles successifs réussis : images et paramètres exacts, santé, zéro redémarrage,
+  `/`, `/ping` et `/map-storage/ping` en HTTP 200. Deux scripts frontend également accessibles.
+- Catalogue et fichiers personnalisés comparés par SHA-256 : **32 fichiers inchangés**, dont
+  **31 PNG publics** vérifiés après redéploiement. Volume Woka/compagnons conservé.
+- Validation du commit déployé : **244 tests applicatifs réussis, 2 ignorés**, TypeScript Play/Back,
+  Svelte sans erreur ni avertissement et i18n. Hooks Git complets réussis. Tests navigateur des
+  avatars et du zoom réussis. Outillage final : **26 tests de déploiement + 20 tests Woka Python réussis**.
+- Particularité constatée : Portainer standalone a conservé l'ancien conteneur Uploader malgré
+  `Prune=true`. Retrait ciblé effectué après contrôle du Compose, de l'identité, de l'image et des labels
+  sauvegardés, sans suppression de volumes. Cette procédure est désormais intégrée et testée dans
+  `retire_uploader` ; les mises à jour conservent `Prune=false` pour éviter un nettoyage global.
+- L'avertissement administrateur Matrix `M_INVALID_PARAM`, déjà connu avant la migration, persiste.
+  Les parcours réels Matrix, 3CX et Meet restent à confirmer avec les comptes utilisateurs.
+- Retour arrière : configuration effective, inspection et anciennes images sauvegardées dans
+  `/Users/johancappi/.local/state/workadventure/deployments/v1.35.0-daeec7df7-b96x_7_a`.
+  La restauration recrée aussi Uploader depuis l'ancienne configuration et son image conservée.
+- Sauvegarde supplémentaire du catalogue et des images personnalisées avant migration :
+  `/Users/johancappi/.local/state/workadventure/deployments/pre-v1.35.0-20261124`.
+
+## Déploiement précédent — 4 novembre 2026
 
 - Release : **v1.34.5**, code applicatif **`db677a761`**, déployé avec
   `npm run prod:deploy -- --release v1.34.5` (avatars 64 pixels et stabilité du rendu après zoom).
@@ -75,11 +102,11 @@ configuré dans cette stack ; aucune mise à jour de LiveKit n'y est donc néces
 
 La configuration effective, les images et l'inspection initiale sont sauvegardées hors dépôt dans
 `~/.local/state/workadventure/deployments/pre-v1.35.0-20261124`. Le script construit depuis
-une archive Git, valide le Compose candidat, supprime le conteneur Uploader devenu orphelin
+une archive Git, valide le Compose candidat, supprime explicitement le seul conteneur Uploader sauvegardé devenu orphelin
 sans supprimer ses volumes, puis contrôle exactement les six services attendus.
 Les fichiers Compose/Traefik locaux sont également nettoyés ; ils ne remplacent pas la stack effective.
 
-Validation : TypeScript Play/Back, Svelte (0 erreur, 0 avertissement), i18n, 25 tests de
+Validation : TypeScript Play/Back, Svelte (0 erreur, 0 avertissement), i18n, 26 tests de
 déploiement et 20 tests Woka Python réussis. Tests ciblés Matrix/Meet/présence/profil exécutés
 (236 réussis au premier passage ; corrections des mocks de configuration et de stockage validées
 par 42 tests ciblés, incluant le retour IDLE après un appel). Back : 33 tests réussis, 2 ignorés.

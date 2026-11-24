@@ -136,10 +136,10 @@ class Portainer:
                 self.docker(f"/containers/{x['Id']}/json") for x in containers
                 if x.get("Labels", {}).get("com.docker.compose.project") == "workadventure"}
 
-    def update(self, compose, env, prune=False):
+    def update(self, compose, env):
         # Images have already been pulled individually. Do not refresh redis:6 or other unrelated tags.
         return self.request(f"/stacks/{self.stack_id}?endpointId={self.endpoint}", method="PUT",
-            payload={"StackFileContent": compose, "Env": env, "Prune": prune, "PullImage": False}, timeout=300)
+            payload={"StackFileContent": compose, "Env": env, "Prune": False, "PullImage": False}, timeout=300)
 
 
 def captured(command, cwd=ROOT, input_text=None):
@@ -229,6 +229,23 @@ def migrate_without_uploader(compose, before):
                                   if not re.fullmatch(obsolete, entry.partition("=")[0])]
     require(not re.search(obsolete, compose), "Référence uploader restante ; examiner le Compose avant migration.")
     return compose, expected
+
+
+def retire_uploader(api, before, candidate):
+    """Portainer's standalone update can leave orphans even with Prune=true."""
+    current = api.inspect().get("uploader")
+    if current is None:
+        return
+    old = before["uploader"]
+    labels = current["Config"].get("Labels", {})
+    require(api.compose() == candidate and current["Id"] == old["Id"] and current["Image"] == old["Image"]
+            and labels.get("com.docker.compose.project") == "workadventure"
+            and labels.get("com.docker.compose.service") == "uploader",
+            "Uploader ou la stack a changé ; suppression du conteneur orphelin refusée.")
+    say("Arrêt et retrait du seul conteneur Uploader sauvegardé ; volumes conservés…")
+    if current["State"]["Status"] == "running":
+        api.docker(f"/containers/{current['Id']}/stop?t=15", method="POST")
+    api.docker(f"/containers/{current['Id']}?v=false", method="DELETE")
 
 
 def enable_custom_woka_volume(compose, before, mountpoint):
@@ -487,7 +504,9 @@ def deploy(api, args, state):
             "La configuration de production a changé depuis la sauvegarde ; redéploiement annulé.")
     try:
         say("Mise à jour de la stack…")
-        api.update(candidate, stack.get("Env", []), prune="uploader" in before and "uploader" not in services)
+        api.update(candidate, stack.get("Env", []))
+        if "uploader" in before and "uploader" not in services:
+            retire_uploader(api, before, candidate)
         current = wait_healthy(api, expected_settings, expected_ids, directory)
         warnings = collect_logs(api, current, directory)
         require(api.compose() == candidate, "Configuration effective inattendue après déploiement.")

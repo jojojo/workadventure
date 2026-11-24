@@ -57,7 +57,31 @@ class DeploymentSafetyTests(unittest.TestCase):
             with self.assertRaises(deploy.DeploymentError):
                 deploy.migrate_without_uploader(original, {"uploader": container("uploader")})
 
-    def test_v135_failure_restores_saved_uploader_and_prunes_only_on_migration(self):
+    def test_retires_only_the_saved_uploader_without_removing_volumes(self):
+        old = container("uploader")
+        old["Config"]["Labels"] = {"com.docker.compose.project": "workadventure",
+                                    "com.docker.compose.service": "uploader"}
+        api = Mock()
+        api.inspect.return_value = {"uploader": copy.deepcopy(old)}
+        api.compose.return_value = "candidate"
+        deploy.retire_uploader(api, {"uploader": old}, "candidate")
+        self.assertEqual(api.docker.call_args_list[0].args, ("/containers/uploader-container/stop?t=15",))
+        self.assertEqual(api.docker.call_args_list[1].args, ("/containers/uploader-container?v=false",))
+        self.assertEqual(api.docker.call_args_list[1].kwargs, {"method": "DELETE"})
+        for mutate in (lambda x: x.update(Id="replacement"),
+                       lambda x: x["Config"]["Labels"].update({"com.docker.compose.project": "other"})):
+            api.reset_mock()
+            current = copy.deepcopy(old)
+            mutate(current)
+            api.inspect.return_value = {"uploader": current}
+            with self.assertRaises(deploy.DeploymentError):
+                deploy.retire_uploader(api, {"uploader": old}, "candidate")
+            api.docker.assert_not_called()
+        api.inspect.return_value = {}
+        deploy.retire_uploader(api, {"uploader": old}, "candidate")
+        api.docker.assert_not_called()
+
+    def test_v135_failure_restores_saved_uploader_after_retirement(self):
         with tempfile.TemporaryDirectory() as directory:
             before = {s: container(s) for s in (*deploy.SERVICES, "uploader", "redis")}
             compose = "services:\n" + "".join(
@@ -72,10 +96,11 @@ class DeploymentSafetyTests(unittest.TestCase):
                     patch.object(deploy, "image_manifest"), patch.object(deploy, "build_and_publish"), \
                     patch.object(deploy, "pull", return_value={s: "sha256:new" for s in deploy.SERVICES}), \
                     patch.object(deploy, "wait_healthy", side_effect=deploy.DeploymentError("Not healthy")) as health, \
+                    patch.object(deploy, "retire_uploader") as retire, \
                     patch.object(deploy, "restore") as restore:
                 with self.assertRaisesRegex(deploy.DeploymentError, "ancienne version restaurée"):
                     deploy.deploy(api, SimpleNamespace(release="v1.35.0"), Path(directory))
-            self.assertTrue(api.update.call_args.kwargs["prune"])
+            retire.assert_called_once()
             self.assertNotIn("uploader", health.call_args.args[1])
             self.assertIn("redis", health.call_args.args[1])
             backup = restore.call_args.args[1]

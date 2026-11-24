@@ -151,7 +151,10 @@ validée : vérifier sa source avant de poursuivre.
 À partir de v1.35.0, Uploader n'existe plus. Le script retire son service et ses labels de
 routage du Compose effectif, ainsi que les variables obsolètes `UPLOADER_URL`,
 `UPLOADER_REDIS_*` et `UPLOAD_MAX_FILESIZE`. Il conserve tous les volumes déclarés et
-vérifie les autres paramètres. Portainer supprime le conteneur orphelin lors de cette migration.
+vérifie les autres paramètres. Portainer standalone peut laisser le conteneur orphelin malgré `Prune=true`. Le script
+contrôle alors le Compose effectif, l’identité, l’image et les labels du seul ancien conteneur
+Uploader, puis l’arrête et le supprime explicitement avec `v=false`. Aucun nettoyage global
+n’est demandé à Portainer (`Prune=false`) ; les autres services et volumes restent protégés.
 La restauration recrée Uploader avec son ancienne image et sa configuration sauvegardées.
 Les releases antérieures restent prises en charge par le script pour un déploiement explicite.
 

@@ -26,6 +26,62 @@ def container(service="play"):
 
 
 class DeploymentSafetyTests(unittest.TestCase):
+    def test_release_service_lists_preserve_rollback_compatibility(self):
+        self.assertIn("uploader", deploy.services_for_release("v1.34.5"))
+        self.assertNotIn("uploader", deploy.services_for_release("v1.35.0"))
+
+    def test_uploader_migration_preserves_secrets_other_services_and_volumes(self):
+        for setting in ("    - UPLOADER_URL=/uploader\n", "      UPLOADER_URL: /uploader\n"):
+            before = {"play": container(), "uploader": container("uploader"), "redis": container("redis")}
+            before["play"]["Config"]["Env"] += ["UPLOADER_URL=/uploader", "UPLOAD_MAX_FILESIZE=10"]
+            original = ("services:\n  play:\n    image: play:old\n    environment:\n" + setting +
+                        "    # keep\n  uploader:\n    image: uploader:old\n    labels:\n"
+                        "      route: /uploader\n  redis:\n    image: redis:6\n"
+                        "volumes:\n  upload-data: {}\n")
+            changed, expected = deploy.migrate_without_uploader(original, before)
+            self.assertNotIn("  uploader:", changed)
+            self.assertNotIn("UPLOADER_URL", changed)
+            self.assertIn("volumes:\n  upload-data: {}\n", changed)
+            self.assertIn("    # keep\n  redis:\n    image: redis:6\n", changed)
+            self.assertEqual(expected["play"]["Config"]["Env"], container()["Config"]["Env"])
+            self.assertEqual(expected["redis"], before["redis"])
+            self.assertIn("uploader", before)
+            deploy.verify_settings(expected, copy.deepcopy(expected), {s: "sha256:old" for s in expected})
+            with self.assertRaises(deploy.DeploymentError):
+                deploy.verify_settings(expected, before, {s: "sha256:old" for s in before})
+            self.assertEqual(deploy.migrate_without_uploader(changed, expected), (changed, expected))
+
+    def test_uploader_migration_rejects_unhandled_references(self):
+        for original in ("services:\n  play:\n    depends_on: [uploader]\n",
+                         "services:\n  uploader:\n  uploader:\n"):
+            with self.assertRaises(deploy.DeploymentError):
+                deploy.migrate_without_uploader(original, {"uploader": container("uploader")})
+
+    def test_v135_failure_restores_saved_uploader_and_prunes_only_on_migration(self):
+        with tempfile.TemporaryDirectory() as directory:
+            before = {s: container(s) for s in (*deploy.SERVICES, "uploader", "redis")}
+            compose = "services:\n" + "".join(
+                f"  {s}:\n    image: {x['Config']['Image']}\n" for s, x in before.items())
+            api = Mock()
+            api.discover.return_value = {"Id": 19, "EndpointId": 3, "Name": "workadventure", "Env": []}
+            api.inspect.return_value = before
+            api.compose.return_value = compose
+            with patch.object(deploy, "git", side_effect=lambda *args: "123456789abcdef" if args[0] == "rev-parse" else ""), \
+                    patch.object(deploy, "registry_auth", return_value="private-auth"), \
+                    patch.object(deploy, "validate_compose"), patch.object(deploy, "checks"), \
+                    patch.object(deploy, "image_manifest"), patch.object(deploy, "build_and_publish"), \
+                    patch.object(deploy, "pull", return_value={s: "sha256:new" for s in deploy.SERVICES}), \
+                    patch.object(deploy, "wait_healthy", side_effect=deploy.DeploymentError("Not healthy")) as health, \
+                    patch.object(deploy, "restore") as restore:
+                with self.assertRaisesRegex(deploy.DeploymentError, "ancienne version restaurée"):
+                    deploy.deploy(api, SimpleNamespace(release="v1.35.0"), Path(directory))
+            self.assertTrue(api.update.call_args.kwargs["prune"])
+            self.assertNotIn("uploader", health.call_args.args[1])
+            self.assertIn("redis", health.call_args.args[1])
+            backup = restore.call_args.args[1]
+            self.assertEqual((backup / "compose-before.yml").read_text(), compose)
+            self.assertIn("uploader", json.loads((backup / "inspect-before.json").read_text()))
+
     def test_presence_setup_preserves_other_services_and_settings(self):
         before = {"play": container()}
         compose = "services:\n  play:\n    image: old\n    environment:\n      - MATRIX_AUTO_SYNC=false\n  back:\n    environment:\n      - KEEP=true\n"
@@ -216,7 +272,7 @@ class DeploymentSafetyTests(unittest.TestCase):
     def test_deployment_failure_after_stack_update_restores_saved_stack(self):
         with tempfile.TemporaryDirectory() as directory:
             state = Path(directory)
-            before = {s: container(s) for s in deploy.SERVICES}
+            before = {s: container(s) for s in deploy.services_for_release("v1.34.5")}
             compose = "services:\n" + "".join(
                 f"  {s}:\n    image: {x['Config']['Image']}\n" for s, x in before.items())
             api = Mock()

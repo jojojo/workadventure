@@ -24,7 +24,6 @@
     import ContactSubMenu from "./ContactSubMenu.svelte";
     import CustomSubMenu from "./CustomSubMenu.svelte";
     import ReportSubMenu from "./ReportSubMenu.svelte";
-    import ChatSubMenu from "./ChatSubMenu.svelte";
     import ShortcutSubMenu from "./ShortcutSubMenu.svelte";
     import HelpSubMenu from "./HelpSubMenu.svelte";
 
@@ -44,23 +43,19 @@
     let unsubscriberSubMenuStore: Unsubscriber;
     let unsubscriberActiveSubMenuStore: Unsubscriber;
 
-    onMount(async () => {
+    onMount(() => {
         unsubscriberActiveSubMenuStore = activeSubMenuStore.subscribe((value) => {
             if ($subMenusStore.length >= value - 1) {
-                switchMenu($subMenusStore[value]).catch((e) =>
-                    console.error("Failed to switch menu on activeSubMenuStore change", e),
-                );
+                switchMenu($subMenusStore[value]);
             }
         });
         unsubscriberSubMenuStore = subMenusStore.subscribe(() => {
             if (!$subMenusStore.includes(activeSubMenu)) {
-                switchMenu($subMenusStore[$activeSubMenuStore]).catch((e) =>
-                    console.error("Failed to switch menu on subMenusStore change", e),
-                );
+                switchMenu($subMenusStore[$activeSubMenuStore]);
             }
         });
 
-        await switchMenu($subMenusStore[$activeSubMenuStore]);
+        switchMenu($subMenusStore[$activeSubMenuStore]);
     });
 
     onDestroy(() => {
@@ -73,7 +68,7 @@
         }
     });
 
-    async function switchMenu(menu: MenuItem) {
+    function switchMenu(menu: MenuItem) {
         if (menu.type === "translated") {
             activeSubMenu = menu;
             activeSubMenuStore.activateByMenuItem(menu);
@@ -94,17 +89,9 @@
                     activeComponent = ContactSubMenu;
                     analyticsClient.trackAdminEvent("menu.contact.opened");
                     break;
-                case SubMenusInterface.globalMessages:
-                    activeComponent = (await import("./GlobalMessagesSubMenu.svelte")).default;
-                    analyticsClient.trackAdminEvent("global_message.opened", { source: "menu" });
-                    break;
                 case SubMenusInterface.report:
                     activeComponent = ReportSubMenu;
                     analyticsClient.trackAdminEvent("feedback.opened", { feedbackSource: "external_report_url" });
-                    break;
-                case SubMenusInterface.chat:
-                    activeComponent = ChatSubMenu;
-                    analyticsClient.trackAdminEvent("menu.chat.opened");
                     break;
                 case SubMenusInterface.shortcuts:
                     activeComponent = ShortcutSubMenu;
@@ -189,9 +176,7 @@
                                 onclick={(event) => {
                                     event.preventDefault();
                                     event.stopPropagation();
-                                    switchMenu(submenu).catch((error) => {
-                                        console.error("Failed to switch menu", error);
-                                    });
+                                    switchMenu(submenu);
                                 }}
                                 transition:fly={{ delay: i * 75, x: 200, duration: 150 }}
                             >

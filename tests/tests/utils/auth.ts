@@ -1,12 +1,12 @@
 import fs from "fs";
-import type { Browser, BrowserContext, Page } from "playwright/test";
+import type { Browser, BrowserContext, BrowserContextOptions, Page } from "playwright/test";
 import { expect } from "playwright/test";
 import { oidcAdminTagLogin, oidcMatrixUserLogin, oidcMemberTagLogin, oidcLogin } from "./oidc";
 import Menu from "./menu";
 import { play_url } from "./urls";
 import { dismissPwaInstallScreenIfShown } from "./pwaInstall";
 import { dismissDuplicateUserConnectedModalIfShown } from "./duplicateUserModal";
-import { dismissNoBrowserSoundInfoToast } from "./doNotDisturbInfoToast";
+import { dismissNoBrowserSoundInfoToast, dismissNoMicrophoneSoundToast } from "./doNotDisturbInfoToast";
 
 /**
  * `getPage()` gives every page its own browser context, and nothing else ever closes those
@@ -64,6 +64,23 @@ function disposeWithContext(page: Page): Page {
     return page;
 }
 
+type UserName =
+    | "Alice"
+    | "Bob"
+    | "Charlie"
+    | "Eve"
+    | "Mallory"
+    | "Admin1"
+    | "Admin2"
+    | "Member1"
+    | "UserMatrix"
+    | "UserLogin1"
+    | "John"
+    | "UserMatrix2"
+    | "User1"
+    | "Carol"
+    | "Dave";
+
 function selectWoka(name: string): number {
     let res = 0;
     for (let i = 0; i < name.length; i++) {
@@ -89,35 +106,11 @@ function isJsonCreate(name: string): boolean {
     return (state.origins ?? []).some((entry) => entry.origin === new URL(play_url).origin);
 }
 
-async function createUser(
-    name:
-        | "Alice"
-        | "Bob"
-        | "Charlie"
-        | "Eve"
-        | "Mallory"
-        | "Admin1"
-        | "Admin2"
-        | "Member1"
-        | "UserMatrix"
-        | "UserLogin1"
-        | "John"
-        | "UserMatrix2"
-        | "User1"
-        | "Carol",
-    browser: Browser,
-    url: string,
-): Promise<void> {
-    if (isJsonCreate(name)) {
-        return;
-    }
-    const context: BrowserContext = await browser.newContext();
-    const page: Page = await context.newPage();
-    const targetUrl = new URL(url, play_url).toString();
-
-    await page.goto(targetUrl);
-
-    // login
+/**
+ * Goes through the screens of a page that shows the login screen (name, Woka, camera and microphone) up to
+ * the map, then through the OpenID login of the users that have one.
+ */
+export async function logIn(page: Page, name: UserName): Promise<void> {
     const loginSceneNameInput = page.getByTestId("loginSceneNameInput");
     const loginSubmitButton = page.locator("button.loginSceneFormSubmit");
 
@@ -138,9 +131,10 @@ async function createUser(
     await dismissDuplicateUserConnectedModalIfShown(page);
     await dismissPwaInstallScreenIfShown(page);
     await dismissNoBrowserSoundInfoToast(page);
+    await dismissNoMicrophoneSoundToast(page);
     await skipOnboardingWhenShown(page);
 
-    if (browser.browserType().name() !== "webkit") {
+    if (page.context().browser()?.browserType().name() !== "webkit") {
         await Menu.expectButtonState(page, "microphone-button", "normal");
         await Menu.expectButtonState(page, "camera-button", "normal");
     } else {
@@ -173,6 +167,23 @@ async function createUser(
         default:
             break;
     }
+}
+
+async function createUser(
+    name: UserName,
+    browser: Browser,
+    url: string,
+    contextOptions?: BrowserContextOptions,
+): Promise<void> {
+    if (isJsonCreate(name)) {
+        return;
+    }
+    const context: BrowserContext = await browser.newContext(contextOptions);
+    const page: Page = await context.newPage();
+    const targetUrl = new URL(url, play_url).toString();
+
+    await page.goto(targetUrl);
+    await logIn(page, name);
 
     await page.context().storageState({ path: "./.auth/" + name + ".json" });
 
@@ -193,28 +204,19 @@ async function waitForMatrixLogin(page: Page): Promise<void> {
 
 export async function getPage(
     browser: Browser,
-    name:
-        | "Alice"
-        | "Bob"
-        | "Charlie"
-        | "Eve"
-        | "Mallory"
-        | "Admin1"
-        | "Admin2"
-        | "Member1"
-        | "UserMatrix"
-        | "UserLogin1"
-        | "John"
-        | "UserMatrix2"
-        | "User1"
-        | "Carol",
+    name: UserName,
     url: string,
     options: {
         pageCreatedHook?: (page: Page) => void | Promise<void>;
+        /** Extra options for the page's context, e.g. a phone viewport with touch for one test. */
+        contextOptions?: BrowserContextOptions;
     } = {},
 ): Promise<Page> {
-    await createUser(name, browser, url);
-    const newBrowser: BrowserContext = await browser.newContext({ storageState: "./.auth/" + name + ".json" });
+    await createUser(name, browser, url, options.contextOptions);
+    const newBrowser: BrowserContext = await browser.newContext({
+        ...options.contextOptions,
+        storageState: "./.auth/" + name + ".json",
+    });
     // Noise suppression is on by default: turn it off so that each page does not load the noise suppression models.
     // Only when unset, so a test that turns it on keeps its choice across reloads.
     await newBrowser.addInitScript(() => {
@@ -231,6 +233,7 @@ export async function getPage(
     await dismissPwaInstallScreenIfShown(page, true);
     await dismissDuplicateUserConnectedModalIfShown(page, true);
     await dismissNoBrowserSoundInfoToast(page);
+    await dismissNoMicrophoneSoundToast(page);
     await skipOnboardingWhenShown(page);
 
     await expect(page.getByTestId("microphone-button")).toBeVisible({ timeout: 120_000 });

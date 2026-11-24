@@ -12,10 +12,6 @@ http:
       stripPrefix:
         prefixes:
           - "/map-storage"
-    strip-uploader-prefix:
-      stripPrefix:
-        prefixes:
-          - "/uploader"
   routers:
     traefik:
       rule: "Host(`traefik.eoloa.net`)"
@@ -109,17 +105,6 @@ http:
       middlewares: 
         - strip-map-storage-prefix
       priority: 250
-      tls:
-        certResolver: lets-encrypt
-    
-    workadventure_uploader:
-      rule: "Host(`workadventure.eoloa.net`) && PathPrefix(`/uploader`)"
-      entryPoints:
-        - websecure
-      service: workadventure_uploader
-      middlewares: 
-        - strip-uploader-prefix
-      priority: 200
       tls:
         certResolver: lets-encrypt
     
@@ -217,11 +202,6 @@ http:
       loadBalancer:
         servers:
           - url: "http://workadventure-icon-1:8080"
-    
-    workadventure_uploader:
-      loadBalancer:
-        servers:
-          - url: "http://workadventure-uploader-1:8080"
     
     workadventure_play:
       loadBalancer:

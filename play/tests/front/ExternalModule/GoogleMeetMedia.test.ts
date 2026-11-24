@@ -4,6 +4,7 @@ import { AvailabilityStatus } from "@workadventure/messages";
 import { ExternalPresenceSync } from "../../../src/front/Connection/ExternalPresenceSync";
 import { externalPhoneBusyStore } from "../../../src/front/Stores/ExternalPhoneStore";
 import { externalMeetingActiveStore } from "../../../src/front/Stores/ExternalMeetingStore";
+import { idleStore } from "../../../src/front/Stores/IdleStore";
 import {
     availabilityStatusStore,
     mediaStreamConstraintsStore,
@@ -59,6 +60,7 @@ const previous = {
 
 afterEach(() => {
     sync.stop();
+    idleStore.set(false);
     privacyShutdownStore.set(false);
     externalMeetingActiveStore.set(false);
     inBackgroundSettingsStore.set(previous.background);
@@ -100,6 +102,23 @@ vi.mock("../../../src/front/Stores/IsStreamingStore", async () => {
 });
 
 describe("phone presence over the existing WebSocket", () => {
+    it("keeps phone presence above idle and restores idle with both devices off after the call", () => {
+        requestedStatusStore.set(null);
+        requestedCameraState.enableWebcam();
+        requestedMicrophoneState.enableMicrophone();
+        myCameraStore.set(true);
+        myMicrophoneStore.set(true);
+        idleStore.set(true);
+        expect(get(availabilityStatusStore)).toBe(AvailabilityStatus.IDLE);
+        sync.apply({ status: "BUSY" });
+        expect(get(availabilityStatusStore)).toBe(AvailabilityStatus.BACK_IN_A_MOMENT);
+        expect(get(mediaStreamConstraintsStore)).toMatchObject({ audio: false, video: false });
+        sync.apply({ status: "ONLINE" });
+        expect(get(availabilityStatusStore)).toBe(AvailabilityStatus.IDLE);
+        expect(get(mediaStreamConstraintsStore)).toMatchObject({ audio: false, video: false });
+        expect(get(requestedCameraState)).toBe(true);
+        expect(get(requestedMicrophoneState)).toBe(true);
+    });
     it("overlays the phone status without saving it as a manual preference", () => {
         requestedStatusStore.set(null);
         sync.apply({ status: "BUSY" });

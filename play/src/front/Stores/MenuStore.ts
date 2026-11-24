@@ -21,7 +21,7 @@ import { analyticsClient } from "../Administration/AnalyticsClient";
 
 import { userIsAdminStore } from "./GameStore";
 import { megaphoneCanBeUsedStore } from "./MegaphoneStore";
-import { chatVisibilityStore, isMatrixChatEnabledStore } from "./ChatStore";
+import { chatVisibilityStore } from "./ChatStore";
 import { gameSceneStore } from "./GameSceneStore";
 import { modalIframeStore, modalVisibilityStore, showModalGlobalComminucationVisibilityStore } from "./ModalStore";
 import { getAdditionalMenuItemStore } from "./AdditionalItemsMenuStore";
@@ -63,10 +63,8 @@ export enum SubMenusInterface {
     settings = "settings",
     profile = "profile",
     aboutRoom = "credit",
-    globalMessages = "globalMessages",
     contact = "contact",
     report = "report",
-    chat = "chat",
     shortcuts = "shortcuts",
     help = "help",
 }
@@ -118,16 +116,6 @@ function createSubMenusStore() {
             type: "translated",
             key: SubMenusInterface.aboutRoom,
             visible: alwaysVisible,
-        },
-        {
-            type: "translated",
-            key: SubMenusInterface.globalMessages,
-            visible: userIsAdminStore,
-        },
-        {
-            type: "translated",
-            key: SubMenusInterface.chat,
-            visible: isMatrixChatEnabledStore,
         },
         {
             type: "translated",
@@ -419,13 +407,28 @@ export const mapMenuVisibleStore = derived(
         globalMessageVisibleStore,
         getAdditionalMenuItemStore("buildMenu"),
         personalAreaDataStore,
+        roomListActivated,
+        mapManagerActivated,
+        userIsAdminStore,
     ],
-    ([$mapEditorMenuVisibleStore, $globalMessageVisibleStore, $additionalBuildMenuItems, $personalAreaDataStore]) => {
+    ([
+        $mapEditorMenuVisibleStore,
+        $globalMessageVisibleStore,
+        $additionalBuildMenuItems,
+        $personalAreaDataStore,
+        $roomListActivated,
+        $mapManagerActivated,
+        $userIsAdminStore,
+    ]) => {
+        // Room list and Explore the room are for everyone, so most users get the menu for them.
         return (
             $mapEditorMenuVisibleStore ||
             $globalMessageVisibleStore ||
             $additionalBuildMenuItems.size > 0 ||
-            $personalAreaDataStore !== null
+            $personalAreaDataStore !== null ||
+            $roomListActivated ||
+            $mapManagerActivated ||
+            $userIsAdminStore
         );
     },
 );

@@ -1,5 +1,6 @@
 /* eslint-disable import/no-unresolved */
 export { default as IconCheck } from "~icons/tabler/check";
+export { default as IconChecks } from "~icons/tabler/checks";
 export { default as IconX } from "~icons/tabler/x";
 export { default as IconPaperclip } from "~icons/tabler/paperclip";
 export { default as IconCornerDownRight } from "~icons/tabler/corner-down-right";
@@ -17,6 +18,7 @@ export { default as IconArrowLeft } from "~icons/tabler/arrow-left";
 export { default as IconArrowBackUp } from "~icons/tabler/arrow-back-up";
 export { default as IconArrowDown } from "~icons/tabler/arrow-down";
 export { default as IconArrowUp } from "~icons/tabler/arrow-up";
+export { default as IconAt } from "~icons/tabler/at";
 export { default as IconThumbUp } from "~icons/tabler/thumb-up";
 export { default as IconMoodSmile } from "~icons/tabler/mood-smile";
 export { default as IconPencil } from "~icons/tabler/pencil";
@@ -36,7 +38,13 @@ export { default as IconForbid2 } from "~icons/tabler/forbid2";
 export { default as IconCancel } from "~icons/tabler/cancel";
 export { default as IconMoreVertical } from "~icons/tabler/dots-vertical";
 export { default as IconDots } from "~icons/tabler/dots";
+export { default as IconGripVertical } from "~icons/tabler/grip-vertical";
+export { default as IconDeviceDesktopUp } from "~icons/tabler/device-desktop-up";
+export { default as IconDeviceDesktop } from "~icons/tabler/device-desktop";
+export { default as IconDevices } from "~icons/tabler/devices";
+export { default as IconDeviceComputerCamera } from "~icons/tabler/device-computer-camera";
 export { default as IconShield } from "~icons/tabler/shield";
+export { default as IconShieldCheck } from "~icons/tabler/shield-check";
 export { default as IconUser } from "~icons/tabler/user";
 export { default as IconCheckList } from "~icons/tabler/list-check";
 export { default as IconUsers } from "~icons/tabler/users";
@@ -87,6 +95,7 @@ export { default as IconZoomInArea } from "~icons/tabler/zoom-in-area";
 export { default as IconFocus } from "~icons/tabler/photo-sensor";
 export { default as IconMicrophoneOff } from "~icons/tabler/microphone-off";
 export { default as IconCamera } from "~icons/tabler/video";
+export { default as IconCameraOff } from "~icons/tabler/video-off";
 export { default as IconDoorOut } from "~icons/tabler/door-exit";
 export { default as IconDoorIn } from "~icons/tabler/door-enter";
 export { default as IconFileMusic } from "~icons/tabler/file-music";
@@ -155,3 +164,15 @@ export { default as IconPhoto } from "~icons/tabler/photo";
 export { default as IconVideo } from "~icons/tabler/video";
 export { default as IconBell } from "~icons/tabler/bell";
 export { default as IconStack2 } from "~icons/tabler/stack-2";
+export { default as IconWorld } from "~icons/tabler/world";
+export { default as IconLine } from "~icons/tabler/line";
+export { default as IconArrowNarrowRight } from "~icons/tabler/arrow-narrow-right";
+export { default as IconSquare } from "~icons/tabler/square";
+export { default as IconEraser } from "~icons/tabler/eraser";
+export { default as IconPalette } from "~icons/tabler/palette";
+
+export { default as IconPointer } from "~icons/tabler/pointer";
+
+export { default as IconArrowForwardUp } from "~icons/tabler/arrow-forward-up";
+
+export { default as IconEyeOff } from "~icons/tabler/eye-off";

@@ -4,7 +4,7 @@
     import MicrophoneCloseSvg from "../images/microphone-close.svg";
     import NoVideoSvg from "../images/no-video.svg";
     import { LL } from "../../../i18n/i18n-svelte";
-    import { requestVisitCardsStore, userIsAdminStore } from "../../Stores/GameStore";
+    import { moderatedMeetingSpacesStore, requestVisitCardsStore, userIsAdminStore } from "../../Stores/GameStore";
     import { raisedHandsOrderStore } from "../../Stores/RaisedHandsStore";
     import { analyticsClient } from "../../Administration/AnalyticsClient";
     import { meetingOf } from "../../Administration/CurrentMeeting";
@@ -29,6 +29,8 @@
     let isMicrophoneEnabled = $derived(spaceUser.reactiveUser.microphoneState);
     let isVideoEnabled = $derived(spaceUser.reactiveUser.cameraState);
     let canAskToMuteAudioOrTurnOffVideo = $derived(spaceUser.space.canAskToMuteAudioOrTurnOffVideo);
+    // An admin, or the moderator of this meeting room (the tag of its advanced options): their mute is not a request.
+    let isModerator = $derived($userIsAdminStore || $moderatedMeetingSpacesStore.has(spaceUser.space.getName()));
     // Raise-hand state comes from the space state queue (not SpaceUser), so it is known even for a
     // listener whose SpaceUser the local user does not receive.
     let isHandRaised = $derived(
@@ -124,7 +126,7 @@
 </script>
 
 <div
-    class="flex flex-col p-1 w-48 bg-contrast/80 backdrop-blur-md rounded-md max-h-max z-50 cursor-pointer select-none"
+    class="flex flex-col p-1.5 w-48 bg-contrast/80 backdrop-blur-md rounded-2xl max-h-max z-50 cursor-pointer select-none"
     class:mt-[0.2rem]={!videoEnabled}
     onclick={(event) => {
         event.preventDefault();
@@ -139,7 +141,7 @@
 >
     <!-- Volume control -->
     <div
-        class="flex gap-2 items-center hover:bg-white/10 m-0 p-2 w-full text-sm rounded leading-4 text-left text-white disabled:opacity-50"
+        class="flex gap-2 items-center hover:bg-white/10 m-0 p-2 w-full text-sm rounded-[10px] leading-4 text-left text-white disabled:opacity-50"
         role="group"
         aria-label="Volume control"
     >
@@ -181,9 +183,9 @@
     </div>
 
     <!-- Mute audio user -->
-    {#if ($userIsAdminStore || $canAskToMuteAudioOrTurnOffVideo) && !isScreenSharing}
+    {#if (isModerator || $canAskToMuteAudioOrTurnOffVideo) && !isScreenSharing}
         <button
-            class="action-button mute-audio-user flex gap-2 items-center hover:bg-white/10 m-0 p-2 w-full text-sm rounded leading-4 text-left text-white disabled:opacity-50"
+            class="action-button mute-audio-user flex gap-2 items-center hover:bg-white/10 m-0 p-2 w-full text-sm rounded-[10px] leading-4 text-left text-white disabled:opacity-50"
             onclick={(event) => {
                 event.preventDefault();
                 event.stopPropagation();
@@ -192,7 +194,7 @@
             disabled={!$isMicrophoneEnabled}
         >
             <img src={MicrophoneCloseSvg} class="w-4 h-4" alt="" draggable="false" />
-            {#if $userIsAdminStore}
+            {#if isModerator}
                 {$LL.camera.menu.muteAudioUser()}
             {:else}
                 {$LL.camera.menu.askToMuteAudioUser()}
@@ -203,7 +205,7 @@
     <!-- Give the floor (to a user who raised their hand) -->
     {#if canModerateFloor && !isScreenSharing && isHandRaised && !$hasFloor}
         <button
-            class="action-button give-floor-user flex gap-2 items-center hover:bg-white/10 m-0 p-2 w-full text-sm rounded leading-4 text-left text-white"
+            class="action-button give-floor-user flex gap-2 items-center hover:bg-white/10 m-0 p-2 w-full text-sm rounded-[10px] leading-4 text-left text-white"
             data-testid="give-floor-user"
             onclick={(event) => {
                 event.preventDefault();
@@ -219,7 +221,7 @@
     <!-- Revoke the floor (take it back from a current speaker) -->
     {#if canModerateFloor && !isScreenSharing && $hasFloor}
         <button
-            class="action-button revoke-floor-user flex gap-2 items-center hover:bg-white/10 m-0 p-2 w-full text-sm rounded leading-4 text-left text-white"
+            class="action-button revoke-floor-user flex gap-2 items-center hover:bg-white/10 m-0 p-2 w-full text-sm rounded-[10px] leading-4 text-left text-white"
             data-testid="revoke-floor-user"
             onclick={(event) => {
                 event.preventDefault();
@@ -233,9 +235,9 @@
     {/if}
 
     <!-- Mute audio every body -->
-    {#if $userIsAdminStore}
+    {#if isModerator}
         <button
-            class="action-button flex gap-2 items-center hover:bg-white/10 m-0 p-2 w-full text-sm rounded leading-4 text-left text-white"
+            class="action-button flex gap-2 items-center hover:bg-white/10 m-0 p-2 w-full text-sm rounded-[10px] leading-4 text-left text-white"
             onclick={(event) => {
                 event.preventDefault();
                 event.stopPropagation();
@@ -248,10 +250,10 @@
     {/if}
 
     <!-- Mute video -->
-    {#if ($userIsAdminStore || $canAskToMuteAudioOrTurnOffVideo) && !isScreenSharing}
+    {#if (isModerator || $canAskToMuteAudioOrTurnOffVideo) && !isScreenSharing}
         <button
             id="mute-video-user"
-            class="action-button flex gap-2 items-center hover:bg-white/10 m-0 p-2 w-full text-sm rounded leading-4 text-left text-white disabled:opacity-50"
+            class="action-button flex gap-2 items-center hover:bg-white/10 m-0 p-2 w-full text-sm rounded-[10px] leading-4 text-left text-white disabled:opacity-50"
             onclick={(event) => {
                 event.preventDefault();
                 event.stopPropagation();
@@ -260,7 +262,7 @@
             disabled={!$isVideoEnabled}
         >
             <img src={NoVideoSvg} class="w-4 h-4" alt="" draggable="false" />
-            {#if $userIsAdminStore}
+            {#if isModerator}
                 {$LL.camera.menu.muteVideoUser()}
             {:else}
                 {$LL.camera.menu.askToMuteVideoUser()}
@@ -269,9 +271,9 @@
     {/if}
 
     <!-- Mute video every body -->
-    {#if $userIsAdminStore}
+    {#if isModerator}
         <button
-            class="action-button flex gap-2 items-center hover:bg-white/10 m-0 p-2 w-full text-sm rounded leading-4 text-left text-white"
+            class="action-button flex gap-2 items-center hover:bg-white/10 m-0 p-2 w-full text-sm rounded-[10px] leading-4 text-left text-white"
             onclick={(event) => {
                 event.preventDefault();
                 event.stopPropagation();
@@ -300,7 +302,7 @@
     <!-- Show visit card-->
     {#if spaceUser.visitCardUrl}
         <button
-            class="action-button flex gap-2 items-center hover:bg-white/10 m-0 p-2 w-full text-sm rounded leading-4 text-left text-white"
+            class="action-button flex gap-2 items-center hover:bg-white/10 m-0 p-2 w-full text-sm rounded-[10px] leading-4 text-left text-white"
             onclick={(event) => {
                 event.preventDefault();
                 event.stopPropagation();
@@ -313,7 +315,7 @@
     {/if}
     <!-- Block or report user -->
     <button
-        class="action-button flex gap-2 items-center hover:bg-white/10 m-0 p-2 w-full text-sm rounded leading-4 text-left text-white"
+        class="action-button flex gap-2 items-center hover:bg-white/10 m-0 p-2 w-full text-sm rounded-[10px] leading-4 text-left text-white"
         onclick={(event) => {
             event.preventDefault();
             event.stopPropagation();

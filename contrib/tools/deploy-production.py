@@ -26,7 +26,7 @@ ROOT = Path(__file__).resolve().parents[2]
 REGISTRY = "registry.eoloa.eu"
 APP = "https://workadventure.eoloa.net"
 STATE = Path.home() / ".local/state/workadventure/deployments"
-SERVICES = ("play", "back", "map-storage", "uploader")
+SERVICES = ("play", "back", "map-storage")
 CUSTOM_WOKA_DIRECTORY = "/var/lib/workadventure/wokas"
 CUSTOM_WOKA_VOLUME = "workadventure_custom-wokas"
 
@@ -136,10 +136,10 @@ class Portainer:
                 self.docker(f"/containers/{x['Id']}/json") for x in containers
                 if x.get("Labels", {}).get("com.docker.compose.project") == "workadventure"}
 
-    def update(self, compose, env):
+    def update(self, compose, env, prune=False):
         # Images have already been pulled individually. Do not refresh redis:6 or other unrelated tags.
         return self.request(f"/stacks/{self.stack_id}?endpointId={self.endpoint}", method="PUT",
-            payload={"StackFileContent": compose, "Env": env, "Prune": False, "PullImage": False}, timeout=300)
+            payload={"StackFileContent": compose, "Env": env, "Prune": prune, "PullImage": False}, timeout=300)
 
 
 def captured(command, cwd=ROOT, input_text=None):
@@ -205,6 +205,30 @@ def environment_values(entries):
     # Docker also returns bare names for unset variables; keep these distinct from empty values.
     return {key: value if separator else None
             for key, separator, value in (entry.partition("=") for entry in entries)}
+
+
+def services_for_release(release):
+    version = tuple(map(int, release.removeprefix("v").split(".")))
+    return SERVICES if version >= (1, 35, 0) else (*SERVICES, "uploader")
+
+
+def migrate_without_uploader(compose, before):
+    """Remove only the obsolete service and its environment variables; keep all volumes."""
+    expected = copy.deepcopy(before)
+    if "uploader" in before:
+        blocks = list(re.finditer(r"^  uploader:\s*\n.*?(?=^  [\w-]+:|^\S|\Z)", compose, re.M | re.S))
+        require(len(blocks) == 1, "Bloc uploader absent ou ambigu ; migration annulée.")
+        block = blocks[0]
+        compose = compose[:block.start()] + compose[block.end():]
+        del expected["uploader"]
+    obsolete = r"(?:UPLOADER_URL|UPLOADER_REDIS_[A-Z0-9_]+|UPLOAD_MAX_FILESIZE)"
+    # Both Compose environment representations are supported. Never serialize secrets again.
+    compose = re.sub(r"^[ \t]+(?:-[ \t]+)?" + obsolete + r"[ \t]*[=:][^\n]*(?:\n|$)", "", compose, flags=re.M)
+    for item in expected.values():
+        item["Config"]["Env"] = [entry for entry in item["Config"]["Env"]
+                                  if not re.fullmatch(obsolete, entry.partition("=")[0])]
+    require(not re.search(obsolete, compose), "Référence uploader restante ; examiner le Compose avant migration.")
+    return compose, expected
 
 
 def enable_custom_woka_volume(compose, before, mountpoint):
@@ -419,19 +443,26 @@ def deploy(api, args, state):
     git("merge-base", "--is-ancestor", commit, "refs/remotes/origin/master")
     auth = registry_auth()
     tag = release + "-" + commit[:9]
+    services = services_for_release(release)
     desired = {s: f"{REGISTRY}/workadventure-{s}:{tag}" if s in ("play", "back")
-               else f"thecodingmachine/workadventure-{s}:{release}" for s in SERVICES}
+               else f"thecodingmachine/workadventure-{s}:{release}" for s in services}
     directory = Path(tempfile.mkdtemp(prefix=tag + "-", dir=state))
     say(f"Sauvegarde privée : {directory}")
     stack = api.discover()
     before, compose = api.inspect(), api.compose()
-    require(all(s in before for s in SERVICES), "Services attendus absents de la stack.")
+    require(all(s in before for s in services), "Services attendus absents de la stack.")
+    # Save the effective production configuration before preparing any migration.
+    save(directory / "stack-before.json", stack)
+    save(directory / "inspect-before.json", before)
+    save(directory / "compose-before.yml", compose)
     candidate = replace_images(compose, before, desired)
     expected_settings = before
+    if "uploader" not in services:
+        candidate, expected_settings = migrate_without_uploader(candidate, before)
     if getattr(args, "enable_custom_wokas", False):
         # Explicitly requested Woka mount addition. Other settings remain checked.
         volume = api.docker("/volumes/create", method="POST", payload={"Name": CUSTOM_WOKA_VOLUME})
-        candidate, expected_settings = enable_custom_woka_volume(candidate, before, volume["Mountpoint"])
+        candidate, expected_settings = enable_custom_woka_volume(candidate, expected_settings, volume["Mountpoint"])
     if getattr(args, "external_presence_token_file", None):
         candidate, expected_settings = enable_external_presence(candidate, expected_settings,
                                                                args.external_presence_token_file.expanduser())
@@ -444,17 +475,19 @@ def deploy(api, args, state):
     checks(directory)
     require(not git("status", "--porcelain") and git("rev-parse", "HEAD") == commit,
             "Le dépôt a changé pendant la validation ; relancer après vérification.")
-    for service in ("map-storage", "uploader"):
+    for service in services:
+        if service in ("play", "back"):
+            continue
         image_manifest(desired[service])
     build_and_publish(directory, desired, commit)
-    expected_ids = {s: x["Image"] for s, x in before.items()}
+    expected_ids = {s: x["Image"] for s, x in expected_settings.items()}
     expected_ids.update(pull(api, directory, desired, auth))
     fresh = api.discover()
     require(api.compose() == compose and fresh.get("Env", []) == stack.get("Env", []),
             "La configuration de production a changé depuis la sauvegarde ; redéploiement annulé.")
     try:
         say("Mise à jour de la stack…")
-        api.update(candidate, stack.get("Env", []))
+        api.update(candidate, stack.get("Env", []), prune="uploader" in before and "uploader" not in services)
         current = wait_healthy(api, expected_settings, expected_ids, directory)
         warnings = collect_logs(api, current, directory)
         require(api.compose() == candidate, "Configuration effective inattendue après déploiement.")

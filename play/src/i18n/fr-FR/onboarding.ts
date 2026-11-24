@@ -12,8 +12,8 @@ export default {
         title: "Se déplacer",
         descriptionDesktop:
             "Utilisez les touches fléchées ou WASD pour déplacer votre personnage. Vous pouvez aussi cliquer droit pour vous déplacer. Essayez de bouger maintenant !",
-        descriptionMobile:
-            "Utilisez le joystick ou appuyez sur la carte pour déplacer votre personnage. Essayez de bouger maintenant !",
+        descriptionTouch:
+            "Appuyez sur la carte pour vous y rendre, et faites-la glisser pour regarder autour de vous. Essayez de bouger maintenant !",
         next: "Suivant",
     },
     communication: {
@@ -40,9 +40,9 @@ export default {
         next: "Suivant",
     },
     pictureInPicture: {
-        title: "Image dans l'image",
+        title: "Picture in Picture",
         description:
-            "Utilisez le mode Image dans l'image pour garder les appels vidéo visibles pendant que vous naviguez sur la carte. Idéal pour le multitâche !",
+            "Utilisez le mode Picture in Picture pour garder les appels vidéo visibles pendant que vous naviguez sur la carte. Idéal pour le multitâche !",
         video: "./static/Videos/PictureInPicture.mp4",
         hint: "Cliquez sur le bouton PiP mis en évidence pour l'activer !",
         next: "Suivant",

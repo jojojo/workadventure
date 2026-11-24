@@ -1,4 +1,3 @@
-import axios from "axios";
 import Debug from "debug";
 import * as Sentry from "@sentry/svelte";
 
@@ -110,7 +109,7 @@ import type { SetPlayerVariableEvent } from "../Api/Events/SetPlayerVariableEven
 import { iframeListener } from "../Api/IframeListener";
 import { analyticsClient } from "../Administration/AnalyticsClient";
 import { ABSOLUTE_PUSHER_URL } from "../Enum/ComputedConst";
-import { ENABLE_MAP_EDITOR, UPLOADER_URL, WOKA_SPEED } from "../Enum/EnvironmentVariable";
+import { ENABLE_MAP_EDITOR, WOKA_SPEED } from "../Enum/EnvironmentVariable";
 import type { CompanionTextureDescriptionInterface } from "../Phaser/Companion/CompanionTextures";
 import type { WokaTextureDescriptionInterface } from "../Phaser/Entity/PlayerTextures";
 import { gameManager } from "../Phaser/Game/GameManager";
@@ -1162,18 +1161,6 @@ export class RoomConnection implements RoomConnection {
         return;
     }
 
-    public uploadAudio(file: FormData) {
-        return axios
-            .post<unknown>(`${UPLOADER_URL}/upload-audio-message`, file)
-            .then((res: { data: unknown }) => {
-                return res.data;
-            })
-            .catch((err) => {
-                console.error(err);
-                throw err;
-            });
-    }
-
     public emitGlobalMessage(message: PlayGlobalMessageInterface): void {
         this.send({
             message: {
@@ -1182,6 +1169,7 @@ export class RoomConnection implements RoomConnection {
                     type: message.type,
                     content: message.content,
                     broadcastToWorld: message.broadcastToWorld,
+                    joinUrl: message.joinUrl,
                 },
             },
         });

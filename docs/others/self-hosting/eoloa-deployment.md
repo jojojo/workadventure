@@ -53,7 +53,7 @@ est présent dans `origin/master`. Il n'effectue aucune fusion ni aucun commit �
 ```sh
 npm run prod:deploy
 # Ou préciser la release officielle déjà fusionnée :
-npm run prod:deploy -- --release v1.34.5
+npm run prod:deploy -- --release v1.35.0
 ```
 
 Sans option, la release est déduite du dernier tag stable accessible depuis HEAD. Le script :
@@ -64,9 +64,9 @@ Sans option, la release est déduite du dernier tag stable accessible depuis HEA
 3. Construit Play **et Back du fork** depuis une archive du commit validé, pour `linux/amd64`, et publie
    les tags `<release>-<commit>`. Vérifie les manifestes publiés et les digests.
    Un tag déjà publié est réutilisé, jamais écrasé, pour préserver les références de retour arrière.
-4. Télécharge uniquement Play, Back, Map Storage et Uploader sur le serveur. Les deux dernières images
+4. Télécharge uniquement Play, Back, Map Storage sur le serveur. Cette dernière image
    proviennent de la release officielle. Vérifie les identifiants des images téléchargées.
-5. Remplace uniquement les quatre lignes d'images de la configuration effective ; le Compose du dépôt
+5. Remplace uniquement les lignes d'images applicatives de la configuration effective ; le Compose du dépôt
    n'est pas utilisé. Refuse une configuration ambiguë/interpolée ou modifiée pendant la préparation.
 6. Redéploie sans actualiser les images des autres services, puis exige trois contrôles successifs : santé,
    images exactes, ports, volumes, paramètres préservés et endpoints `/`, `/ping`, `/map-storage/ping`.
@@ -144,3 +144,16 @@ volume externe `eoloa-coturn-state` dans la stack effective. Il réutilise le vo
 initial ; les certificats conservent leur montage séparé en lecture seule. Un
 volume anonyme renouvelé lors d'une recréation ne constitue pas une restauration
 validée : vérifier sa source avant de poursuivre.
+
+
+## Migration v1.35.0
+
+À partir de v1.35.0, Uploader n'existe plus. Le script retire son service et ses labels de
+routage du Compose effectif, ainsi que les variables obsolètes `UPLOADER_URL`,
+`UPLOADER_REDIS_*` et `UPLOAD_MAX_FILESIZE`. Il conserve tous les volumes déclarés et
+vérifie les autres paramètres. Portainer supprime le conteneur orphelin lors de cette migration.
+La restauration recrée Uploader avec son ancienne image et sa configuration sauvegardées.
+Les releases antérieures restent prises en charge par le script pour un déploiement explicite.
+
+La stack Eoloa relevée le 24 novembre 2026 n'utilise pas LiveKit ; le changement des versions
+LiveKit de l'amont ne demande donc aucun ajout de service dans cette stack.

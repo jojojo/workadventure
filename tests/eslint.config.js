@@ -5,12 +5,11 @@ export default [
     playwright.configs['flat/recommended'],
     ...generateConfig(import.meta.dirname),
     {
-        // `projectService` resolves files through a tsconfig and this package has none, so the root-level
-        // config file belongs to no project and fails to parse ("was not found by the project service").
-        // That makes it unlintable, and therefore uncommittable through the lint-staged pre-commit hook.
-        files: ["*.config.ts"],
+        // Use the same project-service options for configs and tests: the service is shared,
+        // so its default-project allowlist must not depend on which file ESLint parses first.
         languageOptions: {
             parserOptions: {
+                tsconfigRootDir: import.meta.dirname,
                 projectService: { allowDefaultProject: ["*.config.ts"] },
             },
         },

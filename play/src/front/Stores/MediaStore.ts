@@ -6,7 +6,6 @@ import { AbortError } from "@workadventure/shared-utils/src/Abort/AbortError";
 import * as Sentry from "@sentry/svelte";
 import type { VideoQualitySetting } from "../Connection/LocalUserStore";
 import { localUserStore } from "../Connection/LocalUserStore";
-import { Room } from "../Connection/Room";
 import { analyticsClient } from "../Administration/AnalyticsClient";
 import { openTimedEventPerMeeting } from "../Administration/CurrentMeeting";
 import type { EndTimedAnalyticsEvent } from "../Administration/TimedAnalyticsEvent";
@@ -34,6 +33,8 @@ import { externalMeetingActiveStore } from "./ExternalMeetingStore";
 import { externalPhoneBusyStore } from "./ExternalPhoneStore";
 import { createSilentStore } from "./SilentStore";
 import { privacyShutdownStore } from "./PrivacyShutdownStore";
+import { idleStore } from "./IdleStore";
+import { mediaHeldByStatus } from "./MediaHeldByStatus";
 import { inExternalServiceStore, myCameraStore, myMicrophoneStore, proximityMeetingStore } from "./MyMediaStore";
 import { userMovingStore } from "./GameStore";
 import { hideHelpCameraSettings } from "./HelpSettingsStore";
@@ -283,14 +284,21 @@ export const usedMicrophoneDeviceIdStore: Writable<string | undefined> = writabl
 export const inOpenWebsite = writable(false);
 
 /**
+ * A store containing the video quality setting.
+ */
+export const videoQualityStore = createVideoQualityStore();
+
+/**
  * A store that contains video constraints.
  */
 export const videoConstraintStore = derived(
-    [requestedCameraDeviceIdStore, frameRateStore],
-    ([$cameraDeviceIdStore, $frameRateStore]) => {
+    [requestedCameraDeviceIdStore, frameRateStore, videoQualityStore],
+    ([$cameraDeviceIdStore, $frameRateStore, $videoQualityStore]) => {
+        // "low" never sends more than 360p, on LiveKit as in P2P: capturing more would only be thrown away
+        const low = $videoQualityStore === "low";
         const constraints = {
-            width: { ideal: 1280 },
-            height: { ideal: 720 },
+            width: { ideal: low ? 640 : 1280 },
+            height: { ideal: low ? 360 : 720 },
             frameRate: { ideal: 30 },
             facingMode: "user",
             resizeMode: "crop-and-scale",
@@ -431,6 +439,7 @@ export const availabilityStatusStore = derived(
         inBbbStore,
         silentStore,
         privacyShutdownStore,
+        idleStore,
         proximityMeetingStore,
         isSpeakerStore,
         requestedStatusStore,
@@ -446,6 +455,7 @@ export const availabilityStatusStore = derived(
         $inBbbStore,
         $silentStore,
         $privacyShutdownStore,
+        $idleStore,
         $proximityMeetingStore,
         $isSpeakerStore,
         $requestedStatusStore,
@@ -468,6 +478,7 @@ export const availabilityStatusStore = derived(
         if ($inLivekitStore) return AvailabilityStatus.LIVEKIT;
         if ($isListenerStore) return AvailabilityStatus.LISTENER;
         if ($requestedStatusStore) return $requestedStatusStore;
+        if ($idleStore) return AvailabilityStatus.IDLE;
         if ($privacyShutdownStore) return AvailabilityStatus.AWAY;
 
         return AvailabilityStatus.ONLINE;
@@ -582,31 +593,11 @@ export const mediaStreamConstraintsStore = derived(
         // Shared conditions for disabling media
         const isInExternalService = $inExternalServiceStore || $externalMeetingActiveStore;
         const isEnergySaving = $cameraEnergySavingStore === true && $enableCameraSceneVisibilityStore === false;
-        const isUnavailableStatus =
-            $availabilityStatusStore === AvailabilityStatus.DENY_PROXIMITY_MEETING ||
-            $availabilityStatusStore === AvailabilityStatus.SILENT ||
-            $availabilityStatusStore === AvailabilityStatus.DO_NOT_DISTURB ||
-            $availabilityStatusStore === AvailabilityStatus.BACK_IN_A_MOMENT ||
-            $availabilityStatusStore === AvailabilityStatus.SOUND_BLOCKED ||
-            $availabilityStatusStore === AvailabilityStatus.BUSY;
-        const shouldDisableMicrophoneForPrivacy =
-            $privacyShutdownStore === true &&
-            !localUserStore.getMicrophonePrivacySettings(
-                $currentRoomStore?.defaultMicrophonePrivacySettings ?? Room.DEFAULT_MICROPHONE_PRIVACY_SETTINGS,
-            );
-        const shouldDisableCameraForPrivacy =
-            $privacyShutdownStore === true &&
-            !localUserStore.getCameraPrivacySettings(
-                $currentRoomStore?.defaultCameraPrivacySettings ?? Room.DEFAULT_CAMERA_PRIVACY_SETTINGS,
-            );
+        const heldByStatus = mediaHeldByStatus($availabilityStatusStore, $privacyShutdownStore, $currentRoomStore);
 
         // Every reason, other than the user muting it, to cut the microphone
         const isMicrophoneForcedOff =
-            $myMicrophoneStore === false ||
-            isInExternalService ||
-            shouldDisableMicrophoneForPrivacy ||
-            isEnergySaving ||
-            isUnavailableStatus;
+            $myMicrophoneStore === false || isInExternalService || heldByStatus.microphone || isEnergySaving;
 
         // Audio constraints always apply
         if ($requestedMicrophoneState === false || isMicrophoneForcedOff) {
@@ -627,9 +618,8 @@ export const mediaStreamConstraintsStore = derived(
                 $requestedCameraState === false ||
                 $myCameraStore === false ||
                 isInExternalService ||
-                shouldDisableCameraForPrivacy ||
-                isEnergySaving ||
-                isUnavailableStatus
+                heldByStatus.camera ||
+                isEnergySaving
             ) {
                 currentVideoConstraint = false;
             }
@@ -1807,11 +1797,6 @@ function createVideoQualityStore() {
         },
     };
 }
-
-/**
- * A store containing the video quality setting.
- */
-export const videoQualityStore = createVideoQualityStore();
 
 export const lastNewMediaDeviceDetectedStore = writable<MediaDeviceInfo[]>([]);
 

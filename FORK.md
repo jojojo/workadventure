@@ -9,7 +9,7 @@ redondante, après vérification et migration éventuelle.
 
 ## Référence et états
 
-- Dernière release officielle fusionnée : **`v1.34.5`**, synchronisation du 2 novembre 2026.
+- Dernière release officielle fusionnée : **`v1.35.0`**, synchronisation du 24 novembre 2026 (validation terminée, déploiement en préparation).
 - Dernière fonctionnalité spécifique commitée à la création de cet inventaire : Google Meet, `80bf3c9e6`.
 - Inventaire établi le **29 octobre 2026** à partir de `git diff v1.34.4 HEAD` et des changements locaux.
 - La reprise de session Matrix et les salles Google Meet sont déployées depuis le 2 novembre 2026 ; leur validation avec un compte réel reste à confirmer.
@@ -50,6 +50,42 @@ Mettre cette référence et les états à jour après chaque fusion, remplacemen
   PNG public vérifié, identifiant accepté par le service, catalogue publié et aucun changement d'identifiant
   de conteneur ni de compteur de redémarrage pendant l'import. Sauvegarde privée :
   `/Users/johancappi/.local/state/workadventure/deployments/woka-imports/20261102-100713-9d6eda52`.
+
+## Examen de la v1.35.0 — 24 novembre 2026
+
+Référence figée : tag officiel `v1.35.0` (`621f2bf29`). Le master amont postérieur à cette
+release n'est pas intégré. La production relevée avant migration utilise Play/Back
+`v1.34.5-00b17c25a`, Map Storage/Uploader `v1.34.5` et sept services. Aucun LiveKit n'est
+configuré dans cette stack ; aucune mise à jour de LiveKit n'y est donc nécessaire.
+
+| Adaptation | Décision après examen du code officiel v1.35.0 |
+| --- | --- |
+| Présence externe / 3CX | Conserver : pas de producteur externe équivalent. La priorité téléphone reste au-dessus du nouveau statut IDLE ; régression sur les contraintes réelles de capture et le retour IDLE en fin d'appel. |
+| Profil Matrix | Conserver : pas de `MATRIX_AUTO_SYNC` officiel ni d'action manuelle équivalente. |
+| Reprise et renouvellement Matrix | Conserver : le wrapper officiel ne reprend pas l'appareil après SSO et ne raccorde pas le renouvellement persistant. Correctif local sauvegardé dans `b3710f392` avant fusion. |
+| Google Meet | Conserver : pas de module auto-hébergé équivalent ; cycle de vie des zones et suspension des médias conservés. |
+| OpenID / locale | Conserver : choix du claim d'affichage et protection de la locale spécifiques. |
+| URL de cartes | Conserver : l'autorisation officielle ne couvre encore que `/~/` ; le support `/_/` reste nécessaire. |
+| Types d'espace Back | Conserver : validation officielle toujours par `parse`, protection Node 24 nécessaire. |
+| Avatars haute résolution | Conserver : découpage officiel fixe ; adaptation du canvas préservée avec la nouvelle navigation. |
+| Catalogue Woka et compagnons | Conserver : aucun catalogue persistant équivalent ; volume et identifiants existants préservés. |
+| Avatar personnel Johan | Conserver : ressource absente de l'amont ; catalogue dynamique prioritaire inchangé. |
+| CI du fork | Adapter : retrait du job Uploader, gardes de publication officielle conservées pour les quatre jobs restants. Options ESLint des tests unifiées pour que la configuration Electron soit reconnue quel que soit l’ordre des fichiers. |
+| Docker / déploiement | Adapter : Dockerfile officiel toujours lié aux secrets Sentry ; exception locale conservée. Retrait contrôlé du service Uploader et de ses variables, conservation des volumes et retour arrière vers les sept anciens services. |
+
+La configuration effective, les images et l'inspection initiale sont sauvegardées hors dépôt dans
+`~/.local/state/workadventure/deployments/pre-v1.35.0-20261124`. Le script construit depuis
+une archive Git, valide le Compose candidat, supprime le conteneur Uploader devenu orphelin
+sans supprimer ses volumes, puis contrôle exactement les six services attendus.
+Les fichiers Compose/Traefik locaux sont également nettoyés ; ils ne remplacent pas la stack effective.
+
+Validation : TypeScript Play/Back, Svelte (0 erreur, 0 avertissement), i18n, 25 tests de
+déploiement et 20 tests Woka Python réussis. Tests ciblés Matrix/Meet/présence/profil exécutés
+(236 réussis au premier passage ; corrections des mocks de configuration et de stockage validées
+par 42 tests ciblés, incluant le retour IDLE après un appel). Back : 33 tests réussis, 2 ignorés.
+Avatars vérifiés dans Chrome/Phaser : poses 32/64/128, collisions, cache, aperçus et zoom.
+Les vérifications applicatives avec des comptes réels restent nécessaires
+pour Matrix, Meet, 3CX et les avatars ; les contrôles automatisés ne les remplacent pas.
 
 ## Examen de la v1.34.5 — 2 novembre 2026
 
@@ -320,12 +356,12 @@ médias WorkAdventure pendant la participation déclarée.
 Pour retrouver les écarts sans confondre historique officiel et adaptations locales :
 
 ```sh
-git diff --name-status v1.34.5 HEAD
-git diff --stat v1.34.5 HEAD
+git diff --name-status v1.35.0 HEAD
+git diff --stat v1.35.0 HEAD
 git log --first-parent --oneline
 ```
 
-Remplacer `v1.34.5` par la référence mise à jour en tête de ce fichier. Examiner aussi `git diff` pour les
+Remplacer `v1.35.0` par la référence mise à jour en tête de ce fichier. Examiner aussi `git diff` pour les
 changements en cours. La comparaison est un outil d'inventaire : ne pas remettre en bloc tous les fichiers
 à la version officielle, ni considérer chaque ancien commit comme un correctif encore nécessaire.
 

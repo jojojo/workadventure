@@ -3,6 +3,8 @@
         message: string;
         inputClass: string;
         dataText: string;
+        // Placeholder shown while disabled, saying why nothing can be typed.
+        disabledText?: string;
         dataTestid: string;
         messageInput?: HTMLDivElement;
         onkeydown?: (event: KeyboardEvent) => void;
@@ -17,6 +19,7 @@
         message = $bindable(),
         inputClass = "",
         dataText = "",
+        disabledText = "",
         dataTestid = "",
         messageInput = $bindable(),
         onkeydown = undefined,
@@ -68,7 +71,7 @@
         event.preventDefault();
     }
     function insertTextAtCursor(text: string) {
-        const selection = window.getSelection();
+        const selection = messageInput?.ownerDocument.defaultView?.getSelection();
         if (!selection || !selection.rangeCount) {
             return;
         }
@@ -80,12 +83,14 @@
         let textNode: Text | undefined;
         let lastBrNode: HTMLBRElement | undefined;
         for (const line of lines) {
-            const br = document.createElement("br");
+            const br = messageInput?.ownerDocument.createElement("br");
+            if (!br) return;
             range.insertNode(br);
             if (textNode === undefined) {
                 lastBrNode = br;
             }
-            textNode = document.createTextNode(line);
+            textNode = messageInput?.ownerDocument.createTextNode(line);
+            if (!textNode) return;
             // Insertion in a range object is done in reverse order.
             range.insertNode(textNode);
         }
@@ -128,7 +133,9 @@
         bind:innerHTML={message}
         contenteditable="false"
         bind:this={messageInput}
-        class={`${inputClass} opacity-70/50 cursor-not-allowed`}
+        class={`${inputClass} opacity-50 cursor-not-allowed`}
+        data-text={disabledText}
+        aria-disabled="true"
     ></div>
 {/if}
 

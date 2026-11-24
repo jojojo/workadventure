@@ -20,7 +20,7 @@ describe("OIDC redirect URLs", () => {
         [undefined, ""],
     ])("should build callback URLs when PUSHER_URL is %s", async (pusherUrl, expectedBaseUrl) => {
         vi.doMock("../../src/pusher/enums/EnvironmentVariableValidator", () => ({
-            EnvironmentVariables: {
+            ValidatedEnvironmentVariables: {
                 safeParse: () => ({
                     success: true,
                     data: { PUSHER_URL: pusherUrl },
@@ -54,7 +54,7 @@ describe("Matrix API URI", () => {
         [undefined, undefined],
     ])("should normalize MATRIX_API_URI when it is %s", async (matrixApiUri, expectedMatrixApiUri) => {
         vi.doMock("../../src/pusher/enums/EnvironmentVariableValidator", () => ({
-            EnvironmentVariables: {
+            ValidatedEnvironmentVariables: {
                 safeParse: () => ({
                     success: true,
                     data: { MATRIX_API_URI: matrixApiUri },
@@ -84,7 +84,7 @@ describe("OpenID display name claim", () => {
         ["display_name", "legacy_name", "display_name"],
     ])("resolves current claim %s and legacy claim %s to %s", async (current, legacy, expected) => {
         vi.doMock("../../src/pusher/enums/EnvironmentVariableValidator", () => ({
-            EnvironmentVariables: {
+            ValidatedEnvironmentVariables: {
                 safeParse: () => ({
                     success: true,
                     data: { OPENID_DISPLAY_NAME_CLAIM: current, OPID_DISPLAY_NAME_CLAIM: legacy },
@@ -108,7 +108,7 @@ describe("Boolean feature flags defaulting to true", () => {
 
     it.each([true, false])("should keep ENABLE_SAY and ENABLE_ISSUE_REPORT when they are %s", async (value) => {
         vi.doMock("../../src/pusher/enums/EnvironmentVariableValidator", () => ({
-            EnvironmentVariables: {
+            ValidatedEnvironmentVariables: {
                 safeParse: () => ({
                     success: true,
                     data: { ENABLE_SAY: value, ENABLE_ISSUE_REPORT: value },

@@ -24,11 +24,11 @@
   "contributors": [
     {
       "name": "Grégoire Parant",
-      "email": "g.parant@thecodingmachine.com"
+      "email": "g.parant@workadventu.re"
     },
     {
       "name": "David Négrier",
-      "email": "d.negrier@thecodingmachine.com"
+      "email": "d.negrier@workadventu.re"
     },
     {
       "name": "Arthmaël Poly",
@@ -42,6 +42,7 @@
   "homepage": "https://github.com/thecodingmachine/workadventure#readme",
   "dependencies": {
     "@anatine/zod-openapi": "^2.2.8",
+    "@aws-sdk/client-s3": "^3.1054.0",
     "@grpc/grpc-js": "^1.14.4",
     "@grpc/proto-loader": "0.8.1",
     "@sentry/node": "^10.54.0",

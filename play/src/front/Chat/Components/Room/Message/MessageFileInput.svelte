@@ -1,10 +1,12 @@
 <script lang="ts">
     import { get } from "svelte/store";
     import { onMount } from "svelte";
-    import { selectedChatMessageToReply } from "../../../Stores/ChatStore";
+    import { getChatInteraction } from "../../../ChatInteractionContext";
     import { chatInputFocusStore } from "../../../../Stores/ChatStore";
     import LL from "../../../../../i18n/i18n-svelte";
     import { IconPaperclip, IconX } from "@wa-icons";
+
+    const { reply: selectedChatMessageToReply } = getChatInteraction();
 
     let files: FileList | undefined = $state(undefined);
     let fileInputElement: HTMLInputElement;
@@ -67,7 +69,10 @@
         <IconPaperclip class="hover:!cursor-pointer" font-size={18} />
     </button>
     <button
+        type="button"
         class="absolute top-0 right-0 m-1 hover:bg-white/10 cursor-pointer"
+        aria-label={$LL.chat.fileAttachment.cancel()}
+        title={$LL.chat.fileAttachment.cancel()}
         onclick={() => unselectChatMessageToReplyIfSelected()}
     >
         <IconX class=" text-white/50 hover:text-white transition-all" font-size={16} />

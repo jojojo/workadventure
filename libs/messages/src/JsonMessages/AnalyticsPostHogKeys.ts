@@ -130,13 +130,8 @@ export const POSTHOG_EVENT_KEYS: Partial<
 
   "file.drag_dropped": "wa_drag_drop_file",
 
-  "global_audio.opened": "wa_action_globalaudio",
 
-  "global_message.opened": {
-    on: "source",
-    byValue: { menu: "wa_menu_globalmessage", action_bar: "wa_action_globalmessage" },
-  },
-  "global_message.sound_sent": "wa_menu_globalmessage_sound",
+  "global_message.opened": "wa_action_globalmessage",
   "global_message.text_sent": "wa_menu_globalmessage_send",
 
   "invite.opened": "wa-opened-invite",
@@ -199,7 +194,6 @@ export const POSTHOG_EVENT_KEYS: Partial<
 
   "megaphone.opened": "wa_action_megaphone",
 
-  "menu.chat.opened": "wa_menu_chat",
   "menu.contact.opened": "wa_menu_contact",
   "menu.credit.opened": "wa_menu_credit",
   "menu.custom.opened": "wa_menu_custom",
